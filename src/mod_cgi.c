@@ -88,9 +88,13 @@ static handler_ctx * cgi_handler_ctx_init() {
 	hctx->post_data_fetched = 0;
 
 	hctx->read_fd = file_descr_init();
-	hctx->read_fd->read_func = network_read_chunkqueue_write;
 	hctx->write_fd = file_descr_init();
+	
+	hctx->read_fd->read_func = network_read_chunkqueue_write;
 	hctx->write_fd->write_func = network_write_chunkqueue_write;
+	
+	hctx->read_fd->is_socket = 0;
+	hctx->write_fd->is_socket = 0;
 	
 	hctx->response = buffer_init();
 	hctx->response_header = buffer_init();
