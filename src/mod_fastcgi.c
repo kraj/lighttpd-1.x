@@ -1506,6 +1506,9 @@ static int fcgi_env_add_request_headers(server *srv, connection *con, plugin_dat
 			size_t j;
 			buffer_reset(srv->tmp_buf);
 			
+			/* was already added */
+			if (0 == strcasecmp(ds->key->ptr, "CONTENT-LENGTH")) continue;
+			
 			if (0 != strcasecmp(ds->key->ptr, "CONTENT-TYPE")) {
 				BUFFER_COPY_STRING_CONST(srv->tmp_buf, "HTTP_");
 				srv->tmp_buf->used--;
