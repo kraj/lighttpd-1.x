@@ -648,8 +648,10 @@ REQUESTDONE_FUNC(log_access_write) {
 				
 				/* cache the generated timestamp */
 				if (srv->cur_ts != *(p->conf.last_generated_accesslog_ts_ptr)) {
-					struct tm tm;
 #if defined(HAVE_STRUCT_TM_GMTOFF)
+# ifdef HAVE_LOCALTIME_R
+					struct tm tm;
+# endif
 					long scd, hrs, min;
 #endif
 		
