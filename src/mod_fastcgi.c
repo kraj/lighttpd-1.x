@@ -1772,8 +1772,7 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 		fcgi_env_add(p->fcgi_env, CONST_STR_LEN("QUERY_STRING"), CONST_STR_LEN(""));
 	}
 	
-	s = get_http_method_name(con->request.http_method);
-	fcgi_env_add(p->fcgi_env, CONST_STR_LEN("REQUEST_METHOD"), s, strlen(s));
+	fcgi_env_add(p->fcgi_env, CONST_STR_LEN("REQUEST_METHOD"), CONST_BUF_LEN(con->request.http_method_name));
 	fcgi_env_add(p->fcgi_env, CONST_STR_LEN("REDIRECT_STATUS"), CONST_STR_LEN("200")); /* if php is compiled with --force-redirect */
 	s = get_http_version_name(con->request.http_version);
 	fcgi_env_add(p->fcgi_env, CONST_STR_LEN("SERVER_PROTOCOL"), s, strlen(s));

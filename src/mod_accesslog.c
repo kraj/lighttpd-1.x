@@ -769,12 +769,7 @@ REQUESTDONE_FUNC(log_access_write) {
 						     con->request.http_version == HTTP_VERSION_1_1 ? "HTTP/1.1" : "HTTP/1.0");
 				break;
 			case FORMAT_REQUEST_METHOD:
-				switch(con->request.http_method) {
-				case HTTP_METHOD_GET: buffer_append_string(p->conf.access_logbuffer, "GET"); break;
-				case HTTP_METHOD_POST: buffer_append_string(p->conf.access_logbuffer, "POST"); break;
-				case HTTP_METHOD_HEAD: buffer_append_string(p->conf.access_logbuffer, "HEAD"); break;
-				default: break;
-				}
+				buffer_append_string_buffer(p->conf.access_logbuffer, con->request.http_method_name);
 				break;
 			case FORMAT_SERVER_PORT:
 				buffer_append_long(p->conf.access_logbuffer, srv->srvconf.port);

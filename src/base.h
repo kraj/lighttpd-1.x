@@ -133,13 +133,14 @@ typedef struct {
 	
 	buffer *orig_uri;
 	
-	http_method_t  http_method;
+	http_method_t http_method_id;
+	buffer       *http_method_name;
 	http_version_t http_version;
 	
-	buffer *request_line;
+	buffer       *request_line;
 	
 	/* strings to the header */
-	buffer *http_host; /* not alloced */
+	buffer       *http_host; /* not alloced */
 	const char   *http_range;
 	const char   *http_content_type;
 	const char   *http_if_modified_since;

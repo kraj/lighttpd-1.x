@@ -312,7 +312,7 @@ void proxy_connection_cleanup(server *srv, handler_ctx *hctx) {
 	
 	if (con->mode != p->id) return;
 	
-	if (hctx->fd != -1) {
+	if (hctx->fd->fd != -1) {
 		fdevent_event_del(srv->ev, hctx->fd);
 		fdevent_unregister(srv->ev, hctx->fd);
 		close(hctx->fd->fd);
@@ -385,7 +385,7 @@ static int proxy_create_env(server *srv, handler_ctx *hctx) {
 	buffer_reset(hctx->write_buffer);
 	
 	/* request line */
-	buffer_copy_string(hctx->write_buffer, get_http_method_name(con->request.http_method));
+	buffer_copy_string_buffer(hctx->write_buffer, con->request.http_method_name);
 	buffer_append_string_buffer(hctx->write_buffer, con->request.uri);
 	BUFFER_APPEND_STRING_CONST(hctx->write_buffer, " HTTP/1.0\r\n");
 	
@@ -413,7 +413,8 @@ static int proxy_create_env(server *srv, handler_ctx *hctx) {
 	
 	/* body */
 	
-	if (con->request.http_method == HTTP_METHOD_POST &&
+	/* FIXME: streaming interface */
+	if (con->request.http_method_id == HTTP_METHOD_POST &&
 	    con->request.content_length) {
 		/* the buffer-string functions add an extra \0 at the end the memory-function don't */
 		hctx->write_buffer->used--;

@@ -578,8 +578,8 @@ PHYSICALPATH_FUNC(mod_compress_physical) {
 	file_cache_entry *fce = NULL;
 	
 	/* only GET and POST can get compressed */
-	if (con->request.http_method != HTTP_METHOD_GET && 
-	    con->request.http_method != HTTP_METHOD_POST) {
+	if (con->request.http_method_id != HTTP_METHOD_GET && 
+	    con->request.http_method_id != HTTP_METHOD_POST) {
 		return HANDLER_GO_ON;
 	}
 	

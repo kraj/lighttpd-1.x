@@ -852,7 +852,7 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 #endif
 			    );
 		
-		cgi_env_add(&env, CONST_STR_LEN("REQUEST_METHOD"), get_http_method_name(con->request.http_method));
+		cgi_env_add(&env, CONST_STR_LEN("REQUEST_METHOD"), con->request.http_method_name->ptr);
 		if (con->request.pathinfo->used) {
 			cgi_env_add(&env, CONST_STR_LEN("PATH_INFO"), con->request.pathinfo->ptr);
 		}

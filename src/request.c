@@ -362,7 +362,6 @@ int http_request_parse(server *srv, connection *con) {
 		switch(*cur) {
 		case '\r': 
 			if (con->parse_request->ptr[i+1] == '\n') {
-				http_method_t r;
 				char *nuri = NULL;
 				size_t j;
 				
@@ -391,23 +390,9 @@ int http_request_parse(server *srv, connection *con) {
 				*(uri - 1) = '\0';
 				*(proto - 1) = '\0';
 				
-				/* we got the first one :) */
-				if (-1 == (r = get_http_method_key(method))) {
-					con->http_status = 501;
-					con->response.keep_alive = 0;
-					con->keep_alive = 0;
-					
-					log_error_write(srv, __FILE__, __LINE__, "s", "unknown http-method -> 501");
-					if (srv->srvconf.log_request_header_on_error) {
-							log_error_write(srv, __FILE__, __LINE__, "Sb",
-									"request-header:\n",
-									con->request.request);
-						}
-					
-					return 0;
-				}
-				
-				con->request.http_method = r;
+				/* might be -1 if method is unknown */
+				con->request.http_method_id = get_http_method_key(method);
+				buffer_copy_string(con->request.http_method_name, method);
 				
 				if (0 == strncmp(proto, "HTTP/1.", sizeof("HTTP/1.") - 1)) {
 					if (proto[7] == '1') {
@@ -977,7 +962,7 @@ int http_request_parse(server *srv, connection *con) {
 	}
 	
 	/* check if we have read post data */
-	if (con->request.http_method == HTTP_METHOD_POST) {
+	if (con->request.http_method_id == HTTP_METHOD_POST) {
 		server_socket *srv_socket = con->srv_socket;
 		if (con->request.http_content_type == NULL) {
 			log_error_write(srv, __FILE__, __LINE__, "s", 

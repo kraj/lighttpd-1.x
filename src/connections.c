@@ -185,6 +185,22 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 	
 	switch(con->mode) {
 	case DIRECT:
+		/* static files */
+		
+		if (con->http_status == 200 && 
+		    con->physical.path->used) {
+			switch(con->request.http_method_id) {
+			case HTTP_METHOD_GET:
+			case HTTP_METHOD_POST:
+			case HTTP_METHOD_HEAD:
+				break;
+			default:
+				con->http_status = 501;
+				break;
+			}
+		}
+		
+		
 		switch(con->http_status) {
 		case 400: /* class: header + custom body */
 		case 401:
@@ -288,11 +304,11 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 				}
 				
 				if (S_ISREG(fce->st.st_mode)) {
-					if (con->request.http_method == HTTP_METHOD_GET ||
-					    con->request.http_method == HTTP_METHOD_POST) {
+					if (con->request.http_method_id == HTTP_METHOD_GET ||
+					    con->request.http_method_id == HTTP_METHOD_POST) {
 						http_chunk_append_file(srv, con, fce, 0, fce->st.st_size);
 						con->response.content_length = http_chunkqueue_length(srv, con);
-					} else if (con->request.http_method == HTTP_METHOD_HEAD) {
+					} else if (con->request.http_method_id == HTTP_METHOD_HEAD) {
 						con->response.content_length = fce->st.st_size;
 					} else {
 						connection_set_state(srv, con, CON_STATE_ERROR);
@@ -324,7 +340,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 					con->keep_alive = 0;
 				}
 				
-				if (con->request.http_method == HTTP_METHOD_HEAD) {
+				if (con->request.http_method_id == HTTP_METHOD_HEAD) {
 					chunkqueue_reset(con->write_queue);
 				}
 				
@@ -366,7 +382,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 		
 		break;
 	default:
-		if (con->request.http_method == HTTP_METHOD_HEAD ||
+		if (con->request.http_method_id == HTTP_METHOD_HEAD ||
 		    con->http_status == 301 ||
 		    con->http_status == 304 ||
 		    con->http_status == 205) {
@@ -494,6 +510,7 @@ connection *connection_init(server *srv) {
 	CLEAN(request.request);
 	CLEAN(request.pathinfo);
 	CLEAN(request.content);
+	CLEAN(request.http_method_name);
 	
 	CLEAN(request.orig_uri);
 	
@@ -599,7 +616,7 @@ int connection_reset(server *srv, connection *con) {
 	con->bytes_read = 0;
 	con->bytes_header = 0;
 	
-	con->request.http_method = HTTP_METHOD_UNSET;
+	con->request.http_method_id = HTTP_METHOD_UNSET;
 	con->request.http_version = HTTP_VERSION_UNSET;
 	
 	con->request.http_if_modified_since = NULL;
@@ -619,6 +636,7 @@ int connection_reset(server *srv, connection *con) {
 	CLEAN(request.pathinfo);
 	CLEAN(request.content);
 	CLEAN(request.request);
+	CLEAN(request.http_method_name);
 	
 	CLEAN(request.orig_uri);
 	

@@ -1334,8 +1334,8 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			if (con->http_status == 0 && 
 			    con->request.http_if_none_match) {
 				if (etag_is_equal(con->physical.etag, con->request.http_if_none_match)) {
-					if (con->request.http_method == HTTP_METHOD_GET || 
-					    con->request.http_method == HTTP_METHOD_HEAD) {
+					if (con->request.http_method_id == HTTP_METHOD_GET || 
+					    con->request.http_method_id == HTTP_METHOD_HEAD) {
 						
 						/* check if etag + last-modified */
 						if (con->request.http_if_modified_since) {
