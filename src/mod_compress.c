@@ -713,6 +713,11 @@ PHYSICALPATH_FUNC(mod_compress_physical) {
 							
 							response_header_insert(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(srv->mtime_cache[i].str));
 							
+							/* prepare fce */
+							if (NULL == (fce = file_cache_get_entry(srv, con->physical.path))) {
+								file_cache_add_entry(srv, con, con->physical.path, &fce);
+							}
+							
 							return HANDLER_FINISHED;
 						}
 					} else if (0 == deflate_file_to_buffer(srv, con, p,
