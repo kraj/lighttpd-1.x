@@ -112,7 +112,7 @@ int http_response_write_basic_header(server *srv, connection *con) {
 
 	if (con->conf.log_response_header) {
 		log_error_write(srv, __FILE__, __LINE__, "sdsdSb", 
-				"fd:", con->fd, 
+				"fd:", con->fd->fd, 
 				"response-header-len:", b->used - 1, 
 				"\n", b);
 	}

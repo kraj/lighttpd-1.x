@@ -330,7 +330,7 @@ int http_request_parse(server *srv, connection *con) {
 
 	if (con->conf.log_request_header) {
 		log_error_write(srv, __FILE__, __LINE__, "sdsdSb", 
-				"fd:", con->fd, 
+				"fd:", con->fd->fd, 
 				"request-len:", con->request.request->used, 
 				"\n", con->request.request);
 	}

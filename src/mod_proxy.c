@@ -834,7 +834,7 @@ static handler_t proxy_connection_close(server *srv, handler_ctx *hctx) {
 	
 	log_error_write(srv, __FILE__, __LINE__, "ssdsd", 
 			"emergency exit: proxy:", 
-			"connection-fd:", con->fd,
+			"connection-fd:", con->fd->fd,
 			"proxy-fd:", hctx->fd);
 	
 	
@@ -913,7 +913,7 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 #ifndef USE_LINUX_SIGIO
 		proxy_connection_close(srv, hctx);
 # if 0
-		log_error_write(srv, __FILE__, __LINE__, "sd", "proxy-FDEVENT_HUP", con->fd);
+		log_error_write(srv, __FILE__, __LINE__, "sd", "proxy-FDEVENT_HUP", con->fd->fd);
 # endif			
 		return HANDLER_ERROR;
 #endif

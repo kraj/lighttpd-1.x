@@ -1590,6 +1590,7 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	if (con->server_name->used) {
 		fcgi_env_add(p->fcgi_env, CONST_STR_LEN("SERVER_NAME"), CONST_BUF_LEN(con->server_name));
 	} else {
+		/* FIXME: resolve the our name */
 #ifdef HAVE_IPV6
 		s = inet_ntop(srv_sock->addr.plain.sa_family, 
 			      srv_sock->addr.plain.sa_family == AF_INET6 ? 
@@ -1960,7 +1961,7 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 				"unexpected end-of-file (perhaps the fastcgi process died):",
 				"pid:", proc->pid,
 				"fcgi-fd:", fcgi_fd, 
-				"remote-fd:", con->fd);
+				"remote-fd:", con->fd->fd);
 		
 		return -1;
 	}
@@ -2408,7 +2409,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 			if (errno == EMFILE ||
 			    errno == EINTR) {
 				log_error_write(srv, __FILE__, __LINE__, "sd", 
-						"wait for fd at connection:", con->fd);
+						"wait for fd at connection:", con->fd->fd);
 				
 				return HANDLER_WAIT_FOR_FD;
 			}
@@ -2653,7 +2654,7 @@ static handler_t fcgi_connection_close(server *srv, handler_ctx *hctx) {
 	
 	log_error_write(srv, __FILE__, __LINE__, "ssdsd", 
 			"emergency exit: fastcgi:", 
-			"connection-fd:", con->fd,
+			"connection-fd:", con->fd->fd,
 			"fcgi-fd:", hctx->fd);
 	
 	
@@ -2753,7 +2754,7 @@ static handler_t fcgi_handle_fdevent(void *s, void *ctx, int revents) {
 					
 					log_error_write(srv, __FILE__, __LINE__, "sdsdsd", 
 						"response not sent, request not sent, reconnection.",
-						"connection-fd:", con->fd,
+						"connection-fd:", con->fd->fd,
 						"fcgi-fd:", hctx->fd);
 					
 					return HANDLER_WAIT_FOR_FD;
@@ -2761,7 +2762,7 @@ static handler_t fcgi_handle_fdevent(void *s, void *ctx, int revents) {
 				
 				log_error_write(srv, __FILE__, __LINE__, "sdsdsd", 
 						"response not sent, request sent:", hctx->fd->bytes_written,
-						"connection-fd:", con->fd,
+						"connection-fd:", con->fd->fd,
 						"fcgi-fd:", hctx->fd);
 				
 				fcgi_connection_cleanup(srv, hctx);
@@ -2776,7 +2777,7 @@ static handler_t fcgi_handle_fdevent(void *s, void *ctx, int revents) {
 				
 				log_error_write(srv, __FILE__, __LINE__, "ssdsd", 
 						"response already sent out, termination connection",
-						"connection-fd:", con->fd,
+						"connection-fd:", con->fd->fd,
 						"fcgi-fd:", hctx->fd);
 				
 				connection_set_state(srv, con, CON_STATE_ERROR);

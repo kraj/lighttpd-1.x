@@ -815,7 +815,7 @@ int main (int argc, char **argv) {
 								/* time - out */
 #if 0
 								log_error_write(srv, __FILE__, __LINE__, "sd", 
-										"connection closed - read-timeout:", con->fd);
+										"connection closed - read-timeout:", con->fd->fd);
 #endif
 								connection_set_state(srv, con, CON_STATE_ERROR);
 								changed = 1;
@@ -825,7 +825,7 @@ int main (int argc, char **argv) {
 								/* time - out */
 #if 0
 								log_error_write(srv, __FILE__, __LINE__, "sd", 
-										"connection closed - read-timeout:", con->fd);
+										"connection closed - read-timeout:", con->fd->fd);
 #endif
 								connection_set_state(srv, con, CON_STATE_ERROR);
 								changed = 1;
@@ -838,7 +838,7 @@ int main (int argc, char **argv) {
 #if 0
 						if (srv->cur_ts - con->write_request_ts > 60) {
 							log_error_write(srv, __FILE__, __LINE__, "sdd", 
-									"connection closed - pre-write-request-timeout:", con->fd, srv->cur_ts - con->write_request_ts);
+									"connection closed - pre-write-request-timeout:", con->fd->fd, srv->cur_ts - con->write_request_ts);
 						}
 #endif
 						
@@ -846,7 +846,7 @@ int main (int argc, char **argv) {
 							/* time - out */
 #if 1
 							log_error_write(srv, __FILE__, __LINE__, "sd", 
-									"connection closed - write-request-timeout:", con->fd);
+									"connection closed - write-request-timeout:", con->fd->fd);
 #endif
 							connection_set_state(srv, con, CON_STATE_ERROR);
 							changed = 1;
@@ -874,11 +874,6 @@ int main (int argc, char **argv) {
 						fprintf(stderr, "connection-state: ");
 						cs = 1;
 					}
-					
-					fprintf(stderr, "c[%d,%d]: %s ",
-						con->fd,
-						con->fcgi.fd,
-						connection_get_state(con->state));
 #endif
 				}
 				

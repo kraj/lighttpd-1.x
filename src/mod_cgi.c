@@ -359,7 +359,7 @@ static int cgi_demux_response(server *srv, handler_ctx *hctx) {
 				return FDEVENT_HANDLED_NOT_FINISHED;
 			}
 			/* error */
-			log_error_write(srv, __FILE__, __LINE__, "sdd", strerror(errno), con->fd, hctx->read_fd->fd);
+			log_error_write(srv, __FILE__, __LINE__, "sdd", strerror(errno), con->fd->fd, hctx->read_fd->fd);
 			return FDEVENT_HANDLED_ERROR;
 		}
 		
@@ -477,7 +477,7 @@ static int cgi_demux_response(server *srv, handler_ctx *hctx) {
 		}
 		
 #if 0		
-		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->read_fd->fd, connection_get_state(con->state), b->ptr);
+		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd->fd, hctx->read_fd->fd, connection_get_state(con->state), b->ptr);
 #endif
 	}
 	
@@ -522,7 +522,7 @@ static handler_t cgi_connection_close(server *srv, handler_ctx *hctx) {
 #if 0
 	log_error_write(srv, __FILE__, __LINE__, "sdd", 
 			"emergency exit: cgi", 
-			con->fd,
+			con->fd->fd,
 			hctx->read_fd->fd);
 #endif
 	
@@ -607,7 +607,7 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 	connection  *con  = hctx->remote_conn;
 	
 	if (hctx->read_fd->fd == -1) {
-		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->read_fd->fd, connection_get_state(con->state), "invalid cgi-fd");
+		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd->fd, hctx->read_fd->fd, connection_get_state(con->state), "invalid cgi-fd");
 		
 		return HANDLER_ERROR;
 	}
@@ -620,7 +620,7 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 			/* we are done */
 			
 #if 0
-			log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->read_fd->fd, connection_get_state(con->state), "finished");
+			log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd->fd, hctx->read_fd->fd, connection_get_state(con->state), "finished");
 #endif
 			
 			break;
@@ -701,7 +701,7 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 		}
 		
 # if 0
-		log_error_write(srv, __FILE__, __LINE__, "sddd", "got HUP from cgi", con->fd, hctx->read_fd->fd, revents);
+		log_error_write(srv, __FILE__, __LINE__, "sddd", "got HUP from cgi", con->fd->fd, hctx->read_fd->fd, revents);
 # endif
 		
 		/* rtsigs didn't liked the close */
