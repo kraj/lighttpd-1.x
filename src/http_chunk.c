@@ -19,7 +19,7 @@
 #include "chunk.h"
 #include "http_chunk.h"
 #include "log.h"
-#include "file_cache_funcs.h"
+#include "file_cache.h"
 
 static int http_chunk_append_len(server *srv, connection *con, size_t len) {
 	size_t i, olen = len, j;
@@ -52,9 +52,8 @@ static int http_chunk_append_len(server *srv, connection *con, size_t len) {
 }
 
 
-int http_chunk_append_file(server *srv, connection *con, buffer *fn, off_t offset, off_t len) {
+int http_chunk_append_file(server *srv, connection *con, file_cache_entry *fce, off_t offset, off_t len) {
 	chunkqueue *cq;
-	file_cache_entry *fce = NULL;
 	
 	if (!con) return -1;
 	
@@ -64,10 +63,6 @@ int http_chunk_append_file(server *srv, connection *con, buffer *fn, off_t offse
 		http_chunk_append_len(srv, con, len);
 	}
 
-	if (NULL == (fce = file_cache_get_entry(srv, fn))) {
-		file_cache_add_entry(srv, con, fn, &fce);
-	}
-	
 	chunkqueue_append_file(cq, fce, offset, len);
 	
 	if (con->response.transfer_encoding & HTTP_TRANSFER_ENCODING_CHUNKED && len > 0) {
