@@ -1783,8 +1783,6 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 		fcgi_env_add(p->fcgi_env, CONST_STR_LEN("HTTPS"), CONST_STR_LEN("on"));
 	}
 #endif
-	
-	
 	fcgi_env_add_request_headers(srv, con, p);
 	
 	fcgi_header(&(header), FCGI_PARAMS, request_id, p->fcgi_env->used, 0);
@@ -1794,9 +1792,16 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	fcgi_header(&(header), FCGI_PARAMS, request_id, 0, 0);
 	buffer_append_memory(write_buffer, (const char *)&header, sizeof(header));
 	
+	/* add the expected \0 for the buffer
+	 * the \0 will not hit the network
+	 */
+	buffer_prepare_append(write_buffer, 1);
+	write_buffer->ptr[write_buffer->used++] = '\0';
+	
 	/* there is no content for use, close stdin */
 	if (con->request.content_finished) {
 		fcgi_header(&(header), FCGI_STDIN, hctx->request_id, 0, 0);
+		/* the + 1 is necessary but not ituitive. chunk_a_m() does a - 1 on the length internally */
 		chunkqueue_append_mem(hctx->write_queue, (const char *)&header, sizeof(header) + 1);
 	}
 	
@@ -3331,7 +3336,6 @@ SUBREQUEST_FUNC(mod_fastcgi_fetch_post_data) {
 
 #if 0
 	fprintf(stderr, "%s.%d: fetching data: %d / %d\n", __FILE__, __LINE__, hctx->post_data_fetched, con->request.content_length);
-
 #endif
 	cq = con->read_queue;
 
