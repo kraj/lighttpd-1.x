@@ -613,7 +613,6 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 	}
 	
 	if (revents & FDEVENT_IN) {
-		fprintf(stderr, "%s.%d: a response for me\n", __FILE__, __LINE__);
 		switch (cgi_demux_response(srv, hctx)) {
 		case FDEVENT_HANDLED_NOT_FINISHED:
 			break;
@@ -653,7 +652,6 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 				hctx->write_fd->fd = -1;
 				
 				fdevent_event_add(srv->ev, hctx->read_fd, FDEVENT_IN);
-				fprintf(stderr, "%s.%d: switching to read\n", __FILE__, __LINE__);
 				/* wait for input */
 			}
 			break;
@@ -1030,7 +1028,6 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 
 		/* reading fd */
 		
-		fprintf(stderr, "%s.%d: setup read_fd\n", __FILE__, __LINE__);
 		hctx->read_fd->fd = from_cgi_fds[0];
 
 		fdevent_register(srv->ev, hctx->read_fd, cgi_handle_fdevent, hctx);
@@ -1051,7 +1048,6 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 	
 			hctx->write_fd->fd = to_cgi_fds[1];
 
-			fprintf(stderr, "%s.%d: setup write_fd\n", __FILE__, __LINE__);
 			fdevent_register(srv->ev, hctx->write_fd, cgi_handle_fdevent, hctx);
 			fdevent_event_add(srv->ev, hctx->write_fd, FDEVENT_OUT);
 		

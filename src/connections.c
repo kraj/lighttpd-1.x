@@ -536,7 +536,6 @@ void connections_free(server *srv) {
 	for (i = 0; i < conns->size; i++) {
 		connection *con = conns->ptr[i];
 		
-		fprintf(stderr, "%s.%d: reseting connection\n", __FILE__, __LINE__);
 		connection_reset(srv, con);
 		
 		chunkqueue_free(con->write_queue);
@@ -573,6 +572,8 @@ void connections_free(server *srv) {
 		CLEAN(error_handler);
 #undef CLEAN
 		free(con->plugin_ctx);
+
+		file_descr_free(con->fd);
 		
 		free(con);
 	}
