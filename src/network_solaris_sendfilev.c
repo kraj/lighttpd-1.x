@@ -22,7 +22,7 @@
 #include "network.h"
 #include "fdevent.h"
 #include "log.h"
-#include "file_cache.h"
+#include "file_cache_funcs.h"
 
 #ifndef UIO_MAXIOV
 #define UIO_MAXIOV IOV_MAX
