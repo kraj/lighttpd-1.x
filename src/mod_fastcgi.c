@@ -1569,7 +1569,9 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	
 	/* send FCGI_BEGIN_REQUEST */
 	
-	buffer *write_buffer = chunkqueue_get_append_buffer(hctx->write_queue);
+	/* we might be called after the POST_DATA came in 
+	 */
+	buffer *write_buffer = chunkqueue_get_prepend_buffer(hctx->write_queue);
 	
 	fcgi_header(&(beginRecord.header), FCGI_BEGIN_REQUEST, request_id, sizeof(beginRecord.body), 0);
 	beginRecord.body.roleB0 = host->mode;
@@ -1795,7 +1797,7 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	/* there is no content for use, close stdin */
 	if (con->request.content_finished) {
 		fcgi_header(&(header), FCGI_STDIN, hctx->request_id, 0, 0);
-		chunkqueue_append_mem(hctx->write_queue, (const char *)&header, sizeof(header));
+		chunkqueue_append_mem(hctx->write_queue, (const char *)&header, sizeof(header) + 1);
 	}
 	
 	return 0;
@@ -3346,7 +3348,7 @@ SUBREQUEST_FUNC(mod_fastcgi_fetch_post_data) {
 		toRead = weHave > weWant ? weWant : weHave;
 		
 		fcgi_header(&(header), FCGI_STDIN, hctx->request_id, toRead, 0);
-		chunkqueue_append_mem(hctx->write_queue, (const char *)&header, sizeof(header));
+		chunkqueue_append_mem(hctx->write_queue, (const char *)&header, sizeof(header) + 1);
 		chunkqueue_append_mem(hctx->write_queue, c->data.mem->ptr + c->offset, toRead + 1);
 			
 		c->offset += toRead;
@@ -3359,7 +3361,7 @@ SUBREQUEST_FUNC(mod_fastcgi_fetch_post_data) {
 	if (hctx->post_data_fetched == con->request.content_length) {
 		/* terminate STDIN */
 		fcgi_header(&(header), FCGI_STDIN, hctx->request_id, 0, 0);
-		chunkqueue_append_mem(hctx->write_queue, (const char *)&header, sizeof(header));
+		chunkqueue_append_mem(hctx->write_queue, (const char *)&header, sizeof(header) + 1);
 		
 		con->request.content_finished = 1;
 	}
