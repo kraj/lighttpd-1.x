@@ -52,6 +52,8 @@ off_t chunkqueue_written(chunkqueue *c);
 void chunkqueue_free(chunkqueue *c);
 void chunkqueue_reset(chunkqueue *c);
 
+int chunkqueue_remove_empty_chunks(chunkqueue *cq);
+
 int chunkqueue_is_empty(chunkqueue *c);
 
 #endif
