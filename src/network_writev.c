@@ -48,7 +48,6 @@
 
 network_t network_write_chunkqueue_writev(server *srv, file_descr *write_fd, chunkqueue *cq) {
 	chunk *c;
-	size_t chunks_written = 0;
 	
 	for(c = cq->first; c; c = c->next) {
 		int chunk_finished = 0;
@@ -130,10 +129,8 @@ network_t network_write_chunkqueue_writev(server *srv, file_descr *write_fd, chu
 					
 					if (chunk_finished) {
 						/* skip the chunks from further touches */
-						chunks_written++;
 						c = c->next;
 					} else {
-						/* chunks_written + c = c->next is done in the for()*/
 						chunk_finished++;
 					}
 				} else {

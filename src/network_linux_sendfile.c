@@ -25,9 +25,8 @@
 
 network_t network_write_chunkqueue_linuxsendfile(server *srv, file_descr *write_fd, chunkqueue *cq) {
 	chunk *c;
-	size_t chunks_written = 0;
 	
-	for(c = cq->first; c; c = c->next, chunks_written++) {
+	for(c = cq->first; c; c = c->next) {
 		int chunk_finished = 0;
 		
 		switch(c->type) {
@@ -105,10 +104,8 @@ network_t network_write_chunkqueue_linuxsendfile(server *srv, file_descr *write_
 					
 					if (chunk_finished) {
 						/* skip the chunks from further touches */
-						chunks_written++;
 						c = c->next;
 					} else {
-						/* chunks_written + c = c->next is done in the for()*/
 						chunk_finished++;
 					}
 				} else {
