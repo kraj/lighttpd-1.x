@@ -225,10 +225,8 @@ handler_t file_cache_check_entry(server *srv, file_cache_entry *fce) {
 	struct stat st;
 	/* no need to recheck */
 
-	WP();
 	if (fce->stat_ts == srv->cur_ts) return HANDLER_GO_ON;
 
-	WP();	
 	if (-1 == (fce->follow_symlink ? stat(fce->name->ptr, &(st)) : lstat(fce->name->ptr, &(st)))) {
 		int oerrno = errno;
 
@@ -244,11 +242,10 @@ handler_t file_cache_check_entry(server *srv, file_cache_entry *fce) {
 	if (st.st_mtime == fce->st.st_mtime &&
 	    st.st_size == fce->st.st_size &&
 	    st.st_ino == fce->st.st_ino) return HANDLER_GO_ON;
-	WP();
+
 	fce->st = st;
 	
 	if (S_ISREG(fce->st.st_mode)) {
-		WP();
 		if (fce->fd != -1) {
 			/* reopen file */
 			close(fce->fd);
@@ -258,7 +255,6 @@ handler_t file_cache_check_entry(server *srv, file_cache_entry *fce) {
 		if (-1 == (fce->fd = open(fce->name->ptr, O_RDONLY | O_LARGEFILE))) {
 			int oerrno = errno;
 			if (errno == EMFILE || errno == EINTR) {
-				WP();
 				return HANDLER_WAIT_FOR_FD;
 			}
 			
@@ -268,8 +264,6 @@ handler_t file_cache_check_entry(server *srv, file_cache_entry *fce) {
 			
 			buffer_reset(fce->name);
 
-			WP();
-			
 			errno = oerrno;
 			return HANDLER_ERROR;
 		}
@@ -277,7 +271,6 @@ handler_t file_cache_check_entry(server *srv, file_cache_entry *fce) {
 		srv->cur_fds++;	
 		etag_create(fce->etag, &(fce->st));
 	}
-	WP();
 
 	return HANDLER_GO_ON;
 }
@@ -285,8 +278,6 @@ handler_t file_cache_check_entry(server *srv, file_cache_entry *fce) {
 handler_t file_cache_add_entry(server *srv, connection *con, buffer *name, file_cache_entry **fce_ptr) {
 	file_cache_entry *fce = NULL;
 	handler_t ret;
-
-	WP();
 
 	fce = file_cache_get_unused_entry(srv);
 	
@@ -297,15 +288,12 @@ handler_t file_cache_add_entry(server *srv, connection *con, buffer *name, file_
 	fce->stat_ts = 0;
 
 	if (HANDLER_GO_ON != (ret = file_cache_check_entry(srv, fce))) {
-		WP();
 		return ret;
 	}
 
 	if (S_ISREG(fce->st.st_mode)) {
 		size_t k, s_len;
 
-		WP();
-		
 		/* determine mimetype */
 		buffer_reset(fce->content_type);
 		
