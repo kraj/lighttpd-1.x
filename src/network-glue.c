@@ -31,7 +31,6 @@
 
 network_t network_write_chunkqueue(server *srv, file_descr *write_fd, chunkqueue *cq) {
 	network_t ret = NETWORK_UNSET;
-	chunk *c, *pc = NULL;
 	
 #ifdef TCP_CORK	
 	/* Linux: put a cork into the socket as we want to combine the write() calls */
@@ -45,45 +44,13 @@ network_t network_write_chunkqueue(server *srv, file_descr *write_fd, chunkqueue
 
 	switch (ret) {
 	case NETWORK_OK:
-		for (c = cq->first; c; c = c->next) {
-			if ((c->type == FILE_CHUNK && c->offset == c->data.file.length) ||
-			    (c->type == MEM_CHUNK && c->offset == (off_t)c->data.mem->used - 1)) {
-				/* chunk is finished */
-				buffer_reset(c->data.mem);
-
-				/* remember the last finished chunk */
-				pc = c;
-			}
-		}
+		chunkqueue_remove_empty_chunks(cq);
 		
-		if (c) {
-			/* there is still something to write */
-			
-			if (c != cq->first) {
-				/* move the first few buffers to unused */
-				
-				assert(pc);
-
-				/*
-				 * move all finished chunks to unused
-				 * move the last used chunk to first
-				 *
-				 */
-				
-				pc->next = cq->unused;
-				cq->unused = cq->first;
-				cq->first = c;
-			}
-		} else {
-			/* everything is written */
-			chunkqueue_reset(cq);
-
-			ret = NETWORK_QUEUE_EMPTY;
-		}
+		if (chunkqueue_is_empty(cq)) ret = NETWORK_QUEUE_EMPTY;
 	default:
 		break;
 	}
-	
+
 #ifdef TCP_CORK
 	if (write_fd->is_socket) {
 		int i = 0;
@@ -96,8 +63,8 @@ network_t network_write_chunkqueue(server *srv, file_descr *write_fd, chunkqueue
 
 network_t network_read_chunkqueue(server *srv, file_descr *read_fd, chunkqueue *cq) {
 	network_t ret;
-
+	
 	ret = ((*read_fd->read_func)(srv, read_fd, cq));
-
+	
 	return ret;
 }
