@@ -1228,20 +1228,8 @@ SUBREQUEST_FUNC(mod_cgi_fetch_post_data) {
 			
 		c->offset += toRead;
 		hctx->post_data_fetched += toRead;
-			
-		if (c->offset + 1 >= c->data.mem->used) {
-			/* chunk is empty, move it to unused */
-				
-			cq->first = c->next;
-			c->next = cq->unused;
-			cq->unused = c;
-				
-			if (cq->first == NULL) cq->last = NULL;
-				
-			assert(c != c->next);
-		} else {
-			assert(toRead);
-		}
+		
+		chunkqueue_remove_empty_chunks(cq);
 	}
 		
 	/* Content is ready */

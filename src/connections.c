@@ -56,7 +56,6 @@ static connection *connections_get_new_connection(server *srv) {
 		}
 	}
 
-	fprintf(stderr, "%s.%d: reseting connection\n", __FILE__, __LINE__);
 	connection_reset(srv, conns->ptr[conns->used]);
 #if 0	
 	fprintf(stderr, "%s.%d: add: ", __FILE__, __LINE__);
@@ -117,26 +116,14 @@ int connection_close(server *srv, connection *con) {
 	}
 #endif
 	
-	fdevent_event_del(srv->ev, con->fd);
-	fdevent_unregister(srv->ev, con->fd);
-#ifdef __WIN32
-	if (closesocket(con->fd->fd)) {
-		log_error_write(srv, __FILE__, __LINE__, "sds",
-				"(warning) close:", con->fd->fd, strerror(errno));
+	if (con->fd->fd != -1) {
+		fdevent_event_del(srv->ev, con->fd);
+		fdevent_unregister(srv->ev, con->fd);
+		
+		file_descr_reset(con->fd);
+		
+		srv->cur_fds--;
 	}
-#else
-	if (close(con->fd->fd)) {
-		log_error_write(srv, __FILE__, __LINE__, "sds",
-				"(warning) close:", con->fd->fd, strerror(errno));
-	}
-#endif
-	con->fd->fd = -1;
-	file_descr_reset(con->fd);
-	srv->cur_fds--;
-#if 0
-	log_error_write(srv, __FILE__, __LINE__, "sd",
-			"closed()", con->fd->fd);
-#endif
 	
 	connection_del(srv, con);
 	connection_set_state(srv, con, CON_STATE_CONNECT);
@@ -188,21 +175,8 @@ static void dump_packet(const unsigned char *data, size_t len) {
 }
 #endif 
 
-static int connection_handle_read(server *srv, connection *con) {
-	switch(network_read_chunkqueue(srv, con->fd, con->read_queue)) {
-	case NETWORK_OK:
-		break;
-	case NETWORK_ERROR: /* error on our side */
-		log_error_write(srv, __FILE__, __LINE__, "sd",
-				"connection closed: read failed on fd", con->fd->fd);
-		return -1;
-	case NETWORK_REMOTE_CLOSE: /* remote close */
-		return -1;
-	case NETWORK_UNSET:
-		break;
-	}
-	
-	return 0;
+static network_t connection_handle_read(server *srv, connection *con) {
+	return network_read_chunkqueue(srv, con->fd, con->read_queue);
 }
 
 static int connection_handle_write_prepare(server *srv, connection *con) {
@@ -316,7 +290,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 				if (S_ISREG(fce->st.st_mode)) {
 					if (con->request.http_method == HTTP_METHOD_GET ||
 					    con->request.http_method == HTTP_METHOD_POST) {
-						http_chunk_append_file(srv, con, con->physical.path, 0, fce->st.st_size);
+						http_chunk_append_file(srv, con, fce, 0, fce->st.st_size);
 						con->response.content_length = http_chunkqueue_length(srv, con);
 					} else if (con->request.http_method == HTTP_METHOD_HEAD) {
 						con->response.content_length = fce->st.st_size;
@@ -612,8 +586,6 @@ int connection_reset(server *srv, connection *con) {
 	
 	plugins_call_connection_reset(srv, con);
 
-	fprintf(stderr, "%s.%d: reseting fd %d\n", __FILE__, __LINE__, con->fd->fd);
-	
 	con->http_status = 0;
 	con->file_finished = 0;
 	con->file_started = 0;
@@ -751,33 +723,28 @@ int connection_handle_read_state(server *srv, connection *con)  {
 	handler_t r;
 	
 	if (con->fd->is_readable) {
+		network_t nr;
 		con->read_idle_ts = srv->cur_ts;
-	
-		if (0 != connection_handle_read(srv, con)) {
+		
+		switch(nr = connection_handle_read(srv, con)) {
+		case NETWORK_OK:
+			break;
+		case NETWORK_ERROR:
 			return -1;
+		case NETWORK_REMOTE_CLOSE:
+			connection_set_state(srv, con, CON_STATE_ERROR);
+			return 0;
+		default:
+			break;
 		}
 	}
 
 	/* move the empty chunks out of the way */
-	for (c = cq->first; c; c = cq->first) {
-		assert(c != c->next);
-		
-		if (c->data.mem->used == 0) {
-			cq->first = c->next;
-			c->next = cq->unused;
-			cq->unused = c;
-			
-			if (cq->first == NULL) cq->last = NULL;
-			
-			c = cq->first;
-		} else {
-			break;
-		}
-	}
+	chunkqueue_remove_empty_chunks(cq);
 	
 	/* nothing to handle */
-	if (cq->first == NULL) return 0;
-
+	if (chunkqueue_is_empty(cq)) return 0;
+	
 	switch(ostate) {
 	case CON_STATE_READ:
 		/* prepare con->request.request */
@@ -864,16 +831,7 @@ int connection_handle_read_state(server *srv, connection *con)  {
 			}
 		}
 		
-		if (c->offset + 1 == c->data.mem->used) {
-			/* chunk is empty, move it to unused */
-			cq->first = c->next;
-			c->next = cq->unused;
-			cq->unused = c;
-			
-			if (cq->first == NULL) cq->last = NULL;
-			
-			assert(c != c->next);
-		}
+		chunkqueue_remove_empty_chunks(cq);
 		
 		/* con->request.request is setup up */
 		if (h_term) {
@@ -892,7 +850,6 @@ int connection_handle_read_state(server *srv, connection *con)  {
 			
 			break;
 		case HANDLER_GO_ON:
-			fprintf(stderr, "%s.%d: using default handler for fetch\n", __FILE__, __LINE__);
 			/* no-one else fetched it, so we fall back to fetch it into request.content */
 			for (c = cq->first; c && (con->request.content->used != con->request.content_length + 1); c = cq->first) {
 				off_t weWant, weHave, toRead;
@@ -910,21 +867,8 @@ int connection_handle_read_state(server *srv, connection *con)  {
 			
 				c->offset += toRead;
 				
-				if (c->offset + 1 >= c->data.mem->used) {
-					/* chunk is empty, move it to unused */
-				
-					cq->first = c->next;
-					c->next = cq->unused;
-					cq->unused = c;
-				
-					if (cq->first == NULL) cq->last = NULL;
-				
-					assert(c != c->next);
-				} else {
-					assert(toRead);
-				}
+				chunkqueue_remove_empty_chunks(cq);
 			}
-		
 		
 			/* Content is ready */
 			if (con->request.content->used == con->request.content_length + 1) {
@@ -1338,10 +1282,8 @@ int connection_state_machine(server *srv, connection *con) {
 				srv->con_closed++;
 			}
 			
-			fprintf(stderr, "%s.%d: reseting connection\n", __FILE__, __LINE__);
 			connection_reset(srv, con);
 			
-			fprintf(stderr, "%s.%d: next state: %d\n", __FILE__, __LINE__, con->state);
 			break;
 		case CON_STATE_CONNECT:
 			if (srv->srvconf.log_state_handling) {
@@ -1476,13 +1418,13 @@ int connection_state_machine(server *srv, connection *con) {
 				break;
 			}
 			
-			fprintf(stderr, "%s.%d: reseting connection\n", __FILE__, __LINE__);
 			connection_reset(srv, con);
 			
 			/* close the connection */
 			if ((con->keep_alive == 1) &&
 			    (0 == shutdown(con->fd->fd, SHUT_WR))) {
 				con->close_timeout_ts = srv->cur_ts;
+				
 				connection_set_state(srv, con, CON_STATE_CLOSE);
 				
 				if (srv->srvconf.log_state_handling) {
