@@ -22,6 +22,7 @@
 #include "plugin.h"
 
 #include "inet_ntop_cache.h"
+#include "file_descr_funcs.h"
 
 #include <fastcgi.h>
 #include <stdio.h>
@@ -326,13 +327,12 @@ typedef struct {
 	int       delayed;   /* flag to mark that the connect() is delayed */
 	
 	size_t    request_id;
-	int       fd;        /* fd to the fastcgi process */
-	int       fde_ndx;   /* index into the fd-event buffer */
+	file_descr *fd;        /* fd to the fastcgi process */
 
-	size_t    path_info_offset; /* start of path_info in uri.path */
-	
 	pid_t     pid;
 	int       got_proc;
+
+	buffer   *extension; /* used extension, used for SCRIPT_NAME/PATH_INFO of check-local=0 */
 	
 	plugin_config conf;
 	
@@ -354,11 +354,10 @@ static handler_ctx * handler_ctx_init() {
 	hctx = calloc(1, sizeof(*hctx));
 	assert(hctx);
 	
-	hctx->fde_ndx = -1;
-	
 	hctx->response = buffer_init();
 	hctx->response_header = buffer_init();
 	hctx->write_buffer = buffer_init();
+	hctx->extension = buffer_init();
 	
 	hctx->request_id = 0;
 	hctx->state = FCGI_STATE_INIT;
@@ -368,9 +367,11 @@ static handler_ctx * handler_ctx_init() {
 	hctx->response_type = 0;
 	hctx->response_padding = 0;
 	hctx->response_request_id = 0;
-	hctx->fd = -1;
+	hctx->fd = file_descr_init();
 	
 	hctx->reconnects = 0;
+
+
 	
 	return hctx;
 }
@@ -379,6 +380,8 @@ static void handler_ctx_free(handler_ctx *hctx) {
 	buffer_free(hctx->response);
 	buffer_free(hctx->response_header);
 	buffer_free(hctx->write_buffer);
+	buffer_free(hctx->extension);
+	file_descr_free(hctx->fd);
 	
 	if (hctx->rb) {
 		if (hctx->rb->ptr) free(hctx->rb->ptr);
@@ -1259,10 +1262,10 @@ void fcgi_connection_cleanup(server *srv, handler_ctx *hctx) {
 		return;
 	}
 	
-	if (hctx->fd != -1) {
-		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
+	if (hctx->fd->fd != -1) {
+		fdevent_event_del(srv->ev, hctx->fd);
 		fdevent_unregister(srv->ev, hctx->fd);
-		close(hctx->fd);
+		close(hctx->fd->fd);
 		srv->cur_fds--;
 	}
 	
@@ -1315,9 +1318,9 @@ static int fcgi_reconnect(server *srv, handler_ctx *hctx) {
 	 * 
 	 */
 	
-	fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
+	fdevent_event_del(srv->ev, hctx->fd);
 	fdevent_unregister(srv->ev, hctx->fd);
-	close(hctx->fd);
+	close(hctx->fd->fd);
 	srv->cur_fds--;
 	
 	fcgi_requestid_del(srv, p, hctx->request_id);
@@ -1330,7 +1333,7 @@ static int fcgi_reconnect(server *srv, handler_ctx *hctx) {
 	if (p->conf.debug) {
 		log_error_write(srv, __FILE__, __LINE__, "sddb",
 				"release proc:", 
-				hctx->fd,
+				hctx->fd->fd,
 				hctx->proc->pid, hctx->proc->socket);
 	}
 	
@@ -1418,7 +1421,7 @@ static int fcgi_establish_connection(server *srv, handler_ctx *hctx) {
 	
 	fcgi_extension_host *host = hctx->host;
 	fcgi_proc *proc   = hctx->proc;
-	int fcgi_fd       = hctx->fd;
+	int fcgi_fd       = hctx->fd->fd;
 	
 	memset(&fcgi_addr, 0, sizeof(fcgi_addr));
 	
@@ -1609,7 +1612,7 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	/* get the server-side of the connection to the client */
 	our_addr_len = sizeof(our_addr);
 	
-	if (-1 == getsockname(con->fd, &(our_addr.plain), &our_addr_len)) {
+	if (-1 == getsockname(con->fd->fd, &(our_addr.plain), &our_addr_len)) {
 		s = inet_ntop_cache_get_ip(srv, &(srv_sock->addr));
 	} else {
 		s = inet_ntop_cache_get_ip(srv, &(our_addr));
@@ -1650,22 +1653,74 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 		 * For AUTHORIZER mode these headers should be omitted.
 		 */
 
-		fcgi_env_add(p->fcgi_env, CONST_STR_LEN("SCRIPT_NAME"), CONST_BUF_LEN(con->uri.path));
-		
-		if (!buffer_is_empty(con->request.pathinfo)) {
-			fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), CONST_BUF_LEN(con->request.pathinfo));
-			
-			/* PATH_TRANSLATED is only defined if PATH_INFO is set */
-			
-			if (!buffer_is_empty(host->docroot)) {
-				buffer_copy_string_buffer(p->path, host->docroot);
+		if (host->check_local == 0 && 
+		    !buffer_is_empty(hctx->extension) &&
+		    hctx->extension->ptr[0] == '/') {
+			char *sl;
+			/* no local check and path-prefix /fcgi_pattern 
+			 *
+			 * zope needs this 
+			 *
+			 * SCRIPT_NAME => /fcgi_pattern
+			 * PATH_INFO => uri.path - /fcgi_pattern
+			 * 
+			 */
+
+			/* search for / in uri.path after /fcgi_pattern
+			 * 
+			 * uri.path = /zope/abc
+			 * 
+			 * pattern    SCRIPT_NAME     PATH_INFO
+			 * /zop       /zope           /abc
+			 * /zope/     /zope           /abc
+			 * /zope/abc  /zope/abc       (empty)
+			 * /          /zope/abc       (empty)
+			 * 
+			 */
+			if (hctx->extension->used == 2) {
+				/* ext is / only */
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("SCRIPT_NAME"), CONST_BUF_LEN(con->uri.path));
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), CONST_STR_LEN(""));
+
+			} else if (hctx->extension->ptr[hctx->extension->used - 2] == '/') {
+				/* last character is a / */
+
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("SCRIPT_NAME"), con->uri.path->ptr, hctx->extension->used - 2);
+				if (con->uri.path->used > hctx->extension->used) {
+					fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), 
+							con->uri.path->ptr + hctx->extension->used - 2, 
+							con->uri.path->used - hctx->extension->used + 1);
+				} else {
+					fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), CONST_STR_LEN(""));
+				}
+
+			} else if (NULL != (sl = strchr(con->uri.path->ptr + hctx->extension->used - 1, '/'))) {
+				/* a trailing slash was found */
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("SCRIPT_NAME"), con->uri.path->ptr, sl - con->uri.path->ptr - 1);
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), sl, strlen(sl));
 			} else {
-				buffer_copy_string_buffer(p->path, con->physical.doc_root);
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("SCRIPT_NAME"), CONST_BUF_LEN(con->uri.path));
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), CONST_STR_LEN(""));
 			}
-			buffer_append_string_buffer(p->path, con->request.pathinfo);
-			fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_TRANSLATED"), CONST_BUF_LEN(p->path));
+
 		} else {
-			fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), CONST_STR_LEN(""));
+			fcgi_env_add(p->fcgi_env, CONST_STR_LEN("SCRIPT_NAME"), CONST_BUF_LEN(con->uri.path));
+		
+			if (!buffer_is_empty(con->request.pathinfo)) {
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), CONST_BUF_LEN(con->request.pathinfo));
+				
+				/* PATH_TRANSLATED is only defined if PATH_INFO is set */
+			
+				if (!buffer_is_empty(host->docroot)) {
+					buffer_copy_string_buffer(p->path, host->docroot);
+				} else {
+					buffer_copy_string_buffer(p->path, con->physical.doc_root);
+				}
+				buffer_append_string_buffer(p->path, con->request.pathinfo);
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_TRANSLATED"), CONST_BUF_LEN(p->path));
+			} else {
+				fcgi_env_add(p->fcgi_env, CONST_STR_LEN("PATH_INFO"), CONST_STR_LEN(""));
+			}
 		}
 	}
 
@@ -1877,14 +1932,14 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 	
 	plugin_data *p    = hctx->plugin_data;
 	connection *con   = hctx->remote_conn;
-	int fcgi_fd       = hctx->fd;
+	int fcgi_fd       = hctx->fd->fd;
 	fcgi_extension_host *host= hctx->host;
 	fcgi_proc *proc   = hctx->proc;
 	
 	/* 
 	 * check how much we have to read 
 	 */
-	if (ioctl(hctx->fd, FIONREAD, &b)) {
+	if (ioctl(hctx->fd->fd, FIONREAD, &b)) {
 		log_error_write(srv, __FILE__, __LINE__, "sd", 
 				"unexpected end-of-file (perhaps the fastcgi process died):",
 				fcgi_fd);
@@ -1906,7 +1961,7 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 		}
 		
 		/* append to read-buffer */
-		if (-1 == (r = read(hctx->fd, hctx->rb->ptr + hctx->rb->used, b))) {
+		if (-1 == (r = read(hctx->fd->fd, hctx->rb->ptr + hctx->rb->used, b))) {
 			log_error_write(srv, __FILE__, __LINE__, "sds", 
 					"unexpected end-of-file (perhaps the fastcgi process died):",
 					fcgi_fd, strerror(errno));
@@ -2366,7 +2421,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 	case FCGI_STATE_INIT:
 		r = host->unixsocket->used ? AF_UNIX : AF_INET;
 		
-		if (-1 == (hctx->fd = socket(r, SOCK_STREAM, 0))) {
+		if (-1 == (hctx->fd->fd = socket(r, SOCK_STREAM, 0))) {
 			if (errno == EMFILE ||
 			    errno == EINTR) {
 				log_error_write(srv, __FILE__, __LINE__, "sd", 
@@ -2379,8 +2434,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 					"socket failed:", strerror(errno), srv->cur_fds, srv->max_fds);
 			return HANDLER_ERROR;
 		}
-		hctx->fde_ndx = -1;
-		
+
 		srv->cur_fds++;
 		
 		fdevent_register(srv->ev, hctx->fd, fcgi_handle_fdevent, hctx);
@@ -2401,7 +2455,6 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 			
 			/* all childs are dead */
 			if (hctx->proc == NULL) {
-				hctx->fde_ndx = -1;
 				
 				return HANDLER_ERROR;
 			}
@@ -2416,12 +2469,11 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 				
 				/* connection is in progress, wait for an event and call getsockopt() below */
 				
-				fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+				fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
 				
 				return HANDLER_WAIT_FOR_EVENT;
 			case -1:
 				/* if ECONNREFUSED choose another connection -> FIXME */
-				hctx->fde_ndx = -1;
 				
 				return HANDLER_ERROR;
 			default:
@@ -2435,7 +2487,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 			socklen_t socket_error_len = sizeof(socket_error);
 			
 			/* try to finish the connect() */
-			if (0 != getsockopt(hctx->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
+			if (0 != getsockopt(hctx->fd->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", 
 						"getsockopt failed:", strerror(errno));
 				
@@ -2492,7 +2544,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 	case FCGI_STATE_WRITE:
 		/* why aren't we using the network_ interface here ? */
 		
-		r = write(hctx->fd, 
+		r = write(hctx->fd->fd, 
 			  hctx->write_buffer->ptr + hctx->write_offset, 
 			  hctx->write_buffer->used - hctx->write_offset);
 		
@@ -2537,7 +2589,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 				
 				return HANDLER_ERROR;
 			} else {
-				fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+				fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
 				
 				return HANDLER_WAIT_FOR_EVENT;
 			}
@@ -2553,7 +2605,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 	case FCGI_STATE_READ:
 		/* waiting for a response */
 		
-		fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
+		fdevent_event_add(srv->ev, hctx->fd, FDEVENT_IN);
 		
 		break;
 	default:
@@ -2923,7 +2975,6 @@ static handler_t fcgi_check_extension(server *srv, connection *con, void *p_d, i
 	size_t k, i;
 	buffer *fn;
 	fcgi_extension *extension = NULL;
-	size_t path_info_offset;
 	
 	/* Possibly, we processed already this request */
 	if (con->file_started == 1) return HANDLER_GO_ON;
@@ -2944,8 +2995,6 @@ static handler_t fcgi_check_extension(server *srv, connection *con, void *p_d, i
 		fcgi_patch_connection(srv, con, p, CONST_BUF_LEN(patch));
 	}
 	
-	path_info_offset = 0;
-	
 	/* check if extension matches */
 	for (k = 0; k < p->conf.exts->used; k++) {
 		size_t ct_len;
@@ -2958,15 +3007,8 @@ static handler_t fcgi_check_extension(server *srv, connection *con, void *p_d, i
 		
 		if (s_len < ct_len) continue;
 		
-		/* check extension in the form "/fcgi_pattern" */
 		if (*(extension->key->ptr) == '/' && strncmp(fn->ptr, extension->key->ptr, ct_len) == 0) {
-			if (s_len > ct_len + 1) {
-				char *pi_offset;
-				
-				if (0 != (pi_offset = strchr(fn->ptr + ct_len + 1, '/'))) {
-					path_info_offset = pi_offset - fn->ptr;
-				}
-			}
+			/* check extension in the form "/fcgi_pattern" */
 			break;
 		} else if (0 == strncmp(fn->ptr + s_len - ct_len, extension->key->ptr, ct_len)) {
 			/* check extension in the form ".fcg" */
@@ -3008,7 +3050,7 @@ static handler_t fcgi_check_extension(server *srv, connection *con, void *p_d, i
 				handler_ctx *hctx;
 				hctx = handler_ctx_init();
 				
-				hctx->path_info_offset = path_info_offset;
+				buffer_copy_string_buffer(hctx->extension, extension->key);
 				hctx->remote_conn      = con;
 				hctx->plugin_data      = p;
 				hctx->host             = host;
@@ -3028,7 +3070,6 @@ static handler_t fcgi_check_extension(server *srv, connection *con, void *p_d, i
 			handler_ctx *hctx;
 			hctx = handler_ctx_init();
 			
-			hctx->path_info_offset = path_info_offset;
 			hctx->remote_conn      = con;
 			hctx->plugin_data      = p;
 			hctx->host             = host;
@@ -3075,15 +3116,15 @@ JOBLIST_FUNC(mod_fastcgi_handle_joblist) {
 	
 	if (hctx == NULL) return HANDLER_GO_ON;
 
-	if (hctx->fd != -1) {
+	if (hctx->fd->fd != -1) {
 		switch (hctx->state) {
 		case FCGI_STATE_READ:
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
+			fdevent_event_add(srv->ev, hctx->fd, FDEVENT_IN);
 			
 			break;
 		case FCGI_STATE_CONNECT:
 		case FCGI_STATE_WRITE:
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
 			
 			break;
 		case FCGI_STATE_INIT:
