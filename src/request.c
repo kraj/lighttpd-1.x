@@ -348,6 +348,7 @@ int http_request_parse(server *srv, connection *con) {
 	
 	keep_alive_set = 0;
 	con_length_set = 0;
+	con->request.content_finished = 1;
 
 	/* parse the first line of the request
 	 *
@@ -1015,10 +1016,9 @@ int http_request_parse(server *srv, connection *con) {
 			return 0;
 		}
 		
-		
-		/* we have content */
 		if (con->request.content_length != 0) {
-			return 1;
+			/* we have to fetch the request-body */
+			con->request.content_finished = 0;
 		}
 	}
 	
