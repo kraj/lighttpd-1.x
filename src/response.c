@@ -1061,6 +1061,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			log_error_write(srv, __FILE__, __LINE__,  "s",  "-- handling physical path");
 			log_error_write(srv, __FILE__, __LINE__,  "sb", "Path         :", con->physical.path);
 		}
+		
 		if (NULL != (fce = file_cache_get_entry(srv, con->physical.path)) ||
 		    HANDLER_GO_ON == (ret = file_cache_add_entry(srv, con, con->physical.path, &fce))) {
 			/* file exists */
@@ -1080,28 +1081,21 @@ handler_t http_response_prepare(server *srv, connection *con) {
 				} else {
 					found = 0;
 					/* indexfile */
-					WP();
+					
 					for (k = 0; !found && (k < con->conf.indexfiles->used); k++) {
 						data_string *ds = (data_string *)con->conf.indexfiles->data[k];
 						
 						buffer_copy_string_buffer(srv->tmp_buf, con->physical.path);
 						buffer_append_string_buffer(srv->tmp_buf, ds->value);
 						
-						log_error_write(srv, __FILE__, __LINE__, "sbsb",
-								"index-file: ", con->uri.path,
-								"->", con->physical.path);
-						WP();
 						switch (file_cache_add_entry(srv, con, srv->tmp_buf, &(fce))) {
 						case HANDLER_GO_ON:
 							/* rewrite uri.path to the real path (/ -> /index.php) */
 							buffer_append_string_buffer(con->uri.path, ds->value);
-							WP();
 							
 							found = 1;
 							break;
 						case HANDLER_ERROR:
-							WP();
-							
 							if (errno == EACCES) {
 								con->http_status = 403;
 								buffer_reset(con->physical.path);
@@ -1133,7 +1127,6 @@ handler_t http_response_prepare(server *srv, connection *con) {
 					if (!found &&
 					    (k == con->conf.indexfiles->used)) {
 						/* directory listing ? */
-						WP();	
 						buffer_reset(srv->tmp_buf);
 
 						if (con->conf.dir_listing == 0) {
@@ -1149,12 +1142,6 @@ handler_t http_response_prepare(server *srv, connection *con) {
 						return HANDLER_FINISHED;
 					}
 					buffer_copy_string_buffer(con->physical.path, srv->tmp_buf);
-
-
-					log_error_write(srv, __FILE__, __LINE__, "sbsb",
-								"index-file: ", con->uri.path,
-								"->", con->physical.path);
-								
 				}
 			}
 		} else {
