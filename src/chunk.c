@@ -48,7 +48,7 @@ static void chunk_free(chunk *c) {
 	/* c->data.mem overlaps with c->data.file.name */
 	switch (c->type) {
 	case MEM_CHUNK: buffer_free(c->data.mem); break;
-	case FILE_CHUNK: buffer_free(c->data.file.name); break;
+	case FILE_CHUNK: break;
 	default: break;	
 	}
 	
@@ -127,7 +127,7 @@ void chunkqueue_reset(chunkqueue *cq) {
 	cq->first = cq->last = NULL;
 }
 
-int chunkqueue_append_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len) {
+int chunkqueue_append_file(chunkqueue *cq, file_cache_entry *fce, off_t offset, off_t len) {
 	chunk *c;
 	
 	if (len == 0) return 0;
@@ -136,7 +136,7 @@ int chunkqueue_append_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len) 
 	
 	c->type = FILE_CHUNK;
 	
-	buffer_copy_string_buffer(c->data.file.name, fn);
+	c->data.file.fce = fce;
 	c->data.file.offset = offset;
 	c->data.file.length = len;
 	c->offset = 0;
@@ -261,52 +261,4 @@ int chunkqueue_is_empty(chunkqueue *cq) {
 	return cq->first ? 0 : 1;
 }
 
-#ifdef DEBUG_CHUNK
 
-static int write_chunkqueue(int fd, chunkqueue *c) {
-	UNUSED(fd);
-	UNUSED(c);
-
-	return 0;
-}
-
-int main(int argc, char **argv) {
-	chunkqueue *c;
-	buffer *b, *fn;
-	
-	UNUSED(argc);
-	UNUSED(argv);
-
-	c = chunkqueue_init();
-	
-	fn = buffer_init_string("server.c");
-	
-	chunkqueue_append_file(c, fn, 0, 10);
-	chunkqueue_append_file(c, fn, 10, 10);
-	chunkqueue_append_file(c, fn, 20, 10);
-	
-	write_chunkqueue(STDERR_FILENO, c);
-	chunkqueue_reset(c);
-	
-	b = buffer_init();
-	buffer_copy_string(b, "\ntest string mit vielen Zeichen\n");
-	chunkqueue_append_buffer(c, b);
-	
-	write_chunkqueue(STDERR_FILENO, c);
-	chunkqueue_reset(c);
-	
-	chunkqueue_append_file(c, fn, 0, 10);
-	buffer_copy_string(b, "\ntest string mit vielen Zeichen\n");
-	chunkqueue_append_buffer(c, b);
-	chunkqueue_append_file(c, fn, 10, 10);
-	chunkqueue_append_file(c, fn, 20, 10);
-	chunkqueue_append_file(c, fn, 50, 40);
-	
-	write_chunkqueue(STDERR_FILENO, c);
-	chunkqueue_reset(c);
-	
-	chunkqueue_free(c);
-	
-	return 0;
-}
-#endif
