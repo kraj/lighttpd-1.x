@@ -28,6 +28,7 @@ static keyvalue http_status[] = {
 	{ 204, "No Content" },
 	{ 205, "Reset Content" },
 	{ 206, "Partial Content" },
+	{ 207, "Multi-status" },
 	{ 300, "Multiple Choices" },
 	{ 301, "Moved Permanently" },
 	{ 302, "Found" },
