@@ -94,9 +94,21 @@ network_t network_write_chunkqueue_write(server *srv, file_descr *write_fd, chun
 			toSend = c->data.mem->used - 1 - c->offset;
 
 			if ((r = write(write_fd->fd, offset, toSend)) < 0) {
-				log_error_write(srv, __FILE__, __LINE__, "ssd", "write failed: ", strerror(errno), write_fd->fd);
+				switch (errno) {
+				case EAGAIN:
+					write_fd->is_writable = 0;
+				case EINTR:
+					r = 0;
+					break;
+				case EPIPE:
+				case ECONNRESET:
+					return NETWORK_REMOTE_CLOSE;
+				default:
+					log_error_write(srv, __FILE__, __LINE__, "ssd", 
+							"write failed:", strerror(errno), write_fd->fd);
 				
-				return NETWORK_ERROR;
+					return NETWORK_ERROR;
+				}
 			}
 			
 			c->offset += r;
