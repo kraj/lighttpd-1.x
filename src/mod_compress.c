@@ -14,6 +14,7 @@
 #include "buffer.h"
 #include "response.h"
 #include "stat_cache.h"
+#include "http_chunk.h"
 
 #include "plugin.h"
 
@@ -326,6 +327,9 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 	void *start;
 	const char *filename = fn->ptr;
 	ssize_t r;
+	stat_cache_entry *compressed_sce = NULL;
+
+	if (buffer_is_empty(p->conf.compress_cache_dir)) return -1;
 	
 	/* overflow */
 	if ((off_t)(sce->st.st_size * 1.1) < sce->st.st_size) return -1;
@@ -383,27 +387,34 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 	}
 	
 	buffer_append_string_buffer(p->ofn, sce->etag);
+
+
+	if (HANDLER_ERROR != stat_cache_get_entry(srv, con, p->ofn, &compressed_sce)) {
+		/* file exists */
+
+		http_chunk_append_file(srv, con, p->ofn, 0, compressed_sce->st.st_size);
+		con->file_finished = 1;
+
+		return 0;
+	}
 	
 	if (-1 == (ofd = open(p->ofn->ptr, O_WRONLY | O_CREAT | O_EXCL | O_BINARY, 0600))) {
 		if (errno == EEXIST) {
 			/* cache-entry exists */
-#if 0
-			log_error_write(srv, __FILE__, __LINE__, "bs", p->ofn, "compress-cache hit");
-#endif
-			buffer_copy_string_buffer(con->physical.path, p->ofn);
-			
-			return 0;
+	
 		}
 		
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "creating cachefile", p->ofn, "failed", strerror(errno));
+		log_error_write(srv, __FILE__, __LINE__, "sbss", 
+				"creating cachefile", p->ofn, 
+				"failed", strerror(errno));
 		
 		return -1;
 	}
-#if 0
-	log_error_write(srv, __FILE__, __LINE__, "bs", p->ofn, "compress-cache miss");
-#endif	
+
 	if (-1 == (ifd = open(filename, O_RDONLY | O_BINARY))) {
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "opening plain-file", fn, "failed", strerror(errno));
+		log_error_write(srv, __FILE__, __LINE__, "sbss", 
+				"opening plain-file", fn, 
+				"failed", strerror(errno));
 		
 		close(ofd);
 		
@@ -412,7 +423,9 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 	
 	
 	if (MAP_FAILED == (start = mmap(NULL, sce->st.st_size, PROT_READ, MAP_SHARED, ifd, 0))) {
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "mmaping", fn, "failed", strerror(errno));
+		log_error_write(srv, __FILE__, __LINE__, "sbss", 
+				"mmaping", fn, 
+				"failed", strerror(errno));
 		
 		close(ofd);
 		close(ifd);
@@ -455,8 +468,9 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 	
 	if (ret != 0) return -1;
 	
-	buffer_copy_string_buffer(con->physical.path, p->ofn);
-	
+	http_chunk_append_file(srv, con, p->ofn, 0, r);
+	con->file_finished = 1;
+
 	return 0;
 }
 
@@ -476,21 +490,22 @@ static int deflate_file_to_buffer(server *srv, connection *con, plugin_data *p, 
 	
 	if (sce->st.st_size > 128 * 1024 * 1024) return -1;
 	
-	
 	if (-1 == (ifd = open(fn->ptr, O_RDONLY | O_BINARY))) {
 		log_error_write(srv, __FILE__, __LINE__, "sbss", "opening plain-file", fn, "failed", strerror(errno));
 		
 		return -1;
 	}
+
+	start = mmap(NULL, sce->st.st_size, PROT_READ, MAP_SHARED, ifd, 0);
 	
-	
-	if (MAP_FAILED == (start = mmap(NULL, sce->st.st_size, PROT_READ, MAP_SHARED, ifd, 0))) {
+	close(ifd);
+
+	if (MAP_FAILED == start) {
 		log_error_write(srv, __FILE__, __LINE__, "sbss", "mmaping", fn, "failed", strerror(errno));
 		
-		close(ifd);
 		return -1;
 	}
-	
+
 	switch(type) {
 #ifdef USE_ZLIB
 	case HTTP_ACCEPT_ENCODING_GZIP: 
@@ -511,7 +526,6 @@ static int deflate_file_to_buffer(server *srv, connection *con, plugin_data *p, 
 	}
 		
 	munmap(start, sce->st.st_size);
-	close(ifd);
 	
 	if (ret != 0) return -1;
 	
@@ -588,6 +602,9 @@ PHYSICALPATH_FUNC(mod_compress_physical) {
 
 	/* don't compress files that are too large as we need to much time to handle them */
 	if (max_fsize && (sce->st.st_size >> 10) > max_fsize) return HANDLER_GO_ON;
+
+	/* compressing the file might lead to larger files instead */
+	if (sce->st.st_size < 128) return HANDLER_GO_ON;
 		
 	/* check if mimetype is in compress-config */
 	for (m = 0; m < p->conf.compress->used; m++) {
@@ -638,7 +655,20 @@ PHYSICALPATH_FUNC(mod_compress_physical) {
 					
 					const char *compression_name = NULL;
 					int compression_type = 0;
+					buffer *mtime;
 					
+					mtime = strftime_cache_get(srv, sce->st.st_mtime);
+					etag_mutate(con->physical.etag, sce->etag);
+
+					response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
+					response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
+
+					/* perhaps we don't even have to compress the file as the browser still has the
+					 * current version */
+					if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {
+						return HANDLER_FINISHED;
+					}
+
 					/* select best matching encoding */
 					if (matched_encodings & HTTP_ACCEPT_ENCODING_BZIP2) {
 						compression_type = HTTP_ACCEPT_ENCODING_BZIP2;
@@ -651,30 +681,20 @@ PHYSICALPATH_FUNC(mod_compress_physical) {
 						compression_name = dflt_deflate;
 					}
 					
-					/* deflate it */
-					if (p->conf.compress_cache_dir->used) {
-						if (0 == deflate_file_to_file(srv, con, p,
-									      con->physical.path, sce, compression_type)) {
-							buffer *mtime;
+					/* deflate it to file (cached) or to memory */
+					if (0 == deflate_file_to_file(srv, con, p,
+							con->physical.path, sce, compression_type) ||
+					    0 == deflate_file_to_buffer(srv, con, p,
+							con->physical.path, sce, compression_type)) {
 							
-							response_header_overwrite(srv, con, CONST_STR_LEN("Content-Encoding"), compression_name, strlen(compression_name));
-							
-							mtime = strftime_cache_get(srv, sce->st.st_mtime);
-							response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
+						response_header_overwrite(srv, con, 
+								CONST_STR_LEN("Content-Encoding"), 
+								compression_name, strlen(compression_name));
 
-							etag_mutate(con->physical.etag, sce->etag);
-							response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
+						response_header_overwrite(srv, con, 
+								CONST_STR_LEN("Content-Type"), 
+								CONST_BUF_LEN(sce->content_type));
 
-							response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
-
-							return HANDLER_GO_ON;
-						}
-					} else if (0 == deflate_file_to_buffer(srv, con, p,
-									       con->physical.path, sce, compression_type)) {
-							
-						response_header_overwrite(srv, con, CONST_STR_LEN("Content-Encoding"), compression_name, strlen(compression_name));
-						response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
-						
 						return HANDLER_FINISHED;
 					}
 					break;
