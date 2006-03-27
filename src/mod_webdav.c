@@ -1375,6 +1375,8 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 	case HTTP_METHOD_PUT: {
 		int fd;
 		chunkqueue *cq = con->request_content_queue;
+		chunk *c;
+		data_string *ds_range;
 
 		if (p->conf.is_readonly) {
 			con->http_status = 403;
@@ -1383,86 +1385,154 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 
 		assert(chunkqueue_length(cq) == (off_t)con->request.content_length);
 
-		/* taken what we have in the request-body and write it to a file */
-		if (-1 == (fd = open(con->physical.path->ptr, O_WRONLY|O_CREAT|O_TRUNC, 0600))) {
-			/* we can't open the file */
-			con->http_status = 403;
-		} else {
-			chunk *c;
+		/* RFC2616 Section 9.6 PUT requires us to send 501 on all Content-* we don't support 
+		 * - most important Content-Range
+		 *
+		 *
+		 * Example: Content-Range: bytes 100-1037/1038 */
 
-			con->http_status = 201; /* created */
-			con->file_finished = 1;
+		if (NULL != (ds_range = (data_string *)array_get_element(con->request.headers, "Content-Range"))) {
+			const char *num = ds_range->value->ptr;
+			off_t offset;
+			char *err = NULL;
 
-			for (c = cq->first; c; c = cq->first) {
-				int r = 0; 
+			if (0 != strncmp(num, "bytes ", 6)) {
+				con->http_status = 501; /* not implemented */
 
-				/* copy all chunks */
-				switch(c->type) {
-				case FILE_CHUNK:
-
-					if (c->file.mmap.start == MAP_FAILED) {
-						if (-1 == c->file.fd &&  /* open the file if not already open */
-						    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
-							log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
-					
-							return -1;
-						}
-				
-						if (MAP_FAILED == (c->file.mmap.start = mmap(0, c->file.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
-							log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed: ", 
-									strerror(errno), c->file.name,  c->file.fd);
-
-							return -1;
-						}
-
-						c->file.mmap.length = c->file.length;
-
-						close(c->file.fd);
-						c->file.fd = -1;
-	
-						/* chunk_reset() or chunk_free() will cleanup for us */
-					}
-
-					if ((r = write(fd, c->file.mmap.start + c->offset, c->file.length - c->offset)) < 0) {
-						switch(errno) {
-						case ENOSPC:
-							con->http_status = 507;
-		
-							break;
-						default:
-							con->http_status = 403;
-							break;
-						}
-					}
-					break;
-				case MEM_CHUNK:
-					if ((r = write(fd, c->mem->ptr + c->offset, c->mem->used - c->offset - 1)) < 0) {
-						switch(errno) {
-						case ENOSPC:
-							con->http_status = 507;
-		
-							break;
-						default:
-							con->http_status = 403;
-							break;
-						}
-					}
-					break;
-				case UNUSED_CHUNK:
-					break;
-				}
-
-				if (r > 0) {
-					c->offset += r;
-					cq->bytes_out += r;
-				} else {
-					break;
-				}
-				chunkqueue_remove_finished_chunks(cq);
+				return HANDLER_FINISHED;
 			}
-			close(fd);
 
+			/* we only support <num>- ... */
+
+			num += 6;
+
+			/* skip WS */
+			while (*num == ' ' || *num == '\t') num++;
+
+			if (*num == '\0') {
+				con->http_status = 501; /* not implemented */
+
+				return HANDLER_FINISHED;
+			}
+
+			offset = strtoll(num, &err, 10);
+
+			if (*err != '-' || offset < 0) {
+				con->http_status = 501; /* not implemented */
+
+				return HANDLER_FINISHED;
+			}
+			
+			if (-1 == (fd = open(con->physical.path->ptr, O_WRONLY, 0600))) {
+				switch (errno) {
+				case ENOENT:
+					con->http_status = 404; /* not found */
+					break;
+				default:
+					con->http_status = 403; /* not found */
+					break;
+				}
+				return HANDLER_FINISHED;
+			}
+
+			if (-1 == lseek(fd, offset, SEEK_SET)) {
+				con->http_status = 501; /* not implemented */
+
+				close(fd);
+
+				return HANDLER_FINISHED;
+			}
+			con->http_status = 200; /* modified */
+		} else {
+			/* take what we have in the request-body and write it to a file */
+
+			/* if the file doesn't exist, create it */
+			if (-1 == (fd = open(con->physical.path->ptr, O_WRONLY|O_TRUNC, 0600))) {
+				if (errno == ENOENT && 
+				    -1 == (fd = open(con->physical.path->ptr, O_WRONLY|O_CREAT|O_TRUNC|O_EXCL, 0600))) {
+					/* we can't open the file */
+					con->http_status = 403;
+
+					return HANDLER_FINISHED;
+				} else {
+					con->http_status = 201; /* created */
+				}
+			} else {
+				con->http_status = 200; /* modified */
+			}
 		}
+
+		con->file_finished = 1;
+
+		for (c = cq->first; c; c = cq->first) {
+			int r = 0; 
+
+			/* copy all chunks */
+			switch(c->type) {
+			case FILE_CHUNK:
+
+				if (c->file.mmap.start == MAP_FAILED) {
+					if (-1 == c->file.fd &&  /* open the file if not already open */
+					    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
+						log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
+				
+						return -1;
+					}
+			
+					if (MAP_FAILED == (c->file.mmap.start = mmap(0, c->file.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
+						log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed: ", 
+								strerror(errno), c->file.name,  c->file.fd);
+
+						return -1;
+					}
+
+					c->file.mmap.length = c->file.length;
+
+					close(c->file.fd);
+					c->file.fd = -1;
+
+					/* chunk_reset() or chunk_free() will cleanup for us */
+				}
+
+				if ((r = write(fd, c->file.mmap.start + c->offset, c->file.length - c->offset)) < 0) {
+					switch(errno) {
+					case ENOSPC:
+						con->http_status = 507;
+	
+						break;
+					default:
+						con->http_status = 403;
+						break;
+					}
+				}
+				break;
+			case MEM_CHUNK:
+				if ((r = write(fd, c->mem->ptr + c->offset, c->mem->used - c->offset - 1)) < 0) {
+					switch(errno) {
+					case ENOSPC:
+						con->http_status = 507;
+	
+						break;
+					default:
+						con->http_status = 403;
+						break;
+					}
+				}
+				break;
+			case UNUSED_CHUNK:
+				break;
+			}
+
+			if (r > 0) {
+				c->offset += r;
+				cq->bytes_out += r;
+			} else {
+				break;
+			}
+			chunkqueue_remove_finished_chunks(cq);
+		}
+		close(fd);
+
 		return HANDLER_FINISHED;
 	}
 	case HTTP_METHOD_MOVE: 
