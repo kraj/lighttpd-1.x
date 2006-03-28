@@ -183,6 +183,8 @@ your stat cache is up to date. ::
 
   server.stat-cache-engine = "fam"   # either fam, simple or disabled
 
+See http://oss.sgi.com/projects/fam/faq.html for information about FAM.
+See http://www.gnome.org/~veillard/gamin/overview.html for information about gamin.
 
 Platform-Specific Notes
 =======================
