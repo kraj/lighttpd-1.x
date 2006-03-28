@@ -699,21 +699,13 @@ static int config_tokenizer(server *srv, tokenizer_t *t, int *token_id, buffer *
 				for (i = 0; t->input[t->offset + i] && isdigit((unsigned char)t->input[t->offset + i]);  i++);
 				
 				/* was there it least a digit ? */
-				if (i && t->input[t->offset + i]) {
+				if (i) {
 					tid = TK_INTEGER;
 					
 					buffer_copy_string_len(token, t->input + t->offset, i);
 					
 					t->offset += i;
 					t->line_pos += i;
-				} else {
-					/* ERROR */
-					log_error_write(srv, __FILE__, __LINE__, "sbsdsds", 
-							"source:", t->source,
-							"line:", t->line, "pos:", t->line_pos, 
-							"unexpected EOF");
-					
-					return -1;
 				}
 			} else {
 				/* the key might consist of [-.0-9a-z] */
