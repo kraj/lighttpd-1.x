@@ -10,8 +10,8 @@ Installation from svn repo
 Prerequirement
 ------------
 subversion (required, for svn co, svn up)
-perl (optional, for test)
-php (optional, for test)
+perl (optional, for check)
+php (optional, for check)
 
 Choose one of the build systems:
 1. build with autotools
@@ -49,7 +49,7 @@ check configure options
   $ ./configure --help
   $ ./configure --prefix=/usr/local/lighttpd/ --enable-...
   $ make clean
-  $ make test
+  $ make check
   $ src/lighttpd -Df your_test.conf
   (Ctrl+C once or twice to terminate lighttpd)
   $ su -
@@ -65,7 +65,7 @@ copy and modify config.py for your own needs with your favorite editor:
 make sure your scons version is up to date, v0.96.91.D001 works. old version is known to have problem to build lighttpd.
   $ scons --version
   $ scons
-  $ scons test
+  $ scons check
   $ src/lighttpd -Df your_test.conf
   (Ctrl+C once or twice to terminate lighttpd)
 
