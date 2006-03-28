@@ -8,9 +8,8 @@ BEGIN {
 
 use strict;
 use IO::Socket;
-use Test::More tests => 11;
+use Test::More tests => 12;
 use LightyTest;
-use POSIX;
 
 my $tf = LightyTest->new();
 my $t;
@@ -37,7 +36,7 @@ EOF
 $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200 } ];
 ok($tf->handle_http($t) == 0, 'Conditional GET - old If-Modified-Since, comment');
 
-my $now = POSIX::strftime('%a, %d %b %Y %H:%M:%S GMT', gmtime());
+my $now = $t->{date};
 
 $t->{REQUEST}  = ( <<EOF
 GET / HTTP/1.0
@@ -80,7 +79,7 @@ If-Modified-Since: Sun, 1970 Jan 01 00:00:01 GMT; foo
 EOF
  );
 $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200 } ];
-ok($tf->handle_http($t) == 0, 'Conditional GET - old If-None-Match');
+ok($tf->handle_http($t) == 0, 'Conditional GET - ETag + old Last-Modified');
 
 $t->{REQUEST}  = ( <<EOF
 GET / HTTP/1.0
@@ -89,7 +88,7 @@ If-Modified-Since: $now; foo
 EOF
  );
 $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 304 } ];
-ok($tf->handle_http($t) == 0, 'Conditional GET - old If-None-Match');
+ok($tf->handle_http($t) == 0, 'Conditional GET - ETag, Last-Modified + comment');
 
 $t->{REQUEST}  = ( <<EOF
 GET / HTTP/1.0
@@ -98,10 +97,16 @@ If-Modified-Since: Sun, 1970 Jan 01 00:00:01 GMT; foo
 EOF
  );
 $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200 } ];
-ok($tf->handle_http($t) == 0, 'Conditional GET - old If-None-Match');
+ok($tf->handle_http($t) == 0, 'Conditional GET - old ETAG + old Last-Modified');
 
-
-
+$t->{REQUEST}  = ( <<EOF
+GET / HTTP/1.0
+If-None-Match: $etag
+If-Modified-Since: $now foo
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 412 } ];
+ok($tf->handle_http($t) == 0, 'Conditional GET - ETag + Last-Modified + overlong timestamp');
 
 ok($tf->stop_proc == 0, "Stopping lighttpd");
 
