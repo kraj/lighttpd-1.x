@@ -65,7 +65,7 @@ int network_write_chunkqueue_openssl(server *srv, connection *con, SSL *ssl, chu
 		case MEM_CHUNK: {
 			char * offset;
 			size_t toSend;
-			ssize_t r;
+			ssize_t r = 0;
 			
 			if (c->mem->used == 0) {
 				chunk_finished = 1;
@@ -82,10 +82,12 @@ int network_write_chunkqueue_openssl(server *srv, connection *con, SSL *ssl, chu
 			 *        When an SSL_write() operation has to be repeated because of
 			 *        SSL_ERROR_WANT_READ or SSL_ERROR_WANT_WRITE, it must be
 			 *        repeated with the same arguments.
-			 * 
+			 *
+			 * SSL_write(..., 0) return 0 which is handle as an error (Success)
+			 * checking toSend and not calling SSL_write() is simpler
 			 */
 			
-			if ((r = SSL_write(ssl, offset, toSend)) <= 0) {
+			if (toSend != 0 && (r = SSL_write(ssl, offset, toSend)) <= 0) {
 				unsigned long err;
 
 				switch ((ssl_r = SSL_get_error(ssl, r))) {
