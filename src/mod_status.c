@@ -202,7 +202,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	size_t j;
 	double avg;
 	char multiplier = '\0';
-	char buf[32];
+	char buf[128];
 	time_t ts;
 	
 	int days, hours, mins, seconds;
@@ -304,13 +304,13 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	/* connection listing */
 	BUFFER_APPEND_STRING_CONST(b, "<h1>Server-Status</h1>");
 	
-	BUFFER_APPEND_STRING_CONST(b, "<table class=\"status\">");
-	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Hostname</td><td class=\"string\">");
+	BUFFER_APPEND_STRING_CONST(b, "<table class=\"status\" id=\"status\" summary=\"Server Status\">");
+	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Hostname</td><td class=\"string\"><span id=\"host_addr\">");
 	buffer_append_string_buffer(b, con->uri.authority);
-	BUFFER_APPEND_STRING_CONST(b, " (");
+	BUFFER_APPEND_STRING_CONST(b, "</span> (<span id=\"host_name\">");
 	buffer_append_string_buffer(b, con->server_name);
-	BUFFER_APPEND_STRING_CONST(b, ")</td></tr>\n");
-	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Uptime</td><td class=\"string\">");
+	BUFFER_APPEND_STRING_CONST(b, "</span>)</td></tr>\n");
+	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Uptime</td><td class=\"string\" id=\"uptime\">");
 	
 	ts = srv->cur_ts - srv->startup_ts;
 	
@@ -348,58 +348,58 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	
 	ts = srv->startup_ts;
 	
-	strftime(buf, sizeof(buf) - 1, "%Y-%m-%d %H:%M:%S", localtime(&ts));
+	strftime(buf, sizeof(buf) - 1, "<span id=\"start_date\">%Y-%m-%d</span> <span id=\"start_time\">%H:%M:%S</span>", localtime(&ts));
 	buffer_append_string(b, buf);
 	BUFFER_APPEND_STRING_CONST(b, "</td></tr>\n");
 	
 	
 	BUFFER_APPEND_STRING_CONST(b, "<tr><th colspan=\"2\">absolute (since start)</th></tr>\n");
 	
-	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Requests</td><td class=\"string\">");
+	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Requests</td><td class=\"string\" ><span id=\"requests\">");
 	avg = p->abs_requests;
 
 	mod_status_get_multiplier(&avg, &multiplier, 1000);
 	
 	buffer_append_long(b, avg);
-	BUFFER_APPEND_STRING_CONST(b, " ");
+	BUFFER_APPEND_STRING_CONST(b, "</span> <span id=\"requests_mult\">");
 	if (multiplier)	buffer_append_string_len(b, &multiplier, 1);
-	BUFFER_APPEND_STRING_CONST(b, "req</td></tr>\n");
+	BUFFER_APPEND_STRING_CONST(b, "</span>req</td></tr>\n");
 	
-	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Traffic</td><td class=\"string\">");
+	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Traffic</td><td class=\"string\"><span id=\"traffic\">");
 	avg = p->abs_traffic_out;
 
 	mod_status_get_multiplier(&avg, &multiplier, 1024);
 
 	sprintf(buf, "%.2f", avg);
 	buffer_append_string(b, buf);
-	BUFFER_APPEND_STRING_CONST(b, " ");
+	BUFFER_APPEND_STRING_CONST(b, "</span>  <span id=\"traffic_mult\">");
 	if (multiplier)	buffer_append_string_len(b, &multiplier, 1);
-	BUFFER_APPEND_STRING_CONST(b, "byte</td></tr>\n");
+	BUFFER_APPEND_STRING_CONST(b, "</span>byte</td></tr>\n");
 
 
 
 	BUFFER_APPEND_STRING_CONST(b, "<tr><th colspan=\"2\">average (since start)</th></tr>\n");
 	
-	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Requests</td><td class=\"string\">");
+	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Requests</td><td class=\"string\"><span id=\"requests_avg\">");
 	avg = p->abs_requests / (srv->cur_ts - srv->startup_ts);
 
 	mod_status_get_multiplier(&avg, &multiplier, 1000);
 
 	buffer_append_long(b, avg);
-	BUFFER_APPEND_STRING_CONST(b, " ");
+	BUFFER_APPEND_STRING_CONST(b, "</span> <span id=\"requests_avg_mult\">");
 	if (multiplier)	buffer_append_string_len(b, &multiplier, 1);
-	BUFFER_APPEND_STRING_CONST(b, "req/s</td></tr>\n");
+	BUFFER_APPEND_STRING_CONST(b, "</span>req/s</td></tr>\n");
 	
-	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Traffic</td><td class=\"string\">");
+	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Traffic</td><td class=\"string\"><span id=\"traffic_avg\">");
 	avg = p->abs_traffic_out / (srv->cur_ts - srv->startup_ts);
 
 	mod_status_get_multiplier(&avg, &multiplier, 1024);
 
 	sprintf(buf, "%.2f", avg);
 	buffer_append_string(b, buf);
-	BUFFER_APPEND_STRING_CONST(b, " ");
+	BUFFER_APPEND_STRING_CONST(b, "</span> <span id=\"traffic_avg_mult\">");
 	if (multiplier)	buffer_append_string_len(b, &multiplier, 1);
-	BUFFER_APPEND_STRING_CONST(b, "byte/s</td></tr>\n");
+	BUFFER_APPEND_STRING_CONST(b, "</span>byte/s</td></tr>\n");
 
 	
 	
@@ -410,15 +410,15 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	
 	avg /= 5;
 	
-	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Requests</td><td class=\"string\">");
+	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Requests</td><td class=\"string\"><span id=\"requests_sliding_avg\">");
 
 	mod_status_get_multiplier(&avg, &multiplier, 1000);
 
 	buffer_append_long(b, avg);
-	BUFFER_APPEND_STRING_CONST(b, " ");
+	BUFFER_APPEND_STRING_CONST(b, "</span> <span id=\"requests_sliding_avg_mult\">");
 	if (multiplier)	buffer_append_string_len(b, &multiplier, 1);
 	
-	BUFFER_APPEND_STRING_CONST(b, "req/s</td></tr>\n");
+	BUFFER_APPEND_STRING_CONST(b, "</span>req/s</td></tr>\n");
 	
 	for (j = 0, avg = 0; j < 5; j++) {
 		avg += p->mod_5s_traffic_out[j];
@@ -426,15 +426,15 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	
 	avg /= 5;
 	
-	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Traffic</td><td class=\"string\">");
+	BUFFER_APPEND_STRING_CONST(b, "<tr><td>Traffic</td><td class=\"string\"><span id=\"requests_sliding_traffic\">");
 
 	mod_status_get_multiplier(&avg, &multiplier, 1024);
 
 	sprintf(buf, "%.2f", avg);
 	buffer_append_string(b, buf);
-	BUFFER_APPEND_STRING_CONST(b, " ");
+	BUFFER_APPEND_STRING_CONST(b, "</span> <span id=\"requests_sliding_traffic_mult\">");
 	if (multiplier)	buffer_append_string_len(b, &multiplier, 1);
-	BUFFER_APPEND_STRING_CONST(b, "byte/s</td></tr>\n");
+	BUFFER_APPEND_STRING_CONST(b, "</span>byte/s</td></tr>\n");
 	
 	BUFFER_APPEND_STRING_CONST(b, "</table>\n");
 	
@@ -445,9 +445,9 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	BUFFER_APPEND_STRING_CONST(b, "q = request-start,  Q = request-end\n");
 	BUFFER_APPEND_STRING_CONST(b, "s = response-start, S = response-end\n");
 	
-	BUFFER_APPEND_STRING_CONST(b, "<b>");
+	BUFFER_APPEND_STRING_CONST(b, "<strong><span id=\"connections\">");
 	buffer_append_long(b, srv->conns->used);
-	BUFFER_APPEND_STRING_CONST(b, " connections</b>\n");
+	BUFFER_APPEND_STRING_CONST(b, "</span> connections</strong>\n");
 	
 	for (j = 0; j < srv->conns->used; j++) {
 		connection *c = srv->conns->ptr[j];
@@ -462,7 +462,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	
 	BUFFER_APPEND_STRING_CONST(b, "\n</pre><hr />\n<h2>Connections</h2>\n");
 	
-	BUFFER_APPEND_STRING_CONST(b, "<table class=\"status\">\n");
+	BUFFER_APPEND_STRING_CONST(b, "<table class=\"status\" summary=\"Current connections\" id=\"clients\">\n");
 	BUFFER_APPEND_STRING_CONST(b, "<tr>");
 	mod_status_header_append_sort(b, p_d, "Client IP");
 	mod_status_header_append_sort(b, p_d, "Read");
@@ -477,11 +477,11 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 	for (j = 0; j < srv->conns->used; j++) {
 		connection *c = srv->conns->ptr[j];
 		
-		BUFFER_APPEND_STRING_CONST(b, "<tr><td class=\"string\">");
+		BUFFER_APPEND_STRING_CONST(b, "<tr><td class=\"string ip\">");
 		
 		buffer_append_string(b, inet_ntop_cache_get_ip(srv, &(c->dst_addr)));
 		
-		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"int\">");
+		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"int bytes_read\">");
 		
 		if (con->request.content_length) {
 			buffer_append_long(b, c->request_content_queue->bytes_in);
@@ -491,21 +491,21 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 			BUFFER_APPEND_STRING_CONST(b, "0/0");
 		}
 	
-		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"int\">");
+		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"int bytes_written\">");
 		
 		buffer_append_off_t(b, chunkqueue_written(c->write_queue));
 		BUFFER_APPEND_STRING_CONST(b, "/");
 		buffer_append_off_t(b, chunkqueue_length(c->write_queue));
 		
-		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string\">");
+		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string state\">");
 		
 		buffer_append_string(b, connection_get_state(c->state));
 		
-		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"int\">");
+		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"int time\">");
 		
 		buffer_append_long(b, srv->cur_ts - c->request_start);
 		
-		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string\">");
+		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string host\">");
 		
 		if (buffer_is_empty(c->server_name)) {
 			buffer_append_string_buffer(b, c->uri.authority);
@@ -514,13 +514,13 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 			buffer_append_string_buffer(b, c->server_name);
 		}
 		
-		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string\">");
+		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string uri\">");
 		
 		if (!buffer_is_empty(c->uri.path)) {
 			buffer_append_string_encoded(b, CONST_BUF_LEN(c->uri.path), ENCODING_HTML);
 		}
 		
-		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string\">");
+		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string file\">");
 		
 		buffer_append_string_buffer(b, c->physical.path);
 		
