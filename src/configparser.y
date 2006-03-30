@@ -182,6 +182,7 @@ varline ::= key(A) APPEND expression(B). {
       buffer_copy_string_buffer(du->key, A);
       array_replace(vars, du);
     }
+    B->free(B);
   } else if (NULL != (du = configparser_get_variable(ctx, A))) {
     du = configparser_merge_data(du, B);
     if (NULL == du) {
@@ -191,15 +192,13 @@ varline ::= key(A) APPEND expression(B). {
       buffer_copy_string_buffer(du->key, A);
       array_insert_unique(ctx->current->value, du);
     }
+    B->free(B);
   } else {
-    fprintf(stderr, "Undefined config variable in conditional %d %s: %s\n", 
-            ctx->current->context_ndx,
-            ctx->current->key->ptr, A->ptr);
-    ctx->ok = 0;
+    buffer_copy_string_buffer(B->key, A);
+    array_insert_unique(ctx->current->value, B);
   }
   buffer_free(A);
   A = NULL;
-  B->free(B);
   B = NULL;
 }
 
