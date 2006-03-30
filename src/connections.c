@@ -1267,6 +1267,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 		
 		if (-1 == (fdevent_fcntl_set(srv->ev, con->fd))) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "fcntl failed: ", strerror(errno));
+			connection_close(srv, con);
 			return NULL;
 		}
 #ifdef USE_OPENSSL
@@ -1275,7 +1276,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 			if (NULL == (con->ssl = SSL_new(srv_socket->ssl_ctx))) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "SSL:", 
 						ERR_error_string(ERR_get_error(), NULL));
-				
+				connection_close(srv, con);
 				return NULL;
 			}
 			
@@ -1285,6 +1286,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 			if (1 != (SSL_set_fd(con->ssl, cnt))) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "SSL:", 
 						ERR_error_string(ERR_get_error(), NULL));
+				connection_close(srv, con);
 				return NULL;
 			}
 		}
