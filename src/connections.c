@@ -199,10 +199,10 @@ static int connection_handle_read(server *srv, connection *con) {
 #endif
 
 	b = chunkqueue_get_append_buffer(con->read_queue);
-	buffer_prepare_copy(b, 4096);
 
 #ifdef USE_OPENSSL
 	if (srv_sock->is_ssl) {
+		buffer_prepare_copy(b, 4096);
 		len = SSL_read(con->ssl, b->ptr, b->size - 1);
 	} else {
 		if (ioctl(con->fd, FIONREAD, &toread)) {
@@ -212,10 +212,10 @@ static int connection_handle_read(server *srv, connection *con) {
 			return -1;
 		}
 		buffer_prepare_copy(b, toread);
-
 		len = read(con->fd, b->ptr, b->size - 1);
 	}
 #elif defined(__WIN32)
+	buffer_prepare_copy(b, 4096);
 	len = recv(con->fd, b->ptr, b->size - 1, 0);
 #else
 	if (ioctl(con->fd, FIONREAD, &toread)) {
@@ -225,7 +225,6 @@ static int connection_handle_read(server *srv, connection *con) {
 		return -1;
 	}
 	buffer_prepare_copy(b, toread);
-
 	len = read(con->fd, b->ptr, b->size - 1);
 #endif
 	
