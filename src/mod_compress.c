@@ -103,6 +103,28 @@ FREE_FUNC(mod_compress_free) {
 	return HANDLER_GO_ON;
 }
 
+void mkdir_recursive(const char *dir) {
+
+	char dir_copy[256];
+	char *p = dir_copy;
+
+	if (!dir || !dir[0])
+		return;
+
+	strncpy(dir_copy, dir, sizeof(dir_copy) / sizeof(dir_copy[0]));
+
+	while ((p = strchr(p + 1, '/')) != NULL) {
+
+		*p = '\0';
+		if ((mkdir(dir_copy, 0700) != 0) && (errno != EEXIST))
+			return;
+
+		*p++ = '/';
+	}
+
+	mkdir(dir, 0700);
+}
+
 SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 	plugin_data *p = p_d;
 	size_t i = 0;
@@ -137,10 +159,18 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 		if (!buffer_is_empty(s->compress_cache_dir)) {
 			struct stat st;
 			if (0 != stat(s->compress_cache_dir->ptr, &st)) {
-				log_error_write(srv, __FILE__, __LINE__, "sbs", "can't stat compress.cache-dir", 
+
+				log_error_write(srv, __FILE__, __LINE__, "sbs", "can't stat compress.cache-dir, attempting to create", 
 						s->compress_cache_dir, strerror(errno));
+				mkdir_recursive(s->compress_cache_dir->ptr);
 				
-				return HANDLER_ERROR;
+				if (0 != stat(s->compress_cache_dir->ptr, &st)) {
+
+					log_error_write(srv, __FILE__, __LINE__, "sbs", "can't stat compress.cache-dir, create failed", 
+									s->compress_cache_dir, strerror(errno));
+				
+					return HANDLER_ERROR;
+				}
 			}
 		}
 	}
