@@ -7,7 +7,7 @@ BEGIN {
 }
 
 use strict;
-use Test::More tests => 47;
+use Test::More tests => 46;
 use LightyTest;
 
 my $tf = LightyTest->new();
