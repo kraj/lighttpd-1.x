@@ -108,13 +108,11 @@ SETDEFAULTS_FUNC(mod_flv_streaming_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_flv_streaming_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(extensions);
+	PATCH_OPTION(extensions);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -129,14 +127,13 @@ static int mod_flv_streaming_patch_connection(server *srv, connection *con, plug
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("flv-streaming.extensions"))) {
-				PATCH(extensions);
+				PATCH_OPTION(extensions);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 static int split_get_params(server *srv, connection *con, array *get_params, buffer *qrystr) {
 	size_t is_key = 1;

@@ -571,16 +571,13 @@ static int deflate_file_to_buffer(server *srv, connection *con, plugin_data *p, 
 	return 0;
 }
 
-
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_compress_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 
-	PATCH(compress_cache_dir);
-	PATCH(compress);
-	PATCH(compress_max_filesize);
+	PATCH_OPTION(compress_cache_dir);
+	PATCH_OPTION(compress);
+	PATCH_OPTION(compress_max_filesize);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -595,18 +592,17 @@ static int mod_compress_patch_connection(server *srv, connection *con, plugin_da
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("compress.cache-dir"))) {
-				PATCH(compress_cache_dir);
+				PATCH_OPTION(compress_cache_dir);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("compress.filetype"))) {
-				PATCH(compress);
+				PATCH_OPTION(compress);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("compress.max-filesize"))) {
-				PATCH(compress_max_filesize);
+				PATCH_OPTION(compress_max_filesize);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 PHYSICALPATH_FUNC(mod_compress_physical) {
 	plugin_data *p = p_d;

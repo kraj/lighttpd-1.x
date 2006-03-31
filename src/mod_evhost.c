@@ -221,14 +221,12 @@ static int mod_evhost_parse_host(connection *con,array *host) {
 	return 0;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_evhost_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(path_pieces);
-	PATCH(len);
+	PATCH_OPTION(path_pieces);
+	PATCH_OPTION(len);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -243,16 +241,14 @@ static int mod_evhost_patch_connection(server *srv, connection *con, plugin_data
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("evhost.path-pattern"))) {
-				PATCH(path_pieces);
-				PATCH(len);
+				PATCH_OPTION(path_pieces);
+				PATCH_OPTION(len);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
-
 
 static handler_t mod_evhost_uri_handler(server *srv, connection *con, void *p_d) {
 	plugin_data *p = p_d;

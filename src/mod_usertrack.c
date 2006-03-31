@@ -136,15 +136,13 @@ SETDEFAULTS_FUNC(mod_usertrack_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_usertrack_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(cookie_name);
-	PATCH(cookie_domain);
-	PATCH(cookie_max_age);
+	PATCH_OPTION(cookie_name);
+	PATCH_OPTION(cookie_domain);
+	PATCH_OPTION(cookie_max_age);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -159,18 +157,17 @@ static int mod_usertrack_patch_connection(server *srv, connection *con, plugin_d
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("usertrack.cookie-name"))) {
-				PATCH(cookie_name);
+				PATCH_OPTION(cookie_name);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("usertrack.cookie-max-age"))) {
-				PATCH(cookie_max_age);
+				PATCH_OPTION(cookie_max_age);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("usertrack.cookie-domain"))) {
-				PATCH(cookie_domain);
+				PATCH_OPTION(cookie_domain);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 URIHANDLER_FUNC(mod_usertrack_uri_handler) {
 	plugin_data *p = p_d;

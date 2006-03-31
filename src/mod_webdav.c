@@ -283,26 +283,24 @@ SETDEFAULTS_FUNC(mod_webdav_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_webdav_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(enabled);
-	PATCH(is_readonly);
-	PATCH(log_xml);
+	PATCH_OPTION(enabled);
+	PATCH_OPTION(is_readonly);
+	PATCH_OPTION(log_xml);
 	
 #ifdef USE_PROPPATCH
-	PATCH(sql);
-	PATCH(stmt_update_prop);
-	PATCH(stmt_delete_prop);
-	PATCH(stmt_select_prop);
-	PATCH(stmt_select_propnames);
+	PATCH_OPTION(sql);
+	PATCH_OPTION(stmt_update_prop);
+	PATCH_OPTION(stmt_delete_prop);
+	PATCH_OPTION(stmt_select_prop);
+	PATCH_OPTION(stmt_select_propnames);
 
-	PATCH(stmt_delete_uri);
-	PATCH(stmt_move_uri);
-	PATCH(stmt_copy_uri);
+	PATCH_OPTION(stmt_delete_uri);
+	PATCH_OPTION(stmt_move_uri);
+	PATCH_OPTION(stmt_copy_uri);
 #endif
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -317,22 +315,22 @@ static int mod_webdav_patch_connection(server *srv, connection *con, plugin_data
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("webdav.activate"))) {
-				PATCH(enabled);
+				PATCH_OPTION(enabled);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("webdav.is-readonly"))) {
-				PATCH(is_readonly);
+				PATCH_OPTION(is_readonly);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("webdav.log-xml"))) {
-				PATCH(log_xml);
+				PATCH_OPTION(log_xml);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("webdav.sqlite-db-name"))) {
 #ifdef USE_PROPPATCH
-				PATCH(sql);
-				PATCH(stmt_update_prop);
-				PATCH(stmt_delete_prop);
-				PATCH(stmt_select_prop);
-				PATCH(stmt_select_propnames);
+				PATCH_OPTION(sql);
+				PATCH_OPTION(stmt_update_prop);
+				PATCH_OPTION(stmt_delete_prop);
+				PATCH_OPTION(stmt_select_prop);
+				PATCH_OPTION(stmt_select_propnames);
 				
-				PATCH(stmt_delete_uri);
-				PATCH(stmt_move_uri);
-				PATCH(stmt_copy_uri);
+				PATCH_OPTION(stmt_delete_uri);
+				PATCH_OPTION(stmt_move_uri);
+				PATCH_OPTION(stmt_copy_uri);
 #endif
 			}
 		}
@@ -340,7 +338,6 @@ static int mod_webdav_patch_connection(server *srv, connection *con, plugin_data
 	
 	return 0;
 }
-#undef PATCH
 
 URIHANDLER_FUNC(mod_webdav_uri_handler) {
 	plugin_data *p = p_d;

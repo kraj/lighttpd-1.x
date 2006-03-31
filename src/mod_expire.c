@@ -245,13 +245,11 @@ SETDEFAULTS_FUNC(mod_expire_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_expire_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(expire_url);
+	PATCH_OPTION(expire_url);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -266,14 +264,13 @@ static int mod_expire_patch_connection(server *srv, connection *con, plugin_data
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("expire.url"))) {
-				PATCH(expire_url);
+				PATCH_OPTION(expire_url);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 URIHANDLER_FUNC(mod_expire_path_handler) {
 	plugin_data *p = p_d;

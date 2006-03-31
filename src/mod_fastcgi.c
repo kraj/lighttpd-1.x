@@ -3307,15 +3307,14 @@ static handler_t fcgi_handle_fdevent(void *s, void *ctx, int revents) {
 	
 	return HANDLER_FINISHED;
 }
-#define PATCH(x) \
-	p->conf.x = s->x;
+
 static int fcgi_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(exts);
-	PATCH(debug);
-	PATCH(ext_mapping);
+	PATCH_OPTION(exts);
+	PATCH_OPTION(debug);
+	PATCH_OPTION(ext_mapping);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -3330,19 +3329,17 @@ static int fcgi_patch_connection(server *srv, connection *con, plugin_data *p) {
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("fastcgi.server"))) {
-				PATCH(exts);
+				PATCH_OPTION(exts);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("fastcgi.debug"))) {
-				PATCH(debug);
+				PATCH_OPTION(debug);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("fastcgi.map-extensions"))) {
-				PATCH(ext_mapping);
+				PATCH_OPTION(ext_mapping);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
-
 
 static handler_t fcgi_check_extension(server *srv, connection *con, void *p_d, int uri_path_handler) {
 	plugin_data *p = p_d;

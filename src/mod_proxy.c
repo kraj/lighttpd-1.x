@@ -854,15 +854,13 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_proxy_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(extensions);
-	PATCH(debug);
-	PATCH(balance);
+	PATCH_OPTION(extensions);
+	PATCH_OPTION(debug);
+	PATCH_OPTION(balance);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -877,18 +875,17 @@ static int mod_proxy_patch_connection(server *srv, connection *con, plugin_data 
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy.server"))) {
-				PATCH(extensions);
+				PATCH_OPTION(extensions);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy.debug"))) {
-				PATCH(debug);
+				PATCH_OPTION(debug);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy.balance"))) {
-				PATCH(balance);
+				PATCH_OPTION(balance);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 SUBREQUEST_FUNC(mod_proxy_handle_subrequest) {
 	plugin_data *p = p_d;

@@ -567,20 +567,18 @@ SIGHUP_FUNC(log_access_cycle) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_accesslog_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(access_logfile);
-	PATCH(format);
-	PATCH(log_access_fd);
-	PATCH(last_generated_accesslog_ts_ptr);
-	PATCH(access_logbuffer);
-	PATCH(ts_accesslog_str);
-	PATCH(parsed_format);
-	PATCH(use_syslog);
+	PATCH_OPTION(access_logfile);
+	PATCH_OPTION(format);
+	PATCH_OPTION(log_access_fd);
+	PATCH_OPTION(last_generated_accesslog_ts_ptr);
+	PATCH_OPTION(access_logbuffer);
+	PATCH_OPTION(ts_accesslog_str);
+	PATCH_OPTION(parsed_format);
+	PATCH_OPTION(use_syslog);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -595,23 +593,22 @@ static int mod_accesslog_patch_connection(server *srv, connection *con, plugin_d
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("accesslog.filename"))) {
-				PATCH(access_logfile);
-				PATCH(log_access_fd);
-				PATCH(last_generated_accesslog_ts_ptr);
-				PATCH(access_logbuffer);
-				PATCH(ts_accesslog_str);
+				PATCH_OPTION(access_logfile);
+				PATCH_OPTION(log_access_fd);
+				PATCH_OPTION(last_generated_accesslog_ts_ptr);
+				PATCH_OPTION(access_logbuffer);
+				PATCH_OPTION(ts_accesslog_str);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("accesslog.format"))) {
-				PATCH(format);
-				PATCH(parsed_format);
+				PATCH_OPTION(format);
+				PATCH_OPTION(parsed_format);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("accesslog.use-syslog"))) {
-				PATCH(use_syslog);
+				PATCH_OPTION(use_syslog);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 REQUESTDONE_FUNC(log_access_write) {
 	plugin_data *p = p_d;

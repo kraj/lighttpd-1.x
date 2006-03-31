@@ -241,25 +241,23 @@ SETDEFAULTS_FUNC(mod_trigger_b4_dl_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_trigger_b4_dl_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
 #if defined(HAVE_GDBM)
-	PATCH(db);
+	PATCH_OPTION(db);
 #endif	
 #if defined(HAVE_PCRE_H)
-	PATCH(download_regex);
-	PATCH(trigger_regex);
+	PATCH_OPTION(download_regex);
+	PATCH_OPTION(trigger_regex);
 #endif	
-	PATCH(trigger_timeout);
-	PATCH(deny_url);
-	PATCH(mc_namespace);
-	PATCH(debug);
+	PATCH_OPTION(trigger_timeout);
+	PATCH_OPTION(deny_url);
+	PATCH_OPTION(mc_namespace);
+	PATCH_OPTION(debug);
 #if defined(HAVE_MEMCACHE_H)
-	PATCH(mc);
+	PATCH_OPTION(mc);
 #endif
 	
 	/* skip the first, the global context */
@@ -276,27 +274,27 @@ static int mod_trigger_b4_dl_patch_connection(server *srv, connection *con, plug
 
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("trigger-before-download.download-url"))) {
 #if defined(HAVE_PCRE_H)
-				PATCH(download_regex);
+				PATCH_OPTION(download_regex);
 #endif
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("trigger-before-download.trigger-url"))) {
 # if defined(HAVE_PCRE_H)
-				PATCH(trigger_regex);
+				PATCH_OPTION(trigger_regex);
 # endif
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("trigger-before-download.gdbm-filename"))) {
 #if defined(HAVE_GDBM_H)
-				PATCH(db);
+				PATCH_OPTION(db);
 #endif
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("trigger-before-download.trigger-timeout"))) {
-				PATCH(trigger_timeout);
+				PATCH_OPTION(trigger_timeout);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("trigger-before-download.debug"))) {
-				PATCH(debug);
+				PATCH_OPTION(debug);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("trigger-before-download.deny-url"))) {
-				PATCH(deny_url);
+				PATCH_OPTION(deny_url);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("trigger-before-download.memcache-namespace"))) {
-				PATCH(mc_namespace);
+				PATCH_OPTION(mc_namespace);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("trigger-before-download.memcache-hosts"))) {
 #if defined(HAVE_MEMCACHE_H)
-				PATCH(mc);
+				PATCH_OPTION(mc);
 #endif
 			}
 		}
@@ -304,7 +302,6 @@ static int mod_trigger_b4_dl_patch_connection(server *srv, connection *con, plug
 	
 	return 0;
 }
-#undef PATCH
 
 URIHANDLER_FUNC(mod_trigger_b4_dl_uri_handler) {
 	plugin_data *p = p_d;

@@ -1101,13 +1101,11 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 #endif
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_cgi_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(cgi);
+	PATCH_OPTION(cgi);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -1122,14 +1120,13 @@ static int mod_cgi_patch_connection(server *srv, connection *con, plugin_data *p
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("cgi.assign"))) {
-				PATCH(cgi);
+				PATCH_OPTION(cgi);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 URIHANDLER_FUNC(cgi_is_handled) {
 	size_t k, s_len;

@@ -250,14 +250,12 @@ static int mod_rrdtool_create_rrd(server *srv, plugin_data *p, plugin_config *s)
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_rrd_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(path_rrdtool_bin);
-	PATCH(path_rrd);
+	PATCH_OPTION(path_rrdtool_bin);
+	PATCH_OPTION(path_rrd);
 	
 	p->conf.bytes_written_ptr = &(s->bytes_written);
 	p->conf.bytes_read_ptr = &(s->bytes_read);
@@ -276,7 +274,7 @@ static int mod_rrd_patch_connection(server *srv, connection *con, plugin_data *p
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("rrdtool.db-name"))) {
-				PATCH(path_rrd);
+				PATCH_OPTION(path_rrd);
 				/* get pointers to double values */
 				
 				p->conf.bytes_written_ptr = &(s->bytes_written);
@@ -288,7 +286,6 @@ static int mod_rrd_patch_connection(server *srv, connection *con, plugin_data *p
 	
 	return 0;
 }
-#undef PATCH
 
 SETDEFAULTS_FUNC(mod_rrd_set_defaults) {
 	plugin_data *p = p_d;

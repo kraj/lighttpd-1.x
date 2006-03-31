@@ -156,16 +156,14 @@ int is_hex_len(const char *str, size_t len) {
 	return i == len;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_secdownload_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(secret);
-	PATCH(doc_root);
-	PATCH(uri_prefix);
-	PATCH(timeout);
+	PATCH_OPTION(secret);
+	PATCH_OPTION(doc_root);
+	PATCH_OPTION(uri_prefix);
+	PATCH_OPTION(timeout);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -180,21 +178,19 @@ static int mod_secdownload_patch_connection(server *srv, connection *con, plugin
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("secdownload.secret"))) {
-				PATCH(secret);
+				PATCH_OPTION(secret);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("secdownload.document-root"))) {
-				PATCH(doc_root);
+				PATCH_OPTION(doc_root);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("secdownload.uri-prefix"))) {
-				PATCH(uri_prefix);
+				PATCH_OPTION(uri_prefix);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("secdownload.timeout"))) {
-				PATCH(timeout);
+				PATCH_OPTION(timeout);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
-
 
 URIHANDLER_FUNC(mod_secdownload_uri_handler) {
 	plugin_data *p = p_d;

@@ -1008,13 +1008,11 @@ static int mod_ssi_handle_request(server *srv, connection *con, plugin_data *p) 
 	return 0;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_ssi_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(ssi_extension);
+	PATCH_OPTION(ssi_extension);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -1029,14 +1027,13 @@ static int mod_ssi_patch_connection(server *srv, connection *con, plugin_data *p
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("ssi.extension"))) {
-				PATCH(ssi_extension);
+				PATCH_OPTION(ssi_extension);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 URIHANDLER_FUNC(mod_ssi_physical_path) {
 	plugin_data *p = p_d;

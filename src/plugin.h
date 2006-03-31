@@ -12,6 +12,12 @@
 
 #define INIT_FUNC(x) \
 		static void *x()
+/*
+ * The PATCH_OPTION() macro is used in the patch_connection() functions
+ * of the modules to update the config object for the current request.
+ */
+#define PATCH_OPTION(x) \
+		p->conf.x = s->x
 
 #define FREE_FUNC          SERVER_FUNC
 #define TRIGGER_FUNC       SERVER_FUNC

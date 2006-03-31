@@ -118,16 +118,14 @@ SETDEFAULTS_FUNC(mod_userdir_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_userdir_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(path);
-	PATCH(exclude_user);
-	PATCH(include_user);
-	PATCH(basepath);
+	PATCH_OPTION(path);
+	PATCH_OPTION(exclude_user);
+	PATCH_OPTION(include_user);
+	PATCH_OPTION(basepath);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -142,20 +140,19 @@ static int mod_userdir_patch_connection(server *srv, connection *con, plugin_dat
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("userdir.path"))) {
-				PATCH(path);
+				PATCH_OPTION(path);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("userdir.exclude-user"))) {
-				PATCH(exclude_user);
+				PATCH_OPTION(exclude_user);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("userdir.include-user"))) {
-				PATCH(include_user);
+				PATCH_OPTION(include_user);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("userdir.basepath"))) {
-				PATCH(basepath);
+				PATCH_OPTION(basepath);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 URIHANDLER_FUNC(mod_userdir_docroot_handler) {
 	plugin_data *p = p_d;

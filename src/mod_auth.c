@@ -93,30 +93,28 @@ FREE_FUNC(mod_auth_free) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_auth_patch_connection(server *srv, connection *con, mod_auth_plugin_data *p) {
 	size_t i, j;
 	mod_auth_plugin_config *s = p->config_storage[0];
 
-	PATCH(auth_backend);
-	PATCH(auth_plain_groupfile);
-	PATCH(auth_plain_userfile);
-	PATCH(auth_htdigest_userfile);
-	PATCH(auth_htpasswd_userfile);
-	PATCH(auth_require);
-	PATCH(auth_debug);
-	PATCH(auth_ldap_hostname);
-	PATCH(auth_ldap_basedn);
-	PATCH(auth_ldap_binddn);
-	PATCH(auth_ldap_bindpw);
-	PATCH(auth_ldap_filter);
-	PATCH(auth_ldap_cafile);
-	PATCH(auth_ldap_starttls);
+	PATCH_OPTION(auth_backend);
+	PATCH_OPTION(auth_plain_groupfile);
+	PATCH_OPTION(auth_plain_userfile);
+	PATCH_OPTION(auth_htdigest_userfile);
+	PATCH_OPTION(auth_htpasswd_userfile);
+	PATCH_OPTION(auth_require);
+	PATCH_OPTION(auth_debug);
+	PATCH_OPTION(auth_ldap_hostname);
+	PATCH_OPTION(auth_ldap_basedn);
+	PATCH_OPTION(auth_ldap_binddn);
+	PATCH_OPTION(auth_ldap_bindpw);
+	PATCH_OPTION(auth_ldap_filter);
+	PATCH_OPTION(auth_ldap_cafile);
+	PATCH_OPTION(auth_ldap_starttls);
 #ifdef USE_LDAP
-	PATCH(ldap);
-	PATCH(ldap_filter_pre);
-	PATCH(ldap_filter_post);
+	PATCH_OPTION(ldap);
+	PATCH_OPTION(ldap_filter_pre);
+	PATCH_OPTION(ldap_filter_post);
 #endif
 	
 	/* skip the first, the global context */
@@ -132,41 +130,40 @@ static int mod_auth_patch_connection(server *srv, connection *con, mod_auth_plug
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend"))) {
-				PATCH(auth_backend);
+				PATCH_OPTION(auth_backend);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.plain.groupfile"))) {
-				PATCH(auth_plain_groupfile);
+				PATCH_OPTION(auth_plain_groupfile);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.plain.userfile"))) {
-				PATCH(auth_plain_userfile);
+				PATCH_OPTION(auth_plain_userfile);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.htdigest.userfile"))) {
-				PATCH(auth_htdigest_userfile);
+				PATCH_OPTION(auth_htdigest_userfile);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.htpasswd.userfile"))) {
-				PATCH(auth_htpasswd_userfile);
+				PATCH_OPTION(auth_htpasswd_userfile);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.require"))) {
-				PATCH(auth_require);
+				PATCH_OPTION(auth_require);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.debug"))) {
-				PATCH(auth_debug);
+				PATCH_OPTION(auth_debug);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.ldap.hostname"))) {
-				PATCH(auth_ldap_hostname);
+				PATCH_OPTION(auth_ldap_hostname);
 #ifdef USE_LDAP
-				PATCH(ldap);
-				PATCH(ldap_filter_pre);
-				PATCH(ldap_filter_post);
+				PATCH_OPTION(ldap);
+				PATCH_OPTION(ldap_filter_pre);
+				PATCH_OPTION(ldap_filter_post);
 #endif
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.ldap.base-dn"))) {
-				PATCH(auth_ldap_basedn);
+				PATCH_OPTION(auth_ldap_basedn);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.ldap.filter"))) {
-				PATCH(auth_ldap_filter);
+				PATCH_OPTION(auth_ldap_filter);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.ldap.ca-file"))) {
-				PATCH(auth_ldap_cafile);
+				PATCH_OPTION(auth_ldap_cafile);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("auth.backend.ldap.starttls"))) {
-				PATCH(auth_ldap_starttls);
+				PATCH_OPTION(auth_ldap_starttls);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 static handler_t mod_auth_uri_handler(server *srv, connection *con, void *p_d) {
 	size_t k;

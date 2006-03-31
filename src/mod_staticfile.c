@@ -107,13 +107,11 @@ SETDEFAULTS_FUNC(mod_staticfile_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_staticfile_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(exclude_ext);
+	PATCH_OPTION(exclude_ext);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -128,14 +126,13 @@ static int mod_staticfile_patch_connection(server *srv, connection *con, plugin_
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("static-file.exclude-extensions"))) {
-				PATCH(exclude_ext);
+				PATCH_OPTION(exclude_ext);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 static int http_response_parse_range(server *srv, connection *con, plugin_data *p) {
 	int multipart = 0;

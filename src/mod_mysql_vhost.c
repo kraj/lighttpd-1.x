@@ -275,16 +275,14 @@ SERVER_FUNC(mod_mysql_vhost_set_defaults) {
         return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_mysql_vhost_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(mysql_pre);
-	PATCH(mysql_post);
+	PATCH_OPTION(mysql_pre);
+	PATCH_OPTION(mysql_post);
 #ifdef HAVE_MYSQL
-	PATCH(mysql);
+	PATCH_OPTION(mysql);
 #endif
 	
 	/* skip the first, the global context */
@@ -300,20 +298,18 @@ static int mod_mysql_vhost_patch_connection(server *srv, connection *con, plugin
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("mysql-vhost.sql"))) {
-				PATCH(mysql_pre);
-				PATCH(mysql_post);
+				PATCH_OPTION(mysql_pre);
+				PATCH_OPTION(mysql_post);
 			}
 		}
 		
 		if (s->mysql) {
-			PATCH(mysql);
+			PATCH_OPTION(mysql);
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
-
 
 /* handle document root request */
 CONNECTION_FUNC(mod_mysql_vhost_handle_docroot) {

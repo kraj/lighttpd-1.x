@@ -135,18 +135,16 @@ SETDEFAULTS_FUNC(mod_cml_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_cml_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	
-	PATCH(ext);
+	PATCH_OPTION(ext);
 #if defined(HAVE_MEMCACHE_H)
-	PATCH(mc);
+	PATCH_OPTION(mc);
 #endif
-	PATCH(mc_namespace);
-	PATCH(power_magnet);
+	PATCH_OPTION(mc_namespace);
+	PATCH_OPTION(power_magnet);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -161,22 +159,21 @@ static int mod_cml_patch_connection(server *srv, connection *con, plugin_data *p
 			data_unset *du = dc->value->data[j];
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("cml.extension"))) {
-				PATCH(ext);
+				PATCH_OPTION(ext);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("cml.memcache-hosts"))) {
 #if defined(HAVE_MEMCACHE_H)
-				PATCH(mc);
+				PATCH_OPTION(mc);
 #endif
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("cml.memcache-namespace"))) {
-				PATCH(mc_namespace);
+				PATCH_OPTION(mc_namespace);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("cml.power-magnet"))) {
-				PATCH(power_magnet);
+				PATCH_OPTION(power_magnet);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 int cache_call_lua(server *srv, connection *con, plugin_data *p, buffer *cml_file) {
 	buffer *b;

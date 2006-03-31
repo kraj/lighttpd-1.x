@@ -54,7 +54,7 @@ typedef struct {
 	unsigned short hide_readme_file;
 	unsigned short show_header;
 	unsigned short hide_header_file;
-	
+
 	excludes_buffer *excludes;
 
 	buffer *external_css;
@@ -292,21 +292,19 @@ SETDEFAULTS_FUNC(mod_dirlisting_set_defaults) {
 	return HANDLER_GO_ON;
 }
 
-#define PATCH(x) \
-	p->conf.x = s->x;
 static int mod_dirlisting_patch_connection(server *srv, connection *con, plugin_data *p) {
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 
-	PATCH(dir_listing);
-	PATCH(external_css);
-	PATCH(hide_dot_files);
-	PATCH(encoding);
-	PATCH(show_readme);
-	PATCH(hide_readme_file);
-	PATCH(show_header);
-	PATCH(hide_header_file);
-	PATCH(excludes);
+	PATCH_OPTION(dir_listing);
+	PATCH_OPTION(external_css);
+	PATCH_OPTION(hide_dot_files);
+	PATCH_OPTION(encoding);
+	PATCH_OPTION(show_readme);
+	PATCH_OPTION(hide_readme_file);
+	PATCH_OPTION(show_header);
+	PATCH_OPTION(hide_header_file);
+	PATCH_OPTION(excludes);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -322,30 +320,29 @@ static int mod_dirlisting_patch_connection(server *srv, connection *con, plugin_
 			
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.activate")) ||
 			    buffer_is_equal_string(du->key, CONST_STR_LEN("server.dir-listing"))) {
-				PATCH(dir_listing);
+				PATCH_OPTION(dir_listing);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.hide-dotfiles"))) {
-				PATCH(hide_dot_files);
+				PATCH_OPTION(hide_dot_files);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.external-css"))) {
-				PATCH(external_css);
+				PATCH_OPTION(external_css);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.encoding"))) {
-				PATCH(encoding);
+				PATCH_OPTION(encoding);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.show-readme"))) {
-				PATCH(show_readme);
+				PATCH_OPTION(show_readme);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.hide-readme-file"))) {
-				PATCH(hide_readme_file);
+				PATCH_OPTION(hide_readme_file);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.show-header"))) {
-				PATCH(show_header);
+				PATCH_OPTION(show_header);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.hide-header-file"))) {
-				PATCH(hide_header_file);
+				PATCH_OPTION(hide_header_file);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("dir-listing.excludes"))) {
-				PATCH(excludes);
+				PATCH_OPTION(excludes);
 			}
 		}
 	}
 	
 	return 0;
 }
-#undef PATCH
 
 typedef struct {
 	size_t  namelen;
