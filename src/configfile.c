@@ -216,8 +216,8 @@ static int config_insert(server *srv) {
 								 
 }
 
-
-#define PATCH(x) con->conf.x = s->x
+#define PATCH(x) \
+	con->conf.x = s->x
 int config_setup_connection(server *srv, connection *con) {
 	specific_config *s = srv->config_storage[0];
 	
