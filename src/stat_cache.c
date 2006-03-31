@@ -52,8 +52,8 @@
  *
  * if we get a change-event from FAM, we increment the version in the FAM->dir mapping
  *
- * if the stat()-cache is queried we check if the version id for the directory is the 
- * same and return immediatly. 
+ * if the stat()-cache is queried we check if the version id for the directory is the
+ * same and return immediatly.
  *
  *
  * What we need:
@@ -62,17 +62,17 @@
  * - for each FAMRequest we have to find the version in the directory cache (index as userdata)
  *
  * stat <<-> directory <-> FAMRequest
- * 
- * if file is deleted, directory is dirty, file is rechecked ... 
+ *
+ * if file is deleted, directory is dirty, file is rechecked ...
  * if directory is deleted, directory mapping is removed
- *  
+ *
  * */
 
 #ifdef HAVE_FAM_H
 typedef struct {
 	FAMRequest *req;
 	FAMConnection *fc;
-	
+
 	buffer *name;
 
 	int version;
@@ -83,16 +83,16 @@ typedef struct {
  * - we need a hash
  * - the hash-key is used as sorting criteria for a tree
  * - a splay-tree is used as we can use the caching effect of it
- */ 
+ */
 
 /* we want to cleanup the stat-cache every few seconds, let's say 10
  *
  * - remove entries which are outdated since 30s
  * - remove entries which are fresh but havn't been used since 60s
  * - if we don't have a stat-cache entry for a directory, release it from the monitor
- */ 
+ */
 
-#ifdef DEBUG_STAT_CACHE	
+#ifdef DEBUG_STAT_CACHE
 typedef struct {
 	int *ptr;
 
@@ -105,15 +105,15 @@ static fake_keys ctrl;
 
 stat_cache *stat_cache_init(void) {
 	stat_cache *fc = NULL;
-	
+
 	fc = calloc(1, sizeof(*fc));
-	
+
 	fc->dir_name = buffer_init();
 #ifdef HAVE_FAM_H
 	fc->fam = calloc(1, sizeof(*fc->fam));
 #endif
 
-#ifdef DEBUG_STAT_CACHE	
+#ifdef DEBUG_STAT_CACHE
 	ctrl.size = 0;
 #endif
 
@@ -122,24 +122,24 @@ stat_cache *stat_cache_init(void) {
 
 static stat_cache_entry * stat_cache_entry_init(void) {
 	stat_cache_entry *sce = NULL;
-	
+
 	sce = calloc(1, sizeof(*sce));
-	
+
 	sce->name = buffer_init();
 	sce->etag = buffer_init();
 	sce->content_type = buffer_init();
-	
+
 	return sce;
 }
 
 static void stat_cache_entry_free(void *data) {
 	stat_cache_entry *sce = data;
 	if (!sce) return;
-	
+
 	buffer_free(sce->etag);
 	buffer_free(sce->name);
 	buffer_free(sce->content_type);
-	
+
 	free(sce);
 }
 
@@ -148,22 +148,22 @@ static fam_dir_entry * fam_dir_entry_init(void) {
 	fam_dir_entry *fam_dir = NULL;
 
 	fam_dir = calloc(1, sizeof(*fam_dir));
-	
+
 	fam_dir->name = buffer_init();
-	
+
 	return fam_dir;
 }
 
 static void fam_dir_entry_free(void *data) {
 	fam_dir_entry *fam_dir = data;
-	
+
 	if (!fam_dir) return;
-	
+
 	FAMCancelMonitor(fam_dir->fc, fam_dir->req);
-	
+
 	buffer_free(fam_dir->name);
 	free(fam_dir->req);
-	
+
 	free(fam_dir);
 }
 #endif
@@ -174,7 +174,7 @@ void stat_cache_free(stat_cache *sc) {
 		splay_tree *node = sc->files;
 
 		osize = sc->files->size;
-			
+
 		stat_cache_entry_free(node->data);
 		sc->files = splaytree_delete(sc->files, node->key);
 
@@ -187,12 +187,12 @@ void stat_cache_free(stat_cache *sc) {
 	while (sc->dirs) {
 		int osize;
 		splay_tree *node = sc->dirs;
-		
+
 		osize = sc->dirs->size;
 
 		fam_dir_entry_free(node->data);
 		sc->dirs = splaytree_delete(sc->dirs, node->key);
-		
+
 		if (osize == 1) {
 			assert(NULL == sc->dirs);
 		} else {
@@ -212,7 +212,7 @@ void stat_cache_free(stat_cache *sc) {
 static int stat_cache_attr_get(buffer *buf, char *name) {
 	int attrlen;
 	int ret;
-	
+
 	attrlen = 1024;
 	buffer_prepare_copy(buf, attrlen);
 	attrlen--;
@@ -251,15 +251,15 @@ handler_t stat_cache_handle_fdevent(void *_srv, void *_fce, int revent) {
 	    sc->fam) {
 
 		events = FAMPending(sc->fam);
-	
+
 		for (i = 0; i < events; i++) {
 			FAMEvent fe;
 			fam_dir_entry *fam_dir;
 			splay_tree *node;
 			int ndx;
-		
+
 			FAMNextEvent(sc->fam, &fe);
-	
+
 			/* handle event */
 
 			switch(fe.code) {
@@ -280,7 +280,7 @@ handler_t stat_cache_handle_fdevent(void *_srv, void *_fce, int revent) {
 
 				sc->dirs = splaytree_splay(sc->dirs, ndx);
 				node = sc->dirs;
-			
+
 				if (node && (node->key == ndx)) {
 					int osize = splaytree_size(sc->dirs);
 
@@ -308,7 +308,7 @@ handler_t stat_cache_handle_fdevent(void *_srv, void *_fce, int revent) {
 
 		sc->fam = NULL;
 	}
-	
+
 	return HANDLER_GO_ON;
 }
 
@@ -332,7 +332,7 @@ static int buffer_copy_dirname(buffer *dst, buffer *file) {
  *
  *
  *
- * returns: 
+ * returns:
  *  - HANDLER_FINISHED on cache-miss (don't forget to reopen the file)
  *  - HANDLER_ERROR on stat() failed -> see errno for problem
  */
@@ -348,16 +348,16 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	struct stat st;
 	size_t k;
 	int fd;
-#ifdef DEBUG_STAT_CACHE	
+#ifdef DEBUG_STAT_CACHE
 	size_t i;
 #endif
 
 	int file_ndx;
 	splay_tree *file_node = NULL;
 
-	*ret_sce = NULL; 
+	*ret_sce = NULL;
 
-	/* 
+	/*
 	 * check if the directory for this file has changed
 	 */
 
@@ -366,23 +366,23 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	file_ndx = hashme(name);
 	sc->files = splaytree_splay(sc->files, file_ndx);
 
-#ifdef DEBUG_STAT_CACHE	
+#ifdef DEBUG_STAT_CACHE
 	for (i = 0; i < ctrl.used; i++) {
 		if (ctrl.ptr[i] == file_ndx) break;
 	}
 #endif
 
 	if (sc->files && (sc->files->key == file_ndx)) {
-#ifdef DEBUG_STAT_CACHE	
+#ifdef DEBUG_STAT_CACHE
 		/* it was in the cache */
 		assert(i < ctrl.used);
 #endif
-		
-		/* we have seen this file already and 
+
+		/* we have seen this file already and
 		 * don't stat() it again in the same second */
 
 		file_node = sc->files;
-		
+
 		sce = file_node->data;
 
 		/* check if the name is the same, we might have a collision */
@@ -390,7 +390,7 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 		if (buffer_is_equal(name, sce->name)) {
 			if (srv->srvconf.stat_cache_engine == STAT_CACHE_ENGINE_SIMPLE) {
 				if (sce->stat_ts == srv->cur_ts) {
-					*ret_sce = sce; 
+					*ret_sce = sce;
 					return HANDLER_GO_ON;
 				}
 			}
@@ -400,15 +400,15 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 			 * file_node is used by the FAM check below to see if we know this file
 			 * and if we can save a stat().
 			 *
-			 * BUT, the sce is not reset here as the entry into the cache is ok, we 
+			 * BUT, the sce is not reset here as the entry into the cache is ok, we
 			 * it is just not pointing to our requested file.
-			 * 
+			 *
 			 *  */
 
 			file_node = NULL;
 		}
 	} else {
-#ifdef DEBUG_STAT_CACHE	
+#ifdef DEBUG_STAT_CACHE
 		if (i != ctrl.used) {
 			fprintf(stderr, "%s.%d: %08x was already inserted but not found in cache, %s\n", __FILE__, __LINE__, file_ndx, name->ptr);
 		}
@@ -424,23 +424,23 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 		}
 
 		dir_ndx = hashme(sc->dir_name);
-		
+
 		sc->dirs = splaytree_splay(sc->dirs, dir_ndx);
-		
+
 		if (sc->dirs && (sc->dirs->key == dir_ndx)) {
 			dir_node = sc->dirs;
 		}
-		
+
 		if (dir_node && file_node) {
 			/* we found a file */
-			
+
 			sce = file_node->data;
 			fam_dir = dir_node->data;
-			
+
 			if (fam_dir->version == sce->dir_version) {
 				/* the stat()-cache entry is still ok */
-				
-				*ret_sce = sce; 
+
+				*ret_sce = sce;
 				return HANDLER_GO_ON;
 			}
 		}
@@ -448,7 +448,7 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 #endif
 
 	/*
-	 * *lol* 
+	 * *lol*
 	 * - open() + fstat() on a named-pipe results in a (intended) hang.
 	 * - stat() if regualar file + open() to see if we can read from it is better
 	 *
@@ -469,16 +469,16 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 
 	if (NULL == sce) {
 		int osize = 0;
-		       
+
 		if (sc->files) {
 			osize = sc->files->size;
 		}
 
 		sce = stat_cache_entry_init();
 		buffer_copy_string_buffer(sce->name, name);
-		
-		sc->files = splaytree_insert(sc->files, file_ndx, sce); 
-#ifdef DEBUG_STAT_CACHE	
+
+		sc->files = splaytree_insert(sc->files, file_ndx, sce);
+#ifdef DEBUG_STAT_CACHE
 		if (ctrl.size == 0) {
 			ctrl.size = 16;
 			ctrl.used = 0;
@@ -499,29 +499,29 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	sce->st = st;
 	sce->stat_ts = srv->cur_ts;
 
-	/* catch the obvious symlinks 
+	/* catch the obvious symlinks
 	 *
 	 * this is not a secure check as we still have a race-condition between
-	 * the stat() and the open. We can only solve this by 
+	 * the stat() and the open. We can only solve this by
 	 * 1. open() the file
 	 * 2. fstat() the fd
 	 *
 	 * and keeping the file open for the rest of the time. But this can
 	 * only be done at network level.
-	 * 
+	 *
 	 * */
 	if (S_ISLNK(st.st_mode) && !con->conf.follow_symlink) {
 		return HANDLER_ERROR;
 	}
 
-	if (S_ISREG(st.st_mode)) {	
+	if (S_ISREG(st.st_mode)) {
 		/* determine mimetype */
 		buffer_reset(sce->content_type);
-		
+
 		for (k = 0; k < con->conf.mimetypes->used; k++) {
 			data_string *ds = (data_string *)con->conf.mimetypes->data[k];
 			buffer *type = ds->key;
-		
+
 			if (type->used == 0) continue;
 
 			/* check if the right side is the same */
@@ -539,7 +539,7 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 		}
 #endif
 	}
-		
+
 #ifdef HAVE_FAM_H
 	if (sc->fam &&
 	    (srv->srvconf.stat_cache_engine == STAT_CACHE_ENGINE_FAM)) {
@@ -549,19 +549,19 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 			fam_dir->fc = sc->fam;
 
 			buffer_copy_string_buffer(fam_dir->name, sc->dir_name);
-			
+
 			fam_dir->version = 1;
-			
+
 			fam_dir->req = calloc(1, sizeof(FAMRequest));
-			
-			if (0 != FAMMonitorDirectory(sc->fam, fam_dir->name->ptr, 
+
+			if (0 != FAMMonitorDirectory(sc->fam, fam_dir->name->ptr,
 						     fam_dir->req, fam_dir)) {
-				
-				log_error_write(srv, __FILE__, __LINE__, "sbs", 
-						"monitoring dir failed:", 
-						fam_dir->name, 
+
+				log_error_write(srv, __FILE__, __LINE__, "sbs",
+						"monitoring dir failed:",
+						fam_dir->name,
 						FamErrlist[FAMErrno]);
-				
+
 				fam_dir_entry_free(fam_dir);
 			} else {
 				int osize = 0;
@@ -570,7 +570,7 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 					osize = sc->dirs->size;
 				}
 
-				sc->dirs = splaytree_insert(sc->dirs, dir_ndx, fam_dir); 
+				sc->dirs = splaytree_insert(sc->dirs, dir_ndx, fam_dir);
 				assert(sc->dirs);
 				assert(sc->dirs->data == fam_dir);
 				assert(osize == (sc->dirs->size - 1));
@@ -578,9 +578,9 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 		} else {
 			fam_dir = dir_node->data;
 		}
-		
+
 		/* bind the fam_fc to the stat() cache entry */
-			
+
 		if (fam_dir) {
 			sce->dir_version = fam_dir->version;
 			sce->dir_ndx     = dir_ndx;
@@ -594,11 +594,11 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 }
 
 /**
- * remove stat() from cache which havn't been stat()ed for 
+ * remove stat() from cache which havn't been stat()ed for
  * more than 10 seconds
- * 
  *
- * walk though the stat-cache, collect the ids which are too old 
+ *
+ * walk though the stat-cache, collect the ids which are too old
  * and remove them in a second loop
  */
 
@@ -639,9 +639,9 @@ int stat_cache_trigger_cleanup(server *srv) {
 		sc->files = splaytree_splay(sc->files, ndx);
 
 		node = sc->files;
-		
+
 		if (node && (node->key == ndx)) {
-#ifdef DEBUG_STAT_CACHE	
+#ifdef DEBUG_STAT_CACHE
 			size_t j;
 			int osize = splaytree_size(sc->files);
 			stat_cache_entry *sce = node->data;
@@ -649,7 +649,7 @@ int stat_cache_trigger_cleanup(server *srv) {
 			stat_cache_entry_free(node->data);
 			sc->files = splaytree_delete(sc->files, ndx);
 
-#ifdef DEBUG_STAT_CACHE	
+#ifdef DEBUG_STAT_CACHE
 			for (j = 0; j < ctrl.used; j++) {
 				if (ctrl.ptr[j] == ndx) {
 					ctrl.ptr[j] = ctrl.ptr[--ctrl.used];

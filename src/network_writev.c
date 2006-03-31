@@ -28,10 +28,10 @@
 
 #ifndef UIO_MAXIOV
 # if defined(__FreeBSD__) || defined(__APPLE__) || defined(__NetBSD__)
-/* FreeBSD 4.7 defines it in sys/uio.h only if _KERNEL is specified */ 
+/* FreeBSD 4.7 defines it in sys/uio.h only if _KERNEL is specified */
 #  define UIO_MAXIOV 1024
 # elif defined(__sgi)
-/* IRIX 6.5 has sysconf(_SC_IOV_MAX) which might return 512 or bigger */ 
+/* IRIX 6.5 has sysconf(_SC_IOV_MAX) which might return 512 or bigger */
 #  define UIO_MAXIOV 512
 # elif defined(__sun)
 /* Solaris (and SunOS?) defines IOV_MAX instead */
@@ -54,30 +54,30 @@
 int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkqueue *cq) {
 	chunk *c;
 	size_t chunks_written = 0;
-	
+
 	for(c = cq->first; c; c = c->next) {
 		int chunk_finished = 0;
-		
+
 		switch(c->type) {
 		case MEM_CHUNK: {
 			char * offset;
 			size_t toSend;
 			ssize_t r;
-			
+
 			size_t num_chunks, i;
 			struct iovec chunks[UIO_MAXIOV];
 			chunk *tc;
 			size_t num_bytes = 0;
-			
+
 			/* we can't send more then SSIZE_MAX bytes in one chunk */
-			
-			/* build writev list 
-			 * 
+
+			/* build writev list
+			 *
 			 * 1. limit: num_chunks < UIO_MAXIOV
 			 * 2. limit: num_bytes < SSIZE_MAX
 			 */
 			for(num_chunks = 0, tc = c; tc && tc->type == MEM_CHUNK && num_chunks < UIO_MAXIOV; num_chunks++, tc = tc->next);
-			
+
 			for(tc = c, i = 0; i < num_chunks; tc = tc->next, i++) {
 				if (tc->mem->used == 0) {
 					chunks[i].iov_base = tc->mem->ptr;
@@ -85,24 +85,24 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 				} else {
 					offset = tc->mem->ptr + tc->offset;
 					toSend = tc->mem->used - 1 - tc->offset;
-				
+
 					chunks[i].iov_base = offset;
-					
+
 					/* protect the return value of writev() */
 					if (toSend > SSIZE_MAX ||
 					    num_bytes + toSend > SSIZE_MAX) {
 						chunks[i].iov_len = SSIZE_MAX - num_bytes;
-						
+
 						num_chunks = i + 1;
 						break;
 					} else {
 						chunks[i].iov_len = toSend;
 					}
-					
+
 					num_bytes += toSend;
 				}
 			}
-			
+
 			if ((r = writev(fd, chunks, num_chunks)) < 0) {
 				switch (errno) {
 				case EAGAIN:
@@ -113,23 +113,23 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 				case ECONNRESET:
 					return -2;
 				default:
-					log_error_write(srv, __FILE__, __LINE__, "ssd", 
+					log_error_write(srv, __FILE__, __LINE__, "ssd",
 							"writev failed:", strerror(errno), fd);
-				
+
 					return -1;
 				}
 			}
-			
+
 			cq->bytes_out += r;
 
 			/* check which chunks have been written */
-			
+
 			for(i = 0, tc = c; i < num_chunks; i++, tc = tc->next) {
 				if (r >= (ssize_t)chunks[i].iov_len) {
 					/* written */
 					r -= chunks[i].iov_len;
 					tc->offset += chunks[i].iov_len;
-					
+
 					if (chunk_finished) {
 						/* skip the chunks from further touches */
 						chunks_written++;
@@ -140,14 +140,14 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 					}
 				} else {
 					/* partially written */
-					
+
 					tc->offset += r;
 					chunk_finished = 0;
 
 					break;
 				}
 			}
-			
+
 			break;
 		}
 		case FILE_CHUNK: {
@@ -159,7 +159,7 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 #define KByte * 1024
 #define MByte * 1024 KByte
 #define GByte * 1024 MByte
-			const off_t we_want_to_mmap = 512 KByte; 
+			const off_t we_want_to_mmap = 512 KByte;
 			char *start = NULL;
 
 			if (HANDLER_ERROR == stat_cache_get_entry(srv, con, c->file.name, &sce)) {
@@ -169,16 +169,16 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 			}
 
 			abs_offset = c->file.start + c->offset;
-			
+
 			if (abs_offset > sce->st.st_size) {
-				log_error_write(srv, __FILE__, __LINE__, "sb", 
+				log_error_write(srv, __FILE__, __LINE__, "sb",
 						"file was shrinked:", c->file.name);
-				
+
 				return -1;
 			}
 
-			/* mmap the buffer 
-			 * - first mmap 
+			/* mmap the buffer
+			 * - first mmap
 			 * - new mmap as the we are at the end of the last one */
 			if (c->file.mmap.start == MAP_FAILED ||
 			    abs_offset == (off_t)(c->file.mmap.offset + c->file.mmap.length)) {
@@ -188,7 +188,7 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 				 * adaptive mem-mapping
 				 *   the problem:
 				 *     we mmap() the whole file. If someone has alot large files and 32bit
-				 *     machine the virtual address area will be unrun and we will have a failing 
+				 *     machine the virtual address area will be unrun and we will have a failing
 				 *     mmap() call.
 				 *   solution:
 				 *     only mmap 16M in one chunk and move the window as soon as we have finished
@@ -234,7 +234,7 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 				if (-1 == c->file.fd) {  /* open the file if not already open */
 					if (-1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
 						log_error_write(srv, __FILE__, __LINE__, "sbs", "open failed for:", c->file.name, strerror(errno));
-				
+
 						return -1;
 					}
 #ifdef FD_CLOEXEC
@@ -245,7 +245,7 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 				if (MAP_FAILED == (c->file.mmap.start = mmap(0, to_mmap, PROT_READ, MAP_SHARED, c->file.fd, c->file.mmap.offset))) {
 					/* close it here, otherwise we'd have to set FD_CLOEXEC */
 
-					log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed:", 
+					log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed:",
 							strerror(errno), c->file.name, c->file.fd);
 
 					return -1;
@@ -258,7 +258,7 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 #ifdef HAVE_MADVISE
 				/* don't advise files < 64Kb */
 				if (c->file.mmap.length > (64 KByte)) {
-					/* darwin 7 is returning EINVAL all the time and I don't know how to 
+					/* darwin 7 is returning EINVAL all the time and I don't know how to
 					 * detect this at runtime.i
 					 *
 					 * ignore the return value for now */
@@ -274,12 +274,12 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 			toSend = (c->file.mmap.offset + c->file.mmap.length) - (abs_offset);
 
 			if (toSend < 0) {
-				log_error_write(srv, __FILE__, __LINE__, "soooo", 
+				log_error_write(srv, __FILE__, __LINE__, "soooo",
 						"toSend is negative:",
 						toSend,
 						c->file.mmap.length,
 						abs_offset,
-						c->file.mmap.offset); 
+						c->file.mmap.offset);
 				assert(toSend < 0);
 			}
 
@@ -299,16 +299,16 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 				case ECONNRESET:
 					return -2;
 				default:
-					log_error_write(srv, __FILE__, __LINE__, "ssd", 
+					log_error_write(srv, __FILE__, __LINE__, "ssd",
 							"write failed:", strerror(errno), fd);
-					
+
 					return -1;
 				}
 			}
-			
+
 			c->offset += r;
 			cq->bytes_out += r;
-			
+
 			if (c->offset == c->file.length) {
 				chunk_finished = 1;
 
@@ -318,22 +318,22 @@ int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkq
 					c->file.mmap.start = MAP_FAILED;
 				}
 			}
-			
+
 			break;
 		}
 		default:
-			
+
 			log_error_write(srv, __FILE__, __LINE__, "ds", c, "type not known");
-			
+
 			return -1;
 		}
-		
+
 		if (!chunk_finished) {
 			/* not finished yet */
-			
+
 			break;
 		}
-		
+
 		chunks_written++;
 	}
 
