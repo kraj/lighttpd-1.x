@@ -287,8 +287,7 @@ static void show_version (void) {
 
 static void show_features (void) {
   show_version();
-  printf("\nEvent Handlers:\n\n%s",
-
+  const char *s = ""
 #ifdef USE_SELECT
       "\t+ select (generic)\n"
 #else
@@ -410,8 +409,8 @@ static void show_features (void) {
 #else
       "\t- GDBM support\n"
 #endif
-      "\n"
-      );
+      "\n";
+  printf("\nEvent Handlers:\n\n%s", s);
 }
 
 static void show_help (void) {
