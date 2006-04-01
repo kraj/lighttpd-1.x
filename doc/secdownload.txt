@@ -118,7 +118,7 @@ code for PHP should be easily adaptable to any other language: ::
   $secret = "verysecret";
   $uri_prefix = "/dl/";
   
-  # filename
+  # filename, make sure it's started with a "/" or you'll get 404 in the browser
   $f = "/secret-file.txt";
   
   # current timestamp
