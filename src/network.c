@@ -425,11 +425,20 @@ int network_close(server *srv) {
 			close(srv_socket->fd);
 		}
 
+		if (srv_socket->is_ssl) {
+#ifdef USE_OPENSSL
+			SSL_CTX_free(srv_socket->ssl_ctx);
+#endif
+		}
+
 		buffer_free(srv_socket->srv_token);
 
 		free(srv_socket);
 	}
 
+#ifdef USE_OPENSSL
+	ERR_free_strings();
+#endif
 	free(srv->srv_sockets.ptr);
 
 	return 0;
