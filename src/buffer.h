@@ -111,6 +111,12 @@ int light_isxdigit(int c);
 int light_isalpha(int c);
 int light_isalnum(int c);
 
+#define BUFFER_CTYPE_FUNC(type) int buffer_is##type(buffer *b);
+BUFFER_CTYPE_FUNC(digit)
+BUFFER_CTYPE_FUNC(xdigit)
+BUFFER_CTYPE_FUNC(alpha)
+BUFFER_CTYPE_FUNC(alnum)
+
 #define BUFFER_APPEND_STRING_CONST(x, y) \
 	buffer_append_string_len(x, y, sizeof(y) - 1)
 

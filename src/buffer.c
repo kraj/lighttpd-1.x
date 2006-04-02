@@ -993,6 +993,31 @@ int light_isalnum(int c) {
 	return light_isdigit(c) || light_isalpha(c);
 }
 
+#undef BUFFER_CTYPE_FUNC
+#define BUFFER_CTYPE_FUNC(type) \
+	int buffer_is##type(buffer *b) { \
+		size_t i, len; \
+		if (b->used < 2) return 0; \
+		/* strlen */ \
+		len = b->used - 1; \
+		/* c-string only */ \
+		if (b->ptr[len] != '\0') { \
+			return 0; \
+		} \
+		/* check on the whole string */ \
+		for (i = 0; i < len; i ++) { \
+			if (!light_is##type(b->ptr[i])) { \
+				return 0; \
+			} \
+		} \
+		return 1; \
+	}
+
+BUFFER_CTYPE_FUNC(digit)
+BUFFER_CTYPE_FUNC(xdigit)
+BUFFER_CTYPE_FUNC(alpha)
+BUFFER_CTYPE_FUNC(alnum)
+
 int buffer_to_lower(buffer *b) {
 	char *c;
 
