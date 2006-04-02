@@ -511,3 +511,10 @@ debug.log-file-not-found
 
 debug.log-request-handling
   default: disabled 
+
+debug.log-condition-handling
+  default: disabled 
+
+debug.log-condition-cache-handling
+  for developers only
+  default: disabled 

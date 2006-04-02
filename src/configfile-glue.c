@@ -254,6 +254,11 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 			char *err;
 			struct in_addr val_inp;
 
+			if (con->conf.log_condition_handling) {
+				log_error_write(srv, __FILE__, __LINE__,  "bsbsb", dc->comp_key,
+						"(", l, ") compare to", dc->string);
+			}
+
 			if (*(nm_slash+1) == '\0') {
 				log_error_write(srv, __FILE__, __LINE__, "sb", "ERROR: no number after / ", dc->string);
 
@@ -349,7 +354,7 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 
 	if (con->conf.log_condition_handling) {
 		log_error_write(srv, __FILE__, __LINE__,  "bsbsb", dc->comp_key,
-				"(", l, ") compare to ", dc->string);
+				"(", l, ") compare to", dc->string);
 	}
 	switch(dc->cond) {
 	case CONFIG_COND_NE:
@@ -395,6 +400,9 @@ static cond_result_t config_check_cond_cached(server *srv, connection *con, data
 	cond_cache_t *caches = con->cond_cache;
 
 	if (COND_RESULT_UNSET == caches[dc->context_ndx].result) {
+		if (con->conf.log_condition_handling) {
+			log_error_write(srv, __FILE__, __LINE__,  "sds",  "=== start of", dc->context_ndx, "condition block ===");
+		}
 		if (COND_RESULT_TRUE == (caches[dc->context_ndx].result = config_check_cond_nocache(srv, con, dc))) {
 			if (dc->next) {
 				data_config *c;
@@ -409,11 +417,11 @@ static cond_result_t config_check_cond_cached(server *srv, connection *con, data
 		}
 		if (con->conf.log_condition_handling) {
 			log_error_write(srv, __FILE__, __LINE__, "dss", dc->context_ndx,
-					"(uncached) result:",
+					"result:",
 					caches[dc->context_ndx].result == COND_RESULT_TRUE ? "true" : "false");
 		}
 	} else {
-		if (con->conf.log_condition_handling) {
+		if (con->conf.log_condition_cache_handling) {
 			log_error_write(srv, __FILE__, __LINE__, "dss", dc->context_ndx,
 					"(cached) result:",
 					caches[dc->context_ndx].result == COND_RESULT_TRUE ? "true" : "false");
@@ -423,9 +431,6 @@ static cond_result_t config_check_cond_cached(server *srv, connection *con, data
 }
 
 int config_check_cond(server *srv, connection *con, data_config *dc) {
-	if (con->conf.log_condition_handling) {
-		log_error_write(srv, __FILE__, __LINE__,  "s",  "=== start of condition block ===");
-	}
 	return (config_check_cond_cached(srv, con, dc) == COND_RESULT_TRUE);
 }
 

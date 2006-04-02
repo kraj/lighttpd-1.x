@@ -80,6 +80,7 @@ static int config_insert(server *srv) {
 		{ "server.network-backend",      NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },  /* 43 */
 		{ "server.upload-dirs",          NULL, T_CONFIG_ARRAY, T_CONFIG_SCOPE_CONNECTION },   /* 44 */
 		{ "server.core-files",           NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION }, /* 45 */
+		{ "debug.log-condition-cache-handling", NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_SERVER },    /* 46 */
 
 		{ "server.host",                 "use server.bind instead", T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
 		{ "server.docroot",              "use server.document-root instead", T_CONFIG_DEPRECATED, T_CONFIG_SCOPE_UNSET },
@@ -165,6 +166,7 @@ static int config_insert(server *srv) {
 		cv[14].destination = s->document_root;
 		cv[15].destination = &(s->force_lowercase_filenames);
 		cv[16].destination = &(s->log_condition_handling);
+		cv[46].destination = &(s->log_condition_cache_handling);
 		cv[17].destination = &(s->max_keep_alive_requests);
 		cv[18].destination = s->server_name;
 		cv[19].destination = &(s->max_keep_alive_idle);
@@ -244,6 +246,7 @@ int config_setup_connection(server *srv, connection *con) {
 	PATCH(log_response_header);
 	PATCH(log_request_handling);
 	PATCH(log_condition_handling);
+	PATCH(log_condition_cache_handling);
 	PATCH(log_file_not_found);
 
 	PATCH(range_requests);
@@ -315,6 +318,8 @@ int config_patch_connection(server *srv, connection *con, comp_key_t comp) {
 				PATCH(log_response_header);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("debug.log-condition-handling"))) {
 				PATCH(log_condition_handling);
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("debug.log-condition-cache-handling"))) {
+				PATCH(log_condition_cache_handling);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("debug.log-file-not-found"))) {
 				PATCH(log_file_not_found);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("server.protocol-http11"))) {

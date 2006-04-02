@@ -252,6 +252,7 @@ typedef struct {
 	unsigned short log_request_handling;
 	unsigned short log_response_header;
 	unsigned short log_condition_handling;
+	unsigned short log_condition_cache_handling;
 
 
 	/* server wide */
