@@ -28,12 +28,19 @@ src = Split("server.c response.c connections.c network.c \
       configfile.c configparser.c request.c proc_open.c")
 
 lemon = env.Program('lemon', 'lemon.c')
+def lemonemitter(target, source, env):
+	import os, SCons
+	base, ext = os.path.splitext(SCons.Util.to_String(target[0]))
+	target += [ base + '.h' ]
+	env.Depends(target, lemon)
+	return (target, source)
 
-configparser = env.Command(['configparser.c', 'configparser.h'], 'configparser.y', '(cd build; ../' + lemon[0].path + ' -q ../$SOURCE ../src/lempar.c; cd ..)')
-env.Depends(configparser, lemon)
+lemoncmd = '../' + lemon[0].path + ' -q ../$SOURCE ../src/lempar.c || (echo rm -f ../$TARGET && exit 1)'
+lemonbuilder = Builder(action=lemoncmd, chdir=1, emitter=lemonemitter, suffix='c')
+env.Append(BUILDERS = {'Lemon': lemonbuilder})
 
-mod_ssi_exprparser = env.Command(['mod_ssi_exprparser.c', 'mod_ssi_exprparser.h'], 'mod_ssi_exprparser.y', '(cd build; ../' + lemon[0].path + ' -q ../$SOURCE ../src/lempar.c; cd ..)')
-env.Depends(mod_ssi_exprparser, lemon)
+configparser = env.Lemon('configparser.y');
+mod_ssi_exprparser = env.Lemon('mod_ssi_exprparser.c', 'mod_ssi_exprparser.y');
 
 ## the modules and how they are built
 modules = {
