@@ -184,7 +184,7 @@ sub handle_http {
 					(my $h = $1) =~ tr/[A-Z]/[a-z]/;
 
 					if (defined $resp_hdr{$h}) {
-						diag(sprintf("header %s is duplicated: %s and %s\n",
+						diag(sprintf("header '%s' is duplicated: '%s' and '%s'\n",
 						             $h, $resp_hdr{$h}, $2));
 					} else {
 						$resp_hdr{$h} = $2;
