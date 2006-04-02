@@ -71,6 +71,10 @@ int config_insert_values_internal(server *srv, array *ca, const config_values_t 
 				data_string *ds = (data_string *)du;
 
 				buffer_copy_string_buffer(cv[i].destination, ds->value);
+			} else if (du->type == TYPE_INTEGER) {
+				data_integer *di = (data_integer *)du;
+				
+				buffer_copy_long(cv[i].destination, di->value);
 			} else {
 				log_error_write(srv, __FILE__, __LINE__, "ssss", "unexpected type for key: ", cv[i].key, "(string)", "\"...\"");
 
@@ -87,6 +91,11 @@ int config_insert_values_internal(server *srv, array *ca, const config_values_t 
 			}
 			case TYPE_STRING: {
 				data_string *ds = (data_string *)du;
+
+				if (buffer_isdigit(ds->value)) {
+					*((unsigned short *)(cv[i].destination)) = strtol(ds->value->ptr, NULL, 10);
+					break;
+				}
 
 				log_error_write(srv, __FILE__, __LINE__, "ssb", "get a string but expected a short:", cv[i].key, ds->value);
 
