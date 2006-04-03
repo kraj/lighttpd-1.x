@@ -63,7 +63,7 @@ void buffer_reset(buffer *b) {
 
 /**
  *
- * allocate (if neccessary) enough space for 'size' bytes and
+ * allocate (if necessary) enough space for 'size' bytes and 
  * set the 'used' counter to 0
  *
  */
@@ -79,7 +79,7 @@ int buffer_prepare_copy(buffer *b, size_t size) {
 
 		b->size = size;
 
-		/* always allocate a multiply of BUFFER_PIECE_SIZE */
+		/* always allocate a multiple of BUFFER_PIECE_SIZE */
 		b->size += BUFFER_PIECE_SIZE - (b->size % BUFFER_PIECE_SIZE);
 
 		b->ptr = malloc(b->size);
@@ -91,7 +91,7 @@ int buffer_prepare_copy(buffer *b, size_t size) {
 
 /**
  *
- * increase the internal buffer (if neccessary) to append another 'size' byte
+ * increase the internal buffer (if necessary) to append another 'size' byte
  * ->used isn't changed
  *
  */
@@ -102,7 +102,7 @@ int buffer_prepare_append(buffer *b, size_t size) {
 	if (0 == b->size) {
 		b->size = size;
 
-		/* always allocate a multiply of BUFFER_PIECE_SIZE */
+		/* always allocate a multiple of BUFFER_PIECE_SIZE */
 		b->size += BUFFER_PIECE_SIZE - (b->size % BUFFER_PIECE_SIZE);
 
 		b->ptr = malloc(b->size);
@@ -111,7 +111,7 @@ int buffer_prepare_append(buffer *b, size_t size) {
 	} else if (b->used + size > b->size) {
 		b->size += size;
 
-		/* always allocate a multiply of BUFFER_PIECE_SIZE */
+		/* always allocate a multiple of BUFFER_PIECE_SIZE */
 		b->size += BUFFER_PIECE_SIZE - (b->size % BUFFER_PIECE_SIZE);
 
 		b->ptr = realloc(b->ptr, b->size);
@@ -203,7 +203,7 @@ int buffer_append_string_rfill(buffer *b, const char *s, size_t maxlen) {
  * append a string to the end of the buffer
  *
  * the resulting buffer is terminated with a '\0'
- * s is treated as a un-terminated string (a \0 is handled a normal character)
+ * s is treated as an un-terminated string (a \0 is handled as a normal character)
  *
  * @param b a buffer
  * @param s the string
@@ -507,7 +507,7 @@ int buffer_is_empty(buffer *b) {
 }
 
 /**
- * check if two buffer contain the same data
+ * check if two buffers contain the same data
  *
  * HISTORY: this function was pretty much optimized, but didn't handled
  * alignment properly.
@@ -531,7 +531,7 @@ int buffer_is_equal_string(buffer *a, const char *s, size_t b_len) {
 
 /* simple-assumption:
  *
- * most parts are equal and doing a case conversion needs time
+ * most parts are equal and doing a case conversion takes time
  *
  */
 int buffer_caseless_compare(const char *a, size_t a_len, const char *b, size_t b_len) {
@@ -542,7 +542,7 @@ int buffer_caseless_compare(const char *a, size_t a_len, const char *b, size_t b
 	al = (size_t *)a;
 	bl = (size_t *)b;
 
-	/* is the alignment correct ? */
+	/* is the alignment correct? */
 	if ( ((size_t)al & mask) == 0 &&
 	     ((size_t)bl & mask) == 0 ) {
 
@@ -765,7 +765,7 @@ int buffer_append_string_encoded(buffer *b, const char *s, size_t s_len, buffer_
 
 	assert(map != NULL);
 
-	/* count to-be-encoded-characters */
+	/* count to-be-encoded characters */
 	for (ds = (unsigned char *)s, d_len = 0, ndx = 0; ndx < s_len; ds++, ndx++) {
 		if (map[*ds]) {
 			switch(encoding) {
@@ -829,7 +829,7 @@ int buffer_append_string_encoded(buffer *b, const char *s, size_t s_len, buffer_
 }
 
 
-/* decodes url-special-chars inplace.
+/* decodes url-special chars in-place.
  * replaces non-printable characters with '_'
  */
 
@@ -855,7 +855,7 @@ static int buffer_urldecode_internal(buffer *url, int is_query) {
 				if (low != 0xFF) {
 					high = (high << 4) | low;
 
-					/* map control-characters out */
+					/* map out control characters */	
 					if (high < 32 || high == 127) high = '_';
 
 					*dst = high;
@@ -891,7 +891,7 @@ int buffer_urldecode_query(buffer *url) {
  * /abc/./xyz       gets  /abc/xyz
  * /abc//xyz        gets  /abc/xyz
  *
- * NOTE: src and dest can point to the same buffer, in which case,
+ * NOTE: src and dest can point to the same buffer, in which case
  *       the operation is performed in-place.
  */
 

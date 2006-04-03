@@ -19,10 +19,10 @@ typedef struct chunk {
 		struct {
 			char   *start; /* the start pointer of the mmap'ed area */
 			size_t length; /* size of the mmap'ed area */
-			off_t  offset; /* start is <n> octet away from the start of the file */
+			off_t  offset; /* start is <n> octets away from the start of the file */
 		} mmap;
 
-		int is_temp; /* file is temporary and will be deleted if on cleanup */
+		int is_temp; /* file is temporary and will be deleted on cleanup */
 	} file;
 
 	off_t  offset; /* octets sent from this chunk

@@ -99,7 +99,7 @@ void chunkqueue_free(chunkqueue *cq) {
 static chunk *chunkqueue_get_unused_chunk(chunkqueue *cq) {
 	chunk *c;
 
-	/* check if we have a unused chunk */
+	/* check if we have an unused chunk */
 	if (!cq->unused) {
 		c = chunk_init();
 	} else {

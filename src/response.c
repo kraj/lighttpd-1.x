@@ -119,7 +119,7 @@ int http_response_write_header(server *srv, connection *con) {
 handler_t http_response_prepare(server *srv, connection *con) {
 	handler_t r;
 
-	/* looks like someone has already done a decision */
+	/* looks like someone has already made a decision */
 	if (con->mode == DIRECT &&
 	    (con->http_status != 0 && con->http_status != 200)) {
 		/* remove a packets in the queue */
@@ -134,7 +134,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 	if (con->mode == DIRECT && con->physical.path->used == 0) {
 		char *qstr;
 
-		/* we only come here when we have the parse the full request again
+		/* we only come here when we have to parse the full request again
 		 *
 		 * a HANDLER_COMEBACK from mod_rewrite and mod_fastcgi might be a
 		 * problem here as mod_setenv might get called multiple times
@@ -277,7 +277,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 
 		if (con->request.http_method == HTTP_METHOD_OPTIONS &&
 		    con->uri.path->ptr[0] == '*' && con->uri.path_raw->ptr[1] == '\0') {
-			/* option requests are handled directly without checking of the path */
+			/* option requests are handled directly without checking the path */
 
 			response_header_insert(srv, con, CONST_STR_LEN("Allow"), CONST_STR_LEN("OPTIONS, GET, HEAD, POST"));
 
@@ -321,13 +321,13 @@ handler_t http_response_prepare(server *srv, connection *con) {
 		buffer_copy_string_buffer(con->physical.rel_path, con->uri.path);
 
 #if defined(__WIN32) || defined(__CYGWIN__)
-		/* strip dots from the end and spaces
+		/* strip dots and spaces from the end
 		 *
 		 * windows/dos handle those filenames as the same file
 		 *
 		 * foo == foo. == foo..... == "foo...   " == "foo..  ./"
 		 *
-		 * This will affect in some cases PATHINFO
+		 * This will affect PATHINFO in some cases
 		 *
 		 * on native windows we could prepend the filename with \\?\ to circumvent
 		 * this behaviour. I have no idea how to push this through cygwin
@@ -378,15 +378,14 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			break;
 		}
 
-		/* MacOS X and Windows can't distiguish between upper and lower-case
-		 *
-		 * convert to lower-case
+		/* The default Mac OS X and Windows filesystems can't distiguish between
+		 * upper- and lowercase, so convert to lowercase
 		 */
 		if (con->conf.force_lowercase_filenames) {
 			buffer_to_lower(con->physical.rel_path);
 		}
 
-		/* the docroot plugins might set the servername, if they don't we take http-host */
+		/* the docroot plugins might set the servername; if they don't we take http-host */
 		if (buffer_is_empty(con->server_name)) {
 			buffer_copy_string_buffer(con->server_name, con->uri.authority);
 		}
@@ -436,7 +435,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 	}
 
 	/*
-	 * Noone catched away the file from normal path of execution yet (like mod_access)
+	 * No one took the file away from the normal path of execution yet (like mod_access)
 	 *
 	 * Go on and check of the file exists at all
 	 */
@@ -499,7 +498,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 				/* PATH_INFO ! :) */
 				break;
 			default:
-				/* we have no idea what happend. let's tell the user so. */
+				/* we have no idea what happened, so tell the user. */
 				con->http_status = 500;
 				buffer_reset(con->physical.path);
 
@@ -544,7 +543,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			} while ((found == 0) && (slash != NULL) && (slash - srv->tmp_buf->ptr > con->physical.basedir->used - 2));
 
 			if (found == 0) {
-				/* no it really doesn't exists */
+				/* no, it really doesn't exists */
 				con->http_status = 404;
 
 				if (con->conf.log_file_not_found) {
@@ -594,11 +593,11 @@ handler_t http_response_prepare(server *srv, connection *con) {
 				log_error_write(srv, __FILE__, __LINE__,  "s",  "-- subrequest finished");
 			}
 
-			/* something strange happend */
+			/* something strange happened */
 			return r;
 		}
 
-		/* if we are still here, no one wanted the file, status 403 is ok I think */
+		/* if we are still here, no one wanted the file; status 403 is ok I think */
 
 		if (con->mode == DIRECT) {
 			con->http_status = 403;
@@ -610,12 +609,12 @@ handler_t http_response_prepare(server *srv, connection *con) {
 
 	switch(r = plugins_call_handle_subrequest(srv, con)) {
 	case HANDLER_GO_ON:
-		/* request was not handled, looks like we are done */
+		/* request was not handled; looks like we are done */
 		return HANDLER_FINISHED;
 	case HANDLER_FINISHED:
 		/* request is finished */
 	default:
-		/* something strange happend */
+		/* something strange happened */
 		return r;
 	}
 

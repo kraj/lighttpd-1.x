@@ -27,9 +27,9 @@ typedef struct {
 typedef struct {
 	char *ptr;
 
-	size_t offset; /* input-pointer */
+	size_t offset; /* input pointer */
 
-	size_t used;   /* output-pointer */
+	size_t used;   /* output pointer */
 	size_t size;
 } read_buffer;
 
@@ -85,9 +85,9 @@ int buffer_caseless_compare(const char *a, size_t a_len, const char *b, size_t b
 
 typedef enum {
 	ENCODING_UNSET,
-	ENCODING_REL_URI, /* for coding a rel-uri (/with space/and%percent) nicely as part of a href */
-	ENCODING_REL_URI_PART, /* same as ENC_REL_URL plus coding / too as %2F */
-	ENCODING_HTML,    /* & becomes &amp; and so on */
+	ENCODING_REL_URI, /* for coding a rel-uri (/with space/and%percent) nicely as part of an href */
+	ENCODING_REL_URI_PART, /* same as ENC_REL_URL plus encoding "/" as "%2F" */
+	ENCODING_HTML,    /* "&" becomes "&amp;" and so on */
 	ENCODING_MINIMAL_XML, /* minimal encoding for xml */
 	ENCODING_HEX      /* encode string as hex */
 } buffer_encoding_t;

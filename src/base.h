@@ -171,7 +171,7 @@ typedef struct {
 
 typedef struct {
 	off_t   content_length;
-	int     keep_alive;               /* used by  the subrequests in proxy, cgi and fcgi to say the subrequest was keep-alive or not */
+	int     keep_alive;               /* used by the subrequests in proxy, cgi and fcgi to say whether the subrequest was keep-alive or not */
 
 	array  *headers;
 
@@ -215,7 +215,7 @@ typedef struct {
 } stat_cache_entry;
 
 typedef struct {
-	splay_tree *files; /* the nodes of the tree are stat_cache_entry's */
+	splay_tree *files; /* the nodes of the tree are stat_cache_entries */
 
 	buffer *dir_name; /* for building the dirname from the filename */
 #ifdef HAVE_FAM_H
@@ -273,13 +273,13 @@ typedef struct {
 	/* server-wide traffic-shaper
 	 *
 	 * each context has the counter which is inited once
-	 * a second by the global_kbytes_per_second config-var
+	 * per second by the global_kbytes_per_second config-var
 	 *
 	 * as soon as global_kbytes_per_second gets below 0
 	 * the connected conns are "offline" a little bit
 	 *
 	 * the problem:
-	 * we somehow have to loose our "we are writable" signal
+	 * we somehow have to lose our "we are writable" signal 
 	 * on the way.
 	 *
 	 */
@@ -342,7 +342,7 @@ typedef struct {
 	int is_readable;
 	int is_writable;
 
-	int     keep_alive;           /* only request.c can enable it, all other just disable */
+	int     keep_alive;           /* only request.c can enable it, all others just disable */
 
 	int file_started;
 	int file_finished;

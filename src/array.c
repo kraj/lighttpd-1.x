@@ -165,7 +165,7 @@ int array_insert_unique(array *a, data_unset *str) {
 	int pos = 0;
 	size_t j;
 
-	/* generate unique index if neccesary */
+	/* generate unique index if necessary */
 	if (str->key->used == 0 || str->is_index_key) {
 		buffer_copy_long(str->key, a->unique_ndx++);
 		str->is_index_key = 1;
@@ -215,7 +215,7 @@ int array_insert_unique(array *a, data_unset *str) {
 		pos++;
 	}
 
-	/* move everything on step to the right */
+	/* move everything one step to the right */
 	if (pos != ndx) {
 		memmove(a->sorted + (pos + 1), a->sorted + (pos), (ndx - pos) * sizeof(*a->sorted));
 	}

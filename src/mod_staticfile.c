@@ -48,7 +48,7 @@ INIT_FUNC(mod_staticfile_init) {
 	return p;
 }
 
-/* detroy the plugin data */
+/* destroy the plugin data */
 FREE_FUNC(mod_staticfile_free) {
 	plugin_data *p = p_d;
 
@@ -393,7 +393,7 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 		return HANDLER_FINISHED;
 	}
 
-	/* we only handline regular files */
+	/* we only handle regular files */
 	if (!S_ISREG(sce->st.st_mode)) {
 		con->http_status = 404;
 
@@ -406,7 +406,7 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 		return HANDLER_FINISHED;
 	}
 
-	/* mod_compress might set several data directly, don't overwrite them */
+	/* mod_compress might set several parameters directly; don't overwrite them */
 
 	/* set response content-type, if not set already */
 
