@@ -3607,9 +3607,32 @@ TRIGGER_FUNC(mod_fastcgi_handle_trigger) {
 	 *
 	 * currently we wait for the TCP timeout which is on Linux 180 seconds
 	 *
-	 *
-	 *
 	 */
+
+	for (i = 0; i < srv->conns->used; i++) {
+		connection *con = srv->conns->ptr[i];
+		handler_ctx *hctx = con->plugin_ctx[p->id];
+
+		/* if a connection is ours and is in handle-req for more than max-request-time 
+		 * kill the connection */
+
+		if (con->mode != p->id) continue;
+		if (con->state != CON_STATE_HANDLE_REQUEST) continue;
+		if (srv->cur_ts < con->request_start + 60) continue;
+
+		/* the request is waiting for a FCGI_STDOUT since 60 seconds */
+
+		/* kill the connection */
+
+		log_error_write(srv, __FILE__, __LINE__, "s", "fastcgi backend didn't responded after 60 seconds");
+
+		fcgi_connection_close(srv, hctx);
+
+		con->mode = DIRECT;
+		con->http_status = 500;
+
+		joblist_append(srv, con);
+	}
 
 	/* check all childs if they are still up */
 
