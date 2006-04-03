@@ -3,6 +3,15 @@
 NEWS
 ====
 
+- 1.4.12 - 2006-..-..
+
+  * added handling of Content-Range to PUT requests in mod_webdav
+  * added handling of ETag and If-Modified-Since to mod_compress if 
+    cache-dir is not set
+  * added experimental LOCK support for mod_webdav 
+  * fixed handling of If-Modified-Since if Etag is not set
+  * fixed hanging fastcgi connections
+
 - 1.4.11 - 2006-03-09
 
   * added ability to specify which ip address spawn-fci listens on 
