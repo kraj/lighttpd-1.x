@@ -1141,6 +1141,46 @@ int webdav_lockdiscovery(server *srv, connection *con,
 
 	return 0;
 }
+/**
+ * check if resource is having the right locks to access to resource
+ *
+ * 
+ *
+ */
+int webdav_has_lock(server *srv, connection *con, plugin_data *p) {
+	int has_lock = 1;
+
+#ifdef USE_LOCKS
+	data_string *ds;
+
+	/**
+	 * X-Litmus: locks: 11 (owner_modify)
+	 * If: <http://127.0.0.1:1025/dav/litmus/lockme> (<opaquelocktoken:2165478d-0611-49c4-be92-e790d68a38f1>)
+	 *
+	 * X-Litmus: locks: 16 (fail_cond_put)
+	 * If: (<DAV:no-lock> ["-1622396671"])
+	 */
+	if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "If"))) {
+	} else {
+		/* we didn't provided a lock-token -> */
+		/* if the resource is locked -> 423 */
+
+		sqlite3_stmt *stmt = p->conf.stmt_read_lock_by_uri;
+
+		sqlite3_reset(stmt);
+
+		sqlite3_bind_text(stmt, 1,
+			  CONST_BUF_LEN(con->uri.path),
+			  SQLITE_TRANSIENT);
+
+		while (SQLITE_ROW == sqlite3_step(stmt)) {
+			has_lock = 0;
+		}
+	}
+#endif
+
+	return has_lock;
+}
 
 URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 	plugin_data *p = p_d;
@@ -1465,6 +1505,12 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 	case HTTP_METHOD_DELETE:
 		if (p->conf.is_readonly) {
 			con->http_status = 403;
+			return HANDLER_FINISHED;
+		}
+
+		/* does the client have a lock for this connection ? */
+		if (!webdav_has_lock(srv, con, p)) {
+			con->http_status = 423;
 			return HANDLER_FINISHED;
 		}
 
@@ -2328,12 +2374,20 @@ propmatch_cleanup:
 				  CONST_BUF_LEN(p->tmp_buf),
 				  SQLITE_TRANSIENT);
 	
+			sqlite3_bind_text(stmt, 2,
+				  CONST_BUF_LEN(con->uri.path),
+				  SQLITE_TRANSIENT);
+
 			if (SQLITE_DONE != sqlite3_step(stmt)) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", 
 					"remove lock:", sqlite3_errmsg(p->conf.sql));
 			}
-				
-			con->http_status = 204;
+
+			if (0 == sqlite3_changes(p->conf.sql)) {
+				con->http_status = 401;
+			} else {
+				con->http_status = 204;
+			}
 			return HANDLER_FINISHED;
 		} else {
 			/* we need a lock-token to unlock */
