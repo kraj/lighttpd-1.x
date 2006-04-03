@@ -74,6 +74,8 @@ typedef struct {
 	buffer *parse_response;
 	buffer *balance_buf;
 
+	array *ignore_headers;
+
 	plugin_config **config_storage;
 
 	plugin_config conf;
@@ -144,11 +146,31 @@ static void handler_ctx_free(handler_ctx *hctx) {
 
 INIT_FUNC(mod_proxy_init) {
 	plugin_data *p;
+	size_t i;
+
+	char *hop2hop_headers[] = {
+		"Connection", 
+		"Keep-Alive",
+		"Host",
+		NULL
+	};
 
 	p = calloc(1, sizeof(*p));
 
 	p->parse_response = buffer_init();
 	p->balance_buf = buffer_init();
+	p->ignore_headers = array_init();
+
+	for (i = 0; hop2hop_headers[i]; i++) {
+		data_string *ds;
+
+	    	if (NULL == (ds = (data_string *)array_get_unused_element(p->ignore_headers, TYPE_STRING))) {
+			ds = data_string_init();
+		}
+
+		buffer_copy_string(ds->value, hop2hop_headers[i]);
+		array_insert_unique(p->ignore_headers, (data_unset *)ds);
+	}
 
 	return p;
 }
@@ -176,6 +198,8 @@ FREE_FUNC(mod_proxy_free) {
 		}
 		free(p->config_storage);
 	}
+
+	free(p->ignore_headers);
 
 	free(p);
 
@@ -424,6 +448,7 @@ static int proxy_create_env(server *srv, handler_ctx *hctx) {
 	size_t i;
 
 	connection *con   = hctx->remote_conn;
+	plugin_data *p    = hctx->plugin_data;
 	buffer *b;
 
 	/* build header */
@@ -453,7 +478,9 @@ static int proxy_create_env(server *srv, handler_ctx *hctx) {
 		ds = (data_string *)con->request.headers->data[i];
 
 		if (ds->value->used && ds->key->used) {
-			if (buffer_is_equal_string(ds->key, CONST_STR_LEN("Connection"))) continue;
+
+			/* don't copy hop-to-hop headers */
+			if (array_get_element(p->ignore_headers, ds->key->ptr)) continue;
 
 			buffer_append_string_buffer(b, ds->key);
 			BUFFER_APPEND_STRING_CONST(b, ": ");
