@@ -342,6 +342,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 		case HTTP_METHOD_GET:
 		case HTTP_METHOD_POST:
 		case HTTP_METHOD_HEAD:
+			/* webdav */
 		case HTTP_METHOD_PUT:
 		case HTTP_METHOD_MKCOL:
 		case HTTP_METHOD_DELETE:
@@ -349,6 +350,8 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 		case HTTP_METHOD_MOVE:
 		case HTTP_METHOD_PROPFIND:
 		case HTTP_METHOD_PROPPATCH:
+		case HTTP_METHOD_LOCK:
+		case HTTP_METHOD_UNLOCK:
 			break;
 		case HTTP_METHOD_OPTIONS:
 			/*

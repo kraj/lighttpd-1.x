@@ -92,6 +92,7 @@ opts.AddOptions(
 	BoolOption('with_gzip', 'enable gzip compression', 'no'),
 	BoolOption('with_bzip2', 'enable bzip2 compression', 'no'),
 	BoolOption('with_lua', 'enable lua support for mod_cml', 'no'),
+	BoolOption('with_uuid', 'enable LOCK support (requires uuid) for mod_webdav', 'no'),
 	BoolOption('with_ldap', 'enable ldap auth support', 'no'))
 
 env = Environment(
@@ -206,6 +207,10 @@ if 1:
 		if autoconf.CheckLibWithHeader('lua', 'lua.h', 'C'):
 			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_LUA_H', '-DHAVE_LIBLUA' ], LIBLUA = 'lua', LIBLUALIB = 'lualib')
 	
+	if env['with_uuid']:
+		if autoconf.CheckLibWithHeader('uuid', 'uuid/uuid.h', 'C'):
+			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_UUID_H' ], LIBUUID = 'uuid')
+
 	ol = env['LIBS']
 	if autoconf.CheckLibWithHeader('fcgi', 'fastcgi.h', 'C'):
 		autoconf.env.Append(LIBFCGI = 'fcgi')

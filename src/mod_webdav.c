@@ -23,6 +23,11 @@
 #include <sqlite3.h>
 #endif
 
+#if defined(HAVE_LIBXML_H) && defined(HAVE_SQLITE3_H) && defined(HAVE_UUID_H)
+#define USE_LOCKS
+#include <uuid/uuid.h>
+#endif
+
 #include "base.h"
 #include "log.h"
 #include "buffer.h"
@@ -62,6 +67,12 @@ typedef struct {
 	sqlite3_stmt *stmt_delete_uri;
 	sqlite3_stmt *stmt_move_uri;
 	sqlite3_stmt *stmt_copy_uri;
+
+	sqlite3_stmt *stmt_remove_lock;
+	sqlite3_stmt *stmt_create_lock;
+	sqlite3_stmt *stmt_read_lock;
+	sqlite3_stmt *stmt_read_lock_by_uri;
+	sqlite3_stmt *stmt_refresh_lock;
 #endif
 } plugin_config;
 
@@ -123,6 +134,12 @@ FREE_FUNC(mod_webdav_free) {
 				sqlite3_finalize(s->stmt_update_prop);
 				sqlite3_finalize(s->stmt_select_prop);
 				sqlite3_finalize(s->stmt_select_propnames);
+				
+				sqlite3_finalize(s->stmt_read_lock);
+				sqlite3_finalize(s->stmt_read_lock_by_uri);
+				sqlite3_finalize(s->stmt_create_lock);
+				sqlite3_finalize(s->stmt_remove_lock);
+				sqlite3_finalize(s->stmt_refresh_lock);
 				sqlite3_close(s->sql);
 			}
 #endif
@@ -273,6 +290,76 @@ SETDEFAULTS_FUNC(mod_webdav_set_defaults) {
 
 				return HANDLER_ERROR;
 			}
+
+			/* LOCKS */
+
+			if (SQLITE_OK != sqlite3_exec(s->sql,
+					"CREATE TABLE locks ("
+					"  locktoken TEXT NOT NULL,"
+					"  resource TEXT NOT NULL,"
+					"  lockscope TEXT NOT NULL,"
+					"  locktype TEXT NOT NULL,"
+					"  owner TEXT NOT NULL,"
+					"  depth INT NOT NULL,"
+					"  timeout TIMESTAMP NOT NULL,"
+					"  PRIMARY KEY(locktoken))",
+					NULL, NULL, &err)) {
+
+				if (0 != strcmp(err, "table locks already exists")) {
+					log_error_write(srv, __FILE__, __LINE__, "ss", "can't open transaction:", err);
+					sqlite3_free(err);
+
+					return HANDLER_ERROR;
+				}
+				sqlite3_free(err);
+			}
+
+			if (SQLITE_OK != sqlite3_prepare(s->sql,
+				CONST_STR_LEN("INSERT INTO locks (locktoken, resource, lockscope, locktype, owner, depth, timeout) VALUES (?,?,?,?,?,?, CURRENT_TIME + 600)"),
+				&(s->stmt_create_lock), &next_stmt)) {
+				/* prepare failed */
+				log_error_write(srv, __FILE__, __LINE__, "ss", "sqlite3_prepare failed", sqlite3_errmsg(s->sql));
+
+				return HANDLER_ERROR;
+			}
+
+			if (SQLITE_OK != sqlite3_prepare(s->sql,
+				CONST_STR_LEN("DELETE FROM locks WHERE locktoken = ?"),
+				&(s->stmt_remove_lock), &next_stmt)) {
+				/* prepare failed */
+				log_error_write(srv, __FILE__, __LINE__, "ss", "sqlite3_prepare failed", sqlite3_errmsg(s->sql));
+
+				return HANDLER_ERROR;
+			}
+
+			if (SQLITE_OK != sqlite3_prepare(s->sql,
+				CONST_STR_LEN("SELECT locktoken, resource, lockscope, locktype, owner, depth, timeout FROM locks WHERE locktoken = ?"),
+				&(s->stmt_read_lock), &next_stmt)) {
+				/* prepare failed */
+				log_error_write(srv, __FILE__, __LINE__, "ss", "sqlite3_prepare failed", sqlite3_errmsg(s->sql));
+
+				return HANDLER_ERROR;
+			}
+
+			if (SQLITE_OK != sqlite3_prepare(s->sql,
+				CONST_STR_LEN("SELECT locktoken, resource, lockscope, locktype, owner, depth, timeout FROM locks WHERE resource = ?"),
+				&(s->stmt_read_lock_by_uri), &next_stmt)) {
+				/* prepare failed */
+				log_error_write(srv, __FILE__, __LINE__, "ss", "sqlite3_prepare failed", sqlite3_errmsg(s->sql));
+
+				return HANDLER_ERROR;
+			}
+
+			if (SQLITE_OK != sqlite3_prepare(s->sql,
+				CONST_STR_LEN("UPDATE locks SET timeout = CURRENT_TIME + 600 WHERE locktoken = ?"),
+				&(s->stmt_refresh_lock), &next_stmt)) {
+				/* prepare failed */
+				log_error_write(srv, __FILE__, __LINE__, "ss", "sqlite3_prepare failed", sqlite3_errmsg(s->sql));
+
+				return HANDLER_ERROR;
+			}
+
+
 #else
 			log_error_write(srv, __FILE__, __LINE__, "s", "Sorry, no sqlite3 and libxml2 support include, compile with --with-webdav-props");
 			return HANDLER_ERROR;
@@ -301,6 +388,12 @@ static int mod_webdav_patch_connection(server *srv, connection *con, plugin_data
 	PATCH_OPTION(stmt_delete_uri);
 	PATCH_OPTION(stmt_move_uri);
 	PATCH_OPTION(stmt_copy_uri);
+	
+	PATCH_OPTION(stmt_remove_lock);
+	PATCH_OPTION(stmt_refresh_lock);
+	PATCH_OPTION(stmt_create_lock);
+	PATCH_OPTION(stmt_read_lock);
+	PATCH_OPTION(stmt_read_lock_by_uri);
 #endif
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -331,6 +424,12 @@ static int mod_webdav_patch_connection(server *srv, connection *con, plugin_data
 				PATCH_OPTION(stmt_delete_uri);
 				PATCH_OPTION(stmt_move_uri);
 				PATCH_OPTION(stmt_copy_uri);
+	
+				PATCH_OPTION(stmt_remove_lock);
+				PATCH_OPTION(stmt_refresh_lock);
+				PATCH_OPTION(stmt_create_lock);
+				PATCH_OPTION(stmt_read_lock);
+				PATCH_OPTION(stmt_read_lock_by_uri);
 #endif
 			}
 		}
@@ -359,7 +458,7 @@ URIHANDLER_FUNC(mod_webdav_uri_handler) {
 		if (p->conf.is_readonly) {
 			response_header_insert(srv, con, CONST_STR_LEN("Allow"), CONST_STR_LEN("PROPFIND"));
 		} else {
-			response_header_insert(srv, con, CONST_STR_LEN("Allow"), CONST_STR_LEN("PROPFIND, DELETE, MKCOL, PUT, MOVE, COPY, PROPPATCH"));
+			response_header_insert(srv, con, CONST_STR_LEN("Allow"), CONST_STR_LEN("PROPFIND, DELETE, MKCOL, PUT, MOVE, COPY, PROPPATCH, LOCK, UNLOCK"));
 		}
 		break;
 	default:
@@ -818,9 +917,9 @@ static int webdav_get_property(server *srv, connection *con, plugin_data *p, phy
 					  SQLITE_TRANSIENT);
 
 			/* it is the PK */
-			while (SQLITE_ROW == sqlite3_step(p->conf.stmt_select_prop)) {
+			while (SQLITE_ROW == sqlite3_step(stmt)) {
 				/* there is a row for us, we only expect a single col 'value' */
-				webdav_gen_prop_tag(srv, con, prop_name, prop_ns, (char *)sqlite3_column_text(p->conf.stmt_select_prop, 0), b);
+				webdav_gen_prop_tag(srv, con, prop_name, prop_ns, (char *)sqlite3_column_text(stmt, 0), b);
 				found = 1;
 			}
 		}
@@ -988,6 +1087,61 @@ static int webdav_parse_chunkqueue(server *srv, connection *con, plugin_data *p,
 }
 #endif
 
+int webdav_lockdiscovery(server *srv, connection *con, 
+		buffer *locktoken, const char *lockscope, const char *locktype, int depth) {
+
+	buffer *b;
+
+	response_header_overwrite(srv, con, CONST_STR_LEN("Lock-Token"), CONST_BUF_LEN(locktoken));
+					
+	response_header_overwrite(srv, con, 
+		CONST_STR_LEN("Content-Type"), 
+		CONST_STR_LEN("text/xml; charset=\"utf-8\""));
+
+	b = chunkqueue_get_append_buffer(con->write_queue);
+
+	buffer_copy_string(b, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
+
+	buffer_append_string(b,"<D:prop xmlns:D=\"DAV:\" xmlns:ns0=\"urn:uuid:c2f41010-65b3-11d1-a29f-00aa00c14882/\">\n");
+	buffer_append_string(b,"<D:lockdiscovery>\n");
+	buffer_append_string(b,"<D:activelock>\n");
+	
+	buffer_append_string(b,"<D:lockscope>");
+	buffer_append_string(b,"<D:");
+	buffer_append_string(b, lockscope);
+	buffer_append_string(b, "/>"); 
+	buffer_append_string(b,"</D:lockscope>\n");
+
+	buffer_append_string(b,"<D:locktype>");
+	buffer_append_string(b,"<D:");
+	buffer_append_string(b, locktype);
+	buffer_append_string(b, "/>"); 
+	buffer_append_string(b,"</D:locktype>\n");
+
+	buffer_append_string(b,"<D:depth>");
+	buffer_append_string(b, depth == 0 ? "0" : "infinity");
+	buffer_append_string(b,"</D:depth>\n");
+
+	buffer_append_string(b,"<D:timeout>");
+	buffer_append_string(b, "Second-600");
+	buffer_append_string(b,"</D:timeout>\n");
+
+	buffer_append_string(b,"<D:owner>");
+	buffer_append_string(b,"</D:owner>\n");
+
+	buffer_append_string(b,"<D:locktoken>");
+	buffer_append_string(b, "<D:href>");
+	buffer_append_string_buffer(b, locktoken);
+	buffer_append_string(b, "</D:href>");
+	buffer_append_string(b,"</D:locktoken>\n");
+
+	buffer_append_string(b,"</D:activelock>\n");
+	buffer_append_string(b,"</D:lockdiscovery>\n");
+	buffer_append_string(b,"</D:prop>\n");
+
+	return 0;
+}
+
 URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 	plugin_data *p = p_d;
 	buffer *b;
@@ -998,6 +1152,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 	buffer *prop_200;
 	buffer *prop_404;
 	webdav_properties *req_props;
+	stat_cache_entry *sce = NULL;
 
 	UNUSED(srv);
 
@@ -1016,6 +1171,18 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 		req_props = NULL;
 
 		/* is there a content-body ? */
+
+		switch (stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+		case HANDLER_ERROR:
+			if (errno == ENOENT) {
+				con->http_status = 404;
+				return HANDLER_FINISHED;
+			}
+			break;
+		default:
+			break;
+		}
+
 
 #ifdef USE_PROPPATCH
 		/* any special requests or just allprop ? */
@@ -1758,7 +1925,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 
 		return HANDLER_FINISHED;
 	}
-	case HTTP_METHOD_PROPPATCH: {
+	case HTTP_METHOD_PROPPATCH: 
 		if (p->conf.is_readonly) {
 			con->http_status = 403;
 			return HANDLER_FINISHED;
@@ -1856,7 +2023,8 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 									}
 
 									if (SQLITE_DONE != (r = sqlite3_step(stmt))) {
-										log_error_write(srv, __FILE__, __LINE__, "ss", "sql-set failed:", sqlite3_errmsg(p->conf.sql));
+										log_error_write(srv, __FILE__, __LINE__, "ss", 
+												"sql-set failed:", sqlite3_errmsg(p->conf.sql));
 									}
 								}
 							}
@@ -1888,6 +2056,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 				}
 
 propmatch_cleanup:
+
 				xmlFreeDoc(xml);
 			} else {
 				con->http_status = 400;
@@ -1897,7 +2066,286 @@ propmatch_cleanup:
 #endif
 		con->http_status = 501;
 		return HANDLER_FINISHED;
-	}
+	case HTTP_METHOD_LOCK:
+		/**
+		 * a mac wants to write 
+		 *
+		 * LOCK /dav/expire.txt HTTP/1.1\r\n
+		 * User-Agent: WebDAVFS/1.3 (01308000) Darwin/8.1.0 (Power Macintosh)\r\n
+		 * Accept: * / *\r\n
+		 * Depth: 0\r\n
+		 * Timeout: Second-600\r\n
+		 * Content-Type: text/xml; charset=\"utf-8\"\r\n
+		 * Content-Length: 229\r\n
+		 * Connection: keep-alive\r\n
+		 * Host: 192.168.178.23:1025\r\n
+		 * \r\n
+		 * <?xml version=\"1.0\" encoding=\"utf-8\"?>\n
+		 * <D:lockinfo xmlns:D=\"DAV:\">\n
+		 *  <D:lockscope><D:exclusive/></D:lockscope>\n
+		 *  <D:locktype><D:write/></D:locktype>\n
+		 *  <D:owner>\n
+		 *   <D:href>http://www.apple.com/webdav_fs/</D:href>\n
+		 *  </D:owner>\n
+		 * </D:lockinfo>\n
+		 */
+
+		if (depth != 0 && depth != -1) {
+			con->http_status = 400;
+
+			return HANDLER_FINISHED;
+		}
+
+#ifdef USE_LOCKS
+		if (con->request.content_length) {
+			xmlDocPtr xml;
+			buffer *hdr_if = NULL;
+
+			if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "If"))) {
+				hdr_if = ds->value;
+			}
+
+			/* we don't support Depth: Infinity on locks */
+			if (hdr_if == NULL && depth == -1) {
+				con->http_status = 409; /* Conflict */
+
+				return HANDLER_FINISHED;
+			}
+
+			if (1 == webdav_parse_chunkqueue(srv, con, p, con->request_content_queue, &xml)) {
+				xmlNode *rootnode = xmlDocGetRootElement(xml);
+
+				assert(rootnode);
+
+				if (0 == xmlStrcmp(rootnode->name, BAD_CAST "lockinfo")) {
+					xmlNode *lockinfo;
+					const xmlChar *lockscope = NULL, *locktype = NULL, *owner = NULL;
+
+					for (lockinfo = rootnode->children; lockinfo; lockinfo = lockinfo->next) {
+						if (0 == xmlStrcmp(lockinfo->name, BAD_CAST "lockscope")) {
+							xmlNode *value;
+							for (value = lockinfo->children; value; value = value->next) {
+								if ((0 == xmlStrcmp(value->name, BAD_CAST "exclusive")) ||
+								    (0 == xmlStrcmp(value->name, BAD_CAST "shared"))) {
+									lockscope = value->name;
+								} else {
+									con->http_status = 400;
+
+									xmlFreeDoc(xml);
+									return HANDLER_FINISHED;
+								}
+							}
+						} else if (0 == xmlStrcmp(lockinfo->name, BAD_CAST "locktype")) {
+							xmlNode *value;
+							for (value = lockinfo->children; value; value = value->next) {
+								if ((0 == xmlStrcmp(value->name, BAD_CAST "write"))) {
+									locktype = value->name;
+								} else {
+									con->http_status = 400;
+
+									xmlFreeDoc(xml);
+									return HANDLER_FINISHED;
+								}
+							}
+
+						} else if (0 == xmlStrcmp(lockinfo->name, BAD_CAST "owner")) {
+						}
+					}
+
+					if (lockscope && locktype) {
+						sqlite3_stmt *stmt = p->conf.stmt_read_lock_by_uri;
+
+						/* is this resourse already locked ? */
+
+						/* SELECT locktoken, resource, lockscope, locktype, owner, depth, timeout 
+						 *   FROM locks 
+						 *  WHERE resource = ? */
+
+						if (stmt) {
+
+							sqlite3_reset(stmt);
+
+							sqlite3_bind_text(stmt, 1,
+									  p->uri.path->ptr,
+									  p->uri.path->used - 1,
+									  SQLITE_TRANSIENT);
+
+							/* it is the PK */
+							while (SQLITE_ROW == sqlite3_step(stmt)) {
+								/* we found a lock
+								 * 1. is it compatible ?
+								 * 2. is it ours */
+								char *sql_lockscope = (char *)sqlite3_column_text(stmt, 2);
+
+								if (strcmp(sql_lockscope, "exclusive")) {
+									con->http_status = 423;
+								} else if (0 == xmlStrcmp(lockscope, BAD_CAST "exclusive")) {
+									/* resourse is locked with a shared lock
+									 * client wants exclusive */
+									con->http_status = 423;
+								}
+							}
+							if (con->http_status == 423) {
+								xmlFreeDoc(xml);
+								return HANDLER_FINISHED;
+							}
+						}
+
+						stmt = p->conf.stmt_create_lock;
+						if (stmt) {
+							/* create a lock-token */
+							uuid_t id;
+							char uuid[37] /* 36 + \0 */;
+
+							uuid_generate(id);
+							uuid_unparse(id, uuid);
+
+							buffer_copy_string(p->tmp_buf, "opaquelocktoken:");
+							buffer_append_string(p->tmp_buf, uuid);
+							
+							/* "CREATE TABLE locks ("
+							 * "  locktoken TEXT NOT NULL,"
+							 * "  resource TEXT NOT NULL,"
+							 * "  lockscope TEXT NOT NULL,"
+							 * "  locktype TEXT NOT NULL,"
+							 * "  owner TEXT NOT NULL,"
+							 * "  depth INT NOT NULL,"
+							 */
+
+							sqlite3_reset(stmt);
+
+							sqlite3_bind_text(stmt, 1,
+									  CONST_BUF_LEN(p->tmp_buf),
+									  SQLITE_TRANSIENT);
+
+							sqlite3_bind_text(stmt, 2,
+									  p->uri.path->ptr,
+									  p->uri.path->used - 1,
+									  SQLITE_TRANSIENT);
+
+							sqlite3_bind_text(stmt, 3,
+									  lockscope,
+									  xmlStrlen(lockscope),
+									  SQLITE_TRANSIENT);
+
+							sqlite3_bind_text(stmt, 4,
+									  locktype,
+									  xmlStrlen(locktype),
+									  SQLITE_TRANSIENT);
+
+							/* owner */
+							sqlite3_bind_text(stmt, 5,
+									  "",
+									  0,
+									  SQLITE_TRANSIENT);
+
+							/* depth */
+							sqlite3_bind_int(stmt, 6,
+									 depth);
+
+
+							if (SQLITE_DONE != sqlite3_step(stmt)) {
+								log_error_write(srv, __FILE__, __LINE__, "ss", 
+										"create lock:", sqlite3_errmsg(p->conf.sql));
+							}
+
+							/* looks like we survived */
+							webdav_lockdiscovery(srv, con, p->tmp_buf, lockscope, locktype, depth);
+				
+							con->http_status = 201;
+							con->file_finished = 1;
+						}
+					}
+				}
+
+				xmlFreeDoc(xml);
+				return HANDLER_FINISHED;
+			} else {
+				con->http_status = 400;
+				return HANDLER_FINISHED;
+			}
+		} else {
+	
+			if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "If"))) {
+				buffer *locktoken = ds->value;
+				sqlite3_stmt *stmt = p->conf.stmt_refresh_lock;
+
+				/* remove the < > around the token */
+				if (locktoken->used < 6) {
+					con->http_status = 400;
+
+					return HANDLER_FINISHED;
+				}
+
+				buffer_copy_string_len(p->tmp_buf, locktoken->ptr + 2, locktoken->used - 5);
+
+				sqlite3_reset(stmt);
+
+				sqlite3_bind_text(stmt, 1,
+					  CONST_BUF_LEN(p->tmp_buf),
+					  SQLITE_TRANSIENT);
+	
+				if (SQLITE_DONE != sqlite3_step(stmt)) {
+					log_error_write(srv, __FILE__, __LINE__, "ss", 
+						"refresh lock:", sqlite3_errmsg(p->conf.sql));
+				}
+
+				webdav_lockdiscovery(srv, con, p->tmp_buf, "exclusive", "write", 0);
+
+				con->http_status = 200;
+				con->file_finished = 1;
+				return HANDLER_FINISHED;
+			} else {
+				/* we need a lock-token to refresh */
+				con->http_status = 400;
+
+				return HANDLER_FINISHED;
+			}
+		}
+		break;
+#else
+		con->http_status = 501;
+		return HANDLER_FINISHED;
+#endif
+	case HTTP_METHOD_UNLOCK:
+#ifdef USE_LOCKS
+		if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "Lock-Token"))) {
+			buffer *locktoken = ds->value;
+			sqlite3_stmt *stmt = p->conf.stmt_remove_lock;
+
+			/* remove the < > around the token */
+			if (locktoken->used < 4) {
+				con->http_status = 400;
+
+				return HANDLER_FINISHED;
+			}
+
+			buffer_copy_string_len(p->tmp_buf, locktoken->ptr + 1, locktoken->used - 3);
+
+			sqlite3_reset(stmt);
+
+			sqlite3_bind_text(stmt, 1,
+				  CONST_BUF_LEN(p->tmp_buf),
+				  SQLITE_TRANSIENT);
+	
+			if (SQLITE_DONE != sqlite3_step(stmt)) {
+				log_error_write(srv, __FILE__, __LINE__, "ss", 
+					"remove lock:", sqlite3_errmsg(p->conf.sql));
+			}
+				
+			con->http_status = 204;
+			return HANDLER_FINISHED;
+		} else {
+			/* we need a lock-token to unlock */
+			con->http_status = 400;
+
+			return HANDLER_FINISHED;
+		}
+		break;
+#else
+		con->http_status = 501;
+		return HANDLER_FINISHED;
+#endif
 	default:
 		break;
 	}
