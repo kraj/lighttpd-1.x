@@ -188,6 +188,7 @@ static int mod_rewrite_patch_connection(server *srv, connection *con, plugin_dat
 	size_t i, j;
 	plugin_config *s = p->config_storage[0];
 	p->conf.rewrite = s->rewrite;
+	p->conf.once    = s->once;
 
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
