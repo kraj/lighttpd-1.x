@@ -13,24 +13,8 @@
 #endif
 
 typedef struct {
-#ifdef HAVE_PCRE_H
-	pcre *key;
-#endif
-
-	buffer *value;
-
-	int once;
-} rewrite_rule;
-
-typedef struct {
-	rewrite_rule **ptr;
-
-	size_t used;
-	size_t size;
-} rewrite_rule_buffer;
-
-typedef struct {
-	rewrite_rule_buffer *rewrite;
+	pcre_keyvalue_buffer *rewrite;
+	buffer *once;
 	data_config *context; /* to which apply me */
 } plugin_config;
 
@@ -63,80 +47,6 @@ static void handler_ctx_free(handler_ctx *hctx) {
 	free(hctx);
 }
 
-rewrite_rule_buffer *rewrite_rule_buffer_init(void) {
-	rewrite_rule_buffer *kvb;
-
-	kvb = calloc(1, sizeof(*kvb));
-
-	return kvb;
-}
-
-int rewrite_rule_buffer_append(rewrite_rule_buffer *kvb, buffer *key, buffer *value, int once) {
-#ifdef HAVE_PCRE_H
-	size_t i;
-	const char *errptr;
-	int erroff;
-
-	if (!key) return -1;
-
-	if (kvb->size == 0) {
-		kvb->size = 4;
-		kvb->used = 0;
-
-		kvb->ptr = malloc(kvb->size * sizeof(*kvb->ptr));
-
-		for(i = 0; i < kvb->size; i++) {
-			kvb->ptr[i] = calloc(1, sizeof(**kvb->ptr));
-		}
-	} else if (kvb->used == kvb->size) {
-		kvb->size += 4;
-
-		kvb->ptr = realloc(kvb->ptr, kvb->size * sizeof(*kvb->ptr));
-
-		for(i = kvb->used; i < kvb->size; i++) {
-			kvb->ptr[i] = calloc(1, sizeof(**kvb->ptr));
-		}
-	}
-
-	if (NULL == (kvb->ptr[kvb->used]->key = pcre_compile(key->ptr,
-							    0, &errptr, &erroff, NULL))) {
-
-		return -1;
-	}
-
-	kvb->ptr[kvb->used]->value = buffer_init();
-	buffer_copy_string_buffer(kvb->ptr[kvb->used]->value, value);
-	kvb->ptr[kvb->used]->once = once;
-
-	kvb->used++;
-
-	return 0;
-#else
-	UNUSED(kvb);
-	UNUSED(value);
-	UNUSED(once);
-	UNUSED(key);
-
-	return -1;
-#endif
-}
-
-void rewrite_rule_buffer_free(rewrite_rule_buffer *kvb) {
-#ifdef HAVE_PCRE_H
-	size_t i;
-
-	for (i = 0; i < kvb->size; i++) {
-		if (kvb->ptr[i]->key) pcre_free(kvb->ptr[i]->key);
-		if (kvb->ptr[i]->value) buffer_free(kvb->ptr[i]->value);
-		free(kvb->ptr[i]);
-	}
-
-	if (kvb->ptr) free(kvb->ptr);
-#endif
-
-	free(kvb);
-}
-
 
 INIT_FUNC(mod_rewrite_init) {
 	plugin_data *p;
@@ -160,7 +70,8 @@ FREE_FUNC(mod_rewrite_free) {
 		size_t i;
 		for (i = 0; i < srv->config_context->used; i++) {
 			plugin_config *s = p->config_storage[i];
-			rewrite_rule_buffer_free(s->rewrite);
+			pcre_keyvalue_buffer_free(s->rewrite);
+			buffer_free(s->once);
 
 			free(s);
 		}
@@ -198,10 +109,9 @@ static int parse_config_entry(server *srv, plugin_config *s, array *ca, const ch
 				return HANDLER_ERROR;
 			}
 
-			if (0 != rewrite_rule_buffer_append(s->rewrite,
-							    ((data_string *)(da->value->data[j]))->key,
-							    ((data_string *)(da->value->data[j]))->value,
-							    once)) {
+			if (0 != pcre_keyvalue_buffer_append(s->rewrite,
+							    ((data_string *)(da->value->data[j]))->key->ptr,
+							    ((data_string *)(da->value->data[j]))->value->ptr)) {
 #ifdef HAVE_PCRE_H
 				log_error_write(srv, __FILE__, __LINE__, "sb",
 						"pcre-compile failed for", da->value->data[j]->key);
@@ -209,6 +119,12 @@ static int parse_config_entry(server *srv, plugin_config *s, array *ca, const ch
 				log_error_write(srv, __FILE__, __LINE__, "s",
 						"pcre support is missing, please install libpcre and the headers");
 #endif
+			}
+
+			if (once) {
+				buffer_append_string_len(s->once, CONST_STR_LEN("1"));
+			} else {
+				buffer_append_string_len(s->once, CONST_STR_LEN("0"));
 			}
 		}
 	}
@@ -245,7 +161,8 @@ SETDEFAULTS_FUNC(mod_rewrite_set_defaults) {
 		array *ca;
 
 		s = calloc(1, sizeof(plugin_config));
-		s->rewrite   = rewrite_rule_buffer_init();
+		s->rewrite   = pcre_keyvalue_buffer_init();
+		s->once      = buffer_init();
 
 		cv[0].destination = s->rewrite;
 		cv[1].destination = s->rewrite;
@@ -288,15 +205,19 @@ static int mod_rewrite_patch_connection(server *srv, connection *con, plugin_dat
 
 			if (buffer_is_equal_string(du->key, CONST_STR_LEN("url.rewrite"))) {
 				p->conf.rewrite = s->rewrite;
+				p->conf.once    = s->once;
 				p->conf.context = dc;
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("url.rewrite-once"))) {
 				p->conf.rewrite = s->rewrite;
+				p->conf.once    = s->once;
 				p->conf.context = dc;
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("url.rewrite-repeat"))) {
 				p->conf.rewrite = s->rewrite;
+				p->conf.once    = s->once;
 				p->conf.context = dc;
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("url.rewrite-final"))) {
 				p->conf.rewrite = s->rewrite;
+				p->conf.once    = s->once;
 				p->conf.context = dc;
 			}
 		}
@@ -352,18 +273,20 @@ URIHANDLER_FUNC(mod_rewrite_uri_handler) {
 
 	for (i = 0; i < p->conf.rewrite->used; i++) {
 		pcre *match;
+		pcre_extra *extra;
 		const char *pattern;
 		size_t pattern_len;
 		int n;
-		rewrite_rule *rule = p->conf.rewrite->ptr[i];
+		pcre_keyvalue *kv = p->conf.rewrite->kv[i];
 # define N 10
 		int ovec[N * 3];
 
-		match       = rule->key;
-		pattern     = rule->value->ptr;
-		pattern_len = rule->value->used - 1;
+		match       = kv->key;
+		extra       = kv->key_extra;
+		pattern     = kv->value->ptr;
+		pattern_len = kv->value->used - 1;
 
-		if ((n = pcre_exec(match, NULL, p->match_buf->ptr, p->match_buf->used - 1, 0, 0, ovec, 3 * N)) < 0) {
+		if ((n = pcre_exec(match, extra, p->match_buf->ptr, p->match_buf->used - 1, 0, 0, ovec, 3 * N)) < 0) {
 			if (n != PCRE_ERROR_NOMATCH) {
 				log_error_write(srv, __FILE__, __LINE__, "sd",
 						"execution error while matching: ", n);
@@ -414,9 +337,10 @@ URIHANDLER_FUNC(mod_rewrite_uri_handler) {
 			hctx = handler_ctx_init();
 
 			con->plugin_ctx[p->id] = hctx;
-
-			if (rule->once) hctx->state = REWRITE_STATE_FINISHED;
-
+			
+			if (p->conf.once->ptr[i] == '1')
+				hctx->state = REWRITE_STATE_FINISHED;
+			
 			return HANDLER_COMEBACK;
 		}
 	}
