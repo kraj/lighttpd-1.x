@@ -82,9 +82,9 @@ mod_evasive_la_LIBADD = $(common_libadd)
 
 lib_LTLIBRARIES += mod_webdav.la
 mod_webdav_la_SOURCES = mod_webdav.c
-mod_webdav_la_CFLAGS = $(AM_CFLAGS) $(XML_CFLAGS) $(SQLITE_CFLAGS)
+mod_webdav_la_CFLAGS = $(AM_CFLAGS) $(XML_CFLAGS) $(SQLITE_CFLAGS) 
 mod_webdav_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
-mod_webdav_la_LIBADD = $(common_libadd) $(XML_LIBS) $(SQLITE_LIBS)
+mod_webdav_la_LIBADD = $(common_libadd) $(XML_LIBS) $(SQLITE_LIBS) $(UUID_LIB)
 
 lib_LTLIBRARIES += mod_cml.la
 mod_cml_la_SOURCES = mod_cml.c mod_cml_lua.c mod_cml_funcs.c
