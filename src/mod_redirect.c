@@ -166,7 +166,7 @@ static int mod_redirect_patch_connection(server *srv, connection *con, plugin_da
 static handler_t mod_redirect_uri_handler(server *srv, connection *con, void *p_data) {
 #ifdef HAVE_PCRE_H
 	plugin_data *p = p_data;
-	size_t i;
+	int i;
 
 	/*
 	 * REWRITE URL
@@ -178,77 +178,19 @@ static handler_t mod_redirect_uri_handler(server *srv, connection *con, void *p_
 	mod_redirect_patch_connection(srv, con, p);
 
 	buffer_copy_string_buffer(p->match_buf, con->request.uri);
+	i = config_exec_pcre_keyvalue_buffer(con, p->conf.redirect, p->conf.context, p->match_buf, p->location);
 
-	for (i = 0; i < p->conf.redirect->used; i++) {
-		pcre *match;
-		pcre_extra *extra;
-		const char *pattern;
-		size_t pattern_len;
-		int n;
-		pcre_keyvalue *kv = p->conf.redirect->kv[i];
-# define N 10
-		int ovec[N * 3];
+	if (i >= 0) {
+		response_header_insert(srv, con, CONST_STR_LEN("Location"), CONST_BUF_LEN(p->location));
 
-		match       = kv->key;
-		extra       = kv->key_extra;
-		pattern     = kv->value->ptr;
-		pattern_len = kv->value->used - 1;
+		con->http_status = 301;
+		con->file_finished = 1;
 
-		if ((n = pcre_exec(match, extra, p->match_buf->ptr, p->match_buf->used - 1, 0, 0, ovec, 3 * N)) < 0) {
-			if (n != PCRE_ERROR_NOMATCH) {
-				log_error_write(srv, __FILE__, __LINE__, "sd",
-						"execution error while matching: ", n);
-				return HANDLER_ERROR;
-			}
-		} else {
-			const char **list;
-			size_t start, end;
-			size_t k;
-
-			/* it matched */
-			pcre_get_substring_list(p->match_buf->ptr, ovec, n, &list);
-
-			/* search for $[0-9] */
-
-			buffer_reset(p->location);
-
-			start = 0; end = pattern_len;
-			for (k = 0; k < pattern_len; k++) {
-				if ((pattern[k] == '$' || pattern[k] == '%') &&
-				    isdigit((unsigned char)pattern[k + 1])) {
-					/* got one */
-
-					size_t num = pattern[k + 1] - '0';
-
-					end = k;
-
-					buffer_append_string_len(p->location, pattern + start, end - start);
-
-					if (pattern[k] == '$') {
-						/* n is always > 0 */
-						if (num < (size_t)n) {
-							buffer_append_string(p->location, list[num]);
-						}
-					} else {
-						config_append_cond_match_buffer(con, p->conf.context, p->location, num);
-					}
-
-					k++;
-					start = k + 1;
-				}
-			}
-
-			buffer_append_string_len(p->location, pattern + start, pattern_len - start);
-
-			pcre_free(list);
-
-			response_header_insert(srv, con, CONST_STR_LEN("Location"), CONST_BUF_LEN(p->location));
-
-			con->http_status = 301;
-			con->file_finished = 1;
-
-			return HANDLER_FINISHED;
-		}
+		return HANDLER_FINISHED;
+	}
+	else if (i != PCRE_ERROR_NOMATCH) {
+		log_error_write(srv, __FILE__, __LINE__, "s",
+				"execution error while matching", i);
 	}
 #undef N
 

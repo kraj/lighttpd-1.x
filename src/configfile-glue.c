@@ -1,4 +1,5 @@
 #include <string.h>
+#include <ctype.h>
 
 #include "base.h"
 #include "buffer.h"
@@ -455,5 +456,87 @@ int config_append_cond_match_buffer(connection *con, data_config *dc, buffer *bu
 			cache->comp_value->ptr + cache->matches[n],
 			cache->matches[n + 1] - cache->matches[n]);
 	return 1;
+}
+
+/* return <0 on error
+ * return 0-x if matched (and replaced)
+ */
+int config_exec_pcre_keyvalue_buffer(connection *con, pcre_keyvalue_buffer *kvb, data_config *context, buffer *match_buf, buffer *result)
+{
+#ifdef HAVE_PCRE_H
+	pcre *match;
+	pcre_extra *extra;
+	const char *pattern;
+	size_t pattern_len;
+	int n;
+	size_t i;
+	pcre_keyvalue *kv;
+# define N 10
+	int ovec[N * 3];
+
+	for (i = 0; i < kvb->used; i++) {
+		kv = kvb->kv[i];
+
+		match       = kv->key;
+		extra       = kv->key_extra;
+		pattern     = kv->value->ptr;
+		pattern_len = kv->value->used - 1;
+
+		if ((n = pcre_exec(match, extra, match_buf->ptr, match_buf->used - 1, 0, 0, ovec, 3 * N)) < 0) {
+			if (n != PCRE_ERROR_NOMATCH) {
+				return n;
+			}
+		} else {
+			const char **list;
+			size_t start, end;
+			size_t k;
+
+			/* it matched */
+			pcre_get_substring_list(match_buf->ptr, ovec, n, &list);
+
+			/* search for $[0-9] */
+
+			buffer_reset(result);
+
+			start = 0; end = pattern_len;
+			for (k = 0; k < pattern_len; k++) {
+				if ((pattern[k] == '$' || pattern[k] == '%') &&
+				    isdigit((unsigned char)pattern[k + 1])) {
+					/* got one */
+
+					size_t num = pattern[k + 1] - '0';
+
+					end = k;
+
+					buffer_append_string_len(result, pattern + start, end - start);
+
+					if (pattern[k] == '$') {
+						/* n is always > 0 */
+						if (num < (size_t)n) {
+							buffer_append_string(result, list[num]);
+						}
+					} else {
+						config_append_cond_match_buffer(con, context, result, num);
+					}
+
+					k++;
+					start = k + 1;
+				}
+			}
+
+			buffer_append_string_len(result, pattern + start, pattern_len - start);
+
+			pcre_free(list);
+
+			return i;
+		}
+	}
+
+	return PCRE_ERROR_NOMATCH;
+#undef N
+#else
+	UNUSED(kvb);
+	return -2;
+#endif
 }
 

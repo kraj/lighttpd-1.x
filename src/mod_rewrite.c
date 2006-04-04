@@ -164,10 +164,6 @@ SETDEFAULTS_FUNC(mod_rewrite_set_defaults) {
 		s->rewrite   = pcre_keyvalue_buffer_init();
 		s->once      = buffer_init();
 
-		cv[0].destination = s->rewrite;
-		cv[1].destination = s->rewrite;
-		cv[2].destination = s->rewrite;
-
 		p->config_storage[i] = s;
 		ca = ((data_config *)srv->config_context->data[i])->value;
 
@@ -243,7 +239,7 @@ URIHANDLER_FUNC(mod_rewrite_con_reset) {
 URIHANDLER_FUNC(mod_rewrite_uri_handler) {
 #ifdef HAVE_PCRE_H
 	plugin_data *p = p_d;
-	size_t i;
+	int i;
 	handler_ctx *hctx;
 
 	/*
@@ -271,79 +267,21 @@ URIHANDLER_FUNC(mod_rewrite_uri_handler) {
 	if (!p->conf.rewrite) return HANDLER_GO_ON;
 
 	buffer_copy_string_buffer(p->match_buf, con->request.uri);
+	i = config_exec_pcre_keyvalue_buffer(con, p->conf.rewrite, p->conf.context, p->match_buf, con->request.uri);
 
-	for (i = 0; i < p->conf.rewrite->used; i++) {
-		pcre *match;
-		pcre_extra *extra;
-		const char *pattern;
-		size_t pattern_len;
-		int n;
-		pcre_keyvalue *kv = p->conf.rewrite->kv[i];
-# define N 10
-		int ovec[N * 3];
+	if (i >= 0) {
+		hctx = handler_ctx_init();
 
-		match       = kv->key;
-		extra       = kv->key_extra;
-		pattern     = kv->value->ptr;
-		pattern_len = kv->value->used - 1;
+		con->plugin_ctx[p->id] = hctx;
 
-		if ((n = pcre_exec(match, extra, p->match_buf->ptr, p->match_buf->used - 1, 0, 0, ovec, 3 * N)) < 0) {
-			if (n != PCRE_ERROR_NOMATCH) {
-				log_error_write(srv, __FILE__, __LINE__, "sd",
-						"execution error while matching: ", n);
-				return HANDLER_ERROR;
-			}
-		} else {
-			const char **list;
-			size_t start, end;
-			size_t k;
+		if (p->conf.once->ptr[i] == '1')
+			hctx->state = REWRITE_STATE_FINISHED;
 
-			/* it matched */
-			pcre_get_substring_list(p->match_buf->ptr, ovec, n, &list);
-
-			/* search for $[0-9] */
-
-			buffer_reset(con->request.uri);
-
-			start = 0; end = pattern_len;
-			for (k = 0; k < pattern_len; k++) {
-				if ((pattern[k] == '$' || pattern[k] == '%') &&
-				    isdigit((unsigned char)pattern[k + 1])) {
-					/* got one */
-
-					size_t num = pattern[k + 1] - '0';
-
-					end = k;
-
-					buffer_append_string_len(con->request.uri, pattern + start, end - start);
-
-					if (pattern[k] == '$') {
-						/* n is always > 0 */
-						if (num < (size_t)n) {
-							buffer_append_string(con->request.uri, list[num]);
-						}
-					} else {
-						config_append_cond_match_buffer(con, p->conf.context, con->request.uri, num);
-					}
-
-					k++;
-					start = k + 1;
-				}
-			}
-
-			buffer_append_string_len(con->request.uri, pattern + start, pattern_len - start);
-
-			pcre_free(list);
-
-			hctx = handler_ctx_init();
-
-			con->plugin_ctx[p->id] = hctx;
-			
-			if (p->conf.once->ptr[i] == '1')
-				hctx->state = REWRITE_STATE_FINISHED;
-			
-			return HANDLER_COMEBACK;
-		}
+		return HANDLER_COMEBACK;
+	}
+	else if (i != PCRE_ERROR_NOMATCH) {
+		log_error_write(srv, __FILE__, __LINE__, "s",
+				"execution error while matching", i);
 	}
 #undef N
 
