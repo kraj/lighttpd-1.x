@@ -1181,6 +1181,13 @@ handler_t connection_handle_fdevent(void *s, void *context, int revents) {
 	if (con->state == CON_STATE_READ ||
 	    con->state == CON_STATE_READ_POST) {
 		connection_handle_read_state(srv, con);
+		/**
+		 * if SSL_read() is not readin in the full packet we won't get
+		 * a fdevent as the low-level has already fetched everything.
+		 *
+		 * we have to call the state-engine to read the rest of the packet
+		 */
+		if (con->is_readable) joblist_append(srv, con);
 	}
 
 	if (con->state == CON_STATE_WRITE &&
