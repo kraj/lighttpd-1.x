@@ -11,6 +11,9 @@ NEWS
   * added experimental LOCK support for mod_webdav 
   * fixed handling of If-Modified-Since if Etag is not set
   * fixed hanging fastcgi connections
+  * added support for X-Sendfile as addition to X-LIGHTTPD-send-file.
+    This allows compatibility with mod_xsendfile for apache
+    (http://celebnamer.celebworld.ws/stuff/mod_xsendfile/)
 
 - 1.4.11 - 2006-03-09
 

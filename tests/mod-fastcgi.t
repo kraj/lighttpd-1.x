@@ -7,7 +7,7 @@ BEGIN {
 }
 
 use strict;
-use Test::More tests => 46;
+use Test::More tests => 49;
 use LightyTest;
 
 my $tf = LightyTest->new();
@@ -223,7 +223,7 @@ EOF
 }
 
 SKIP: {
-	skip "no php found", 4 unless -x "/home/jan/Documents/php-5.1.0/sapi/cgi/php"; 
+	skip "no php found", 4 unless -x "/home/jan/Documents/php-5.1.0/sapi/cgi/php";
 	$tf->{CONFIGFILE} = 'fastcgi-13.conf';
 	ok($tf->start_proc == 0, "Starting lighttpd with $tf->{CONFIGFILE}") or die();
 	$t->{REQUEST}  = ( <<EOF
@@ -284,6 +284,34 @@ EOF
  );
 	$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200, 'HTTP-Content' => 'test123' } ];
 	ok($tf->handle_http($t) == 0, 'line-ending \r\n + \r\n');
+
+    # X-LIGHTTPD-send-file
+	$t->{REQUEST}  = ( <<EOF
+GET /index.fcgi?x-lighttpd-send-file HTTP/1.0
+Host: www.example.org
+EOF
+ );
+	$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200, 'HTTP-Content' => '<?php phpinfo(); ?>
+' } ];
+	ok($tf->handle_http($t) == 0, 'X-LIGHTTPD-send-file');
+    # X-Sendfile
+	$t->{REQUEST}  = ( <<EOF
+GET /index.fcgi?xsendfile HTTP/1.0
+Host: www.example.org
+EOF
+ );
+	$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200, 'HTTP-Content' => '<?php phpinfo(); ?>
+' } ];
+	ok($tf->handle_http($t) == 0, 'X-Sendfile');
+
+	$t->{REQUEST}  = ( <<EOF
+GET /index.fcgi?xsendfile-mixed-case HTTP/1.0
+Host: www.example.org
+EOF
+ );
+	$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200, 'HTTP-Content' => '<?php phpinfo(); ?>
+' } ];
+	ok($tf->handle_http($t) == 0, 'X-SeNdFiLe in mixed case');
 
 	$t->{REQUEST}  = ( <<EOF
 GET /index.fcgi?die-at-end HTTP/1.0

@@ -2498,7 +2498,9 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 				}
 
 				if (host->allow_xsendfile &&
-				    NULL != (ds = (data_string *) array_get_element(con->response.headers, "X-LIGHTTPD-send-file"))) {
+				    (NULL != (ds = (data_string *) array_get_element(con->response.headers, "X-LIGHTTPD-send-file")) ||
+				     NULL != (ds = (data_string *) array_get_element(con->response.headers, "X-Sendfile")))
+				   ) {
 					stat_cache_entry *sce;
 
 					if (HANDLER_ERROR != stat_cache_get_entry(srv, con, ds->value, &sce)) {

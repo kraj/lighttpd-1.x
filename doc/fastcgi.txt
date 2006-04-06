@@ -144,8 +144,8 @@ fastcgi.server
                 PHP can extract PATH_INFO from it (default: disabled)
   :"disable-time": time to wait before a disabled backend is checked
                 again
-  :"allow-x-send-file": controls if X-LIGHTTPD-send-file headers
-                are allowed 
+  :"allow-x-send-file": controls if X-LIGHTTPD-send-file and X-Sendfile
+                headers are allowed 
 
   If bin-path is set:
 
