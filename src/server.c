@@ -286,7 +286,6 @@ static void show_version (void) {
 }
 
 static void show_features (void) {
-  show_version();
   const char *s = ""
 #ifdef USE_SELECT
       "\t+ select (generic)\n"
@@ -370,9 +369,9 @@ static void show_features (void) {
       "\t- PCRE support\n"
 #endif
 #ifdef HAVE_MYSQL
-      "\t+ mySQL support\n"
+      "\t+ MySQL support\n"
 #else
-      "\t- mySQL support\n"
+      "\t- MySQL support\n"
 #endif
 #if defined(HAVE_LDAP_H) && defined(HAVE_LBER_H) && defined(HAVE_LIBLDAP) && defined(HAVE_LIBLBER)
       "\t+ LDAP support\n"
@@ -410,6 +409,9 @@ static void show_features (void) {
       "\t- GDBM support\n"
 #endif
       "\n";
+
+  show_version();
+
   printf("\nEvent Handlers:\n\n%s", s);
 }
 
