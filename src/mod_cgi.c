@@ -811,6 +811,9 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 		cgi_env_add(&env, CONST_STR_LEN("REDIRECT_STATUS"), CONST_STR_LEN("200"));
 		if (!buffer_is_empty(con->uri.query)) {
 			cgi_env_add(&env, CONST_STR_LEN("QUERY_STRING"), CONST_BUF_LEN(con->uri.query));
+		} else {
+			/* set a empty QUERY_STRING */
+			cgi_env_add(&env, CONST_STR_LEN("QUERY_STRING"), CONST_STR_LEN(""));
 		}
 		if (!buffer_is_empty(con->request.orig_uri)) {
 			cgi_env_add(&env, CONST_STR_LEN("REQUEST_URI"), CONST_BUF_LEN(con->request.orig_uri));
