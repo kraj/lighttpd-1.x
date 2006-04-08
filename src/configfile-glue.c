@@ -265,6 +265,8 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 			struct in_addr val_inp;
 
 			if (con->conf.log_condition_handling) {
+				l = srv->empty_string;
+
 				log_error_write(srv, __FILE__, __LINE__,  "bsbsb", dc->comp_key,
 						"(", l, ") compare to", dc->string);
 			}
