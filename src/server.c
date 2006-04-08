@@ -62,6 +62,7 @@
 
 static volatile sig_atomic_t srv_shutdown = 0;
 static volatile sig_atomic_t graceful_shutdown = 0;
+static volatile sig_atomic_t graceful_restart = 0;
 static volatile sig_atomic_t handle_sig_alarm = 1;
 static volatile sig_atomic_t handle_sig_hup = 0;
 
@@ -439,7 +440,7 @@ static void show_help (void) {
 	write(STDOUT_FILENO, b, strlen(b));
 }
 
-int main (int argc, char **argv) {
+int main (int argc, char **argv, char **envp) {
 	server *srv = NULL;
 	int print_config = 0;
 	int test_config = 0;
@@ -1022,11 +1023,34 @@ int main (int argc, char **argv) {
 
 		if (handle_sig_hup) {
 			handler_t r;
+			pid_t pid;
 
 			/* reset notification */
 			handle_sig_hup = 0;
 
+#if 0
+			/* send the old process into a graceful-shutdown and start a 
+			 * new process right away
+			 *
+			 * BUGS:
+			 * - if webserver is running on port < 1024 (e.g. 80, 433)
+			 *   we don't have the permissions to bind to that port anymore
+			 *
+			 * 
+			 *  */
+			if (0 == (pid = fork())) {
+				execve(argv[0], argv, envp);
 
+				exit(-1);
+			} else if (pid == -1) {
+				
+			} else {
+				/* parent */
+
+				graceful_shutdown = 1; /* shutdown without killing running connections */
+				graceful_restart = 1;  /* don't delete pid file */
+			}
+#else
 			/* cycle logfiles */
 
 			switch(r = plugins_call_handle_sighup(srv)) {
@@ -1042,6 +1066,7 @@ int main (int argc, char **argv) {
 
 				return -1;
 			}
+#endif
 		}
 
 		if (handle_sig_alarm) {
@@ -1313,7 +1338,8 @@ int main (int argc, char **argv) {
 		srv->joblist->used = 0;
 	}
 
-	if (srv->srvconf.pid_file->used &&
+	if (0 == graceful_restart &&
+	    srv->srvconf.pid_file->used &&
 	    srv->srvconf.changeroot->used == 0) {
 		if (0 != unlink(srv->srvconf.pid_file->ptr)) {
 			if (errno != EACCES && errno != EPERM) {
