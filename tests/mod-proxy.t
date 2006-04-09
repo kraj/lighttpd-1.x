@@ -8,7 +8,7 @@ BEGIN {
 
 use strict;
 use IO::Socket;
-use Test::More tests => 16;
+use Test::More tests => 21;
 use LightyTest;
 
 my $tf_proxy = LightyTest->new();
@@ -37,6 +37,8 @@ $tf_backend2->{LIGHTTPD_PIDFILE} = $tf_backend2->{SRCDIR}.'/tmp/lighttpd/lighttp
 ok($tf_backend1->start_proc == 0, "Starting lighttpd") or die();
 
 ok($tf_proxy->start_proc == 0, "Starting lighttpd as proxy") or die();
+
+sleep(1);
 
 $t->{REQUEST}  = ( <<EOF
 GET /index.html HTTP/1.0
@@ -70,7 +72,15 @@ EOF
 $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
 ok($tf_proxy->handle_http($t) == 0, 'balance rr - one host down, failover');
 
+$t->{REQUEST}  = ( <<EOF
+GET /balance-fair/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance fair - one backend');
 
+## backend 2 starting 
 ok($tf_backend2->start_proc == 0, "Starting second proxy backend") or die();
 
 $t->{REQUEST}  = ( <<EOF
@@ -106,7 +116,7 @@ $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Serve
 ok($tf_proxy->handle_http($t) == 0, 'balance hash - lb, backend 1 - same URL');
 
 $t->{REQUEST}  = ( <<EOF
-GET /balance-hash/12 HTTP/1.0
+GET /balance-hash/bar HTTP/1.0
 Host: www.example.org
 EOF
  );
@@ -114,15 +124,50 @@ $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Serve
 ok($tf_proxy->handle_http($t) == 0, 'balance hash - lb, backend 2');
 
 $t->{REQUEST}  = ( <<EOF
-GET /balance-hash/12 HTTP/1.0
+GET /balance-hash/bar HTTP/1.0
 Host: www.example.org
 EOF
  );
 $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
 ok($tf_proxy->handle_http($t) == 0, 'balance hash - lb, backend 2 - same URL');
 
+## backend 1 stopping, failover 
+ok($tf_backend1->stop_proc == 0, "Stopping backend 1");
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-hash/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance hash - failover to backend 2');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-hash/bar HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance hash - failover to backend 2 - same URL');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-rr/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance rr - one backend');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-fair/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance rr - one backend');
+
+
+ok($tf_backend2->stop_proc == 0, "Stopping lighttpd");
 
 ok($tf_proxy->stop_proc == 0, "Stopping lighttpd proxy");
 
-ok($tf_backend1->stop_proc == 0, "Stopping lighttpd");
-ok($tf_backend2->stop_proc == 0, "Stopping lighttpd");
