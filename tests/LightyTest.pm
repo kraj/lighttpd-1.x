@@ -94,7 +94,7 @@ sub start_proc {
 	if (1) {
 		system($self->{LIGHTTPD_PATH}." -f ".$self->{SRCDIR}."/".$self->{CONFIGFILE}." -m ".$self->{MODULES_PATH});
 	} else {
-		system("valgrind --tool=memcheck --show-reachable=yes --leak-check=yes --logfile=foo ".$self->{LIGHTTPD_PATH}." -D -f ".$self->{TESTDIR}."/tmp/cfg.file -m ".$self->{MODULES_PATH}." &");
+		system("valgrind --tool=memcheck --show-reachable=yes --leak-check=yes --logfile=foo ".$self->{LIGHTTPD_PATH}." -D -f ".$self->{SRCDIR}."/".$self->{CONFIGFILE}." -m ".$self->{MODULES_PATH}." &");
 	}
 
 	select(undef, undef, undef, 0.1);
