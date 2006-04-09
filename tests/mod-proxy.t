@@ -8,11 +8,12 @@ BEGIN {
 
 use strict;
 use IO::Socket;
-use Test::More tests => 6;
+use Test::More tests => 16;
 use LightyTest;
 
-my $tf_real = LightyTest->new();
 my $tf_proxy = LightyTest->new();
+my $tf_backend1 = LightyTest->new();
+my $tf_backend2 = LightyTest->new();
 
 my $t;
 
@@ -20,15 +21,20 @@ my $t;
 ## 1. the real webserver
 ## 2. the proxy server
 
-$tf_real->{PORT} = 2050;
-$tf_real->{CONFIGFILE} = 'lighttpd.conf';
-$tf_real->{LIGHTTPD_PIDFILE} = $tf_real->{SRCDIR}.'/tmp/lighttpd/lighttpd.pid';
-
 $tf_proxy->{PORT} = 2048;
 $tf_proxy->{CONFIGFILE} = 'proxy.conf';
 $tf_proxy->{LIGHTTPD_PIDFILE} = $tf_proxy->{SRCDIR}.'/tmp/lighttpd/lighttpd-proxy.pid';
 
-ok($tf_real->start_proc == 0, "Starting lighttpd") or die();
+$tf_backend1->{PORT} = 2050;
+$tf_backend1->{CONFIGFILE} = 'proxy-backend-1.conf';
+$tf_backend1->{LIGHTTPD_PIDFILE} = $tf_backend1->{SRCDIR}.'/tmp/lighttpd/lighttpd-backend-1.pid';
+
+$tf_backend2->{PORT} = 2051;
+$tf_backend2->{CONFIGFILE} = 'proxy-backend-2.conf';
+$tf_backend2->{LIGHTTPD_PIDFILE} = $tf_backend2->{SRCDIR}.'/tmp/lighttpd/lighttpd-backend-2.pid';
+
+
+ok($tf_backend1->start_proc == 0, "Starting lighttpd") or die();
 
 ok($tf_proxy->start_proc == 0, "Starting lighttpd as proxy") or die();
 
@@ -45,9 +51,78 @@ GET /index.html HTTP/1.0
 Host: www.example.org
 EOF
  );
-$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200, 'Server' => 'Apache 1.3.29' } ];
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200, 'Server' => 'proxy-backend-1' } ];
 ok($tf_proxy->handle_http($t) == 0, 'drop Server from real server');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-rr/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance rr - one backend');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-rr/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance rr - one host down, failover');
+
+
+ok($tf_backend2->start_proc == 0, "Starting second proxy backend") or die();
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-rr/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance rr - lb, backend 1');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-rr/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance rr - lb, backend 2');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-hash/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance hash - lb, backend 1');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-hash/foo HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance hash - lb, backend 1 - same URL');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-hash/12 HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance hash - lb, backend 2');
+
+$t->{REQUEST}  = ( <<EOF
+GET /balance-hash/12 HTTP/1.0
+Host: www.example.org
+EOF
+ );
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
+ok($tf_proxy->handle_http($t) == 0, 'balance hash - lb, backend 2 - same URL');
+
 
 ok($tf_proxy->stop_proc == 0, "Stopping lighttpd proxy");
 
-ok($tf_real->stop_proc == 0, "Stopping lighttpd");
+ok($tf_backend1->stop_proc == 0, "Stopping lighttpd");
+ok($tf_backend2->stop_proc == 0, "Stopping lighttpd");
