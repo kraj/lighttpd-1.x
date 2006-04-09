@@ -88,6 +88,7 @@ sub start_proc {
 	#
 
 	$ENV{'SRCDIR'} = $self->{BASEDIR}.'/tests';
+	$ENV{'PORT'} = $self->{PORT};
 
 	unlink($self->{LIGHTTPD_PIDFILE});
 	if (1) {

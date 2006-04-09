@@ -20,11 +20,11 @@ my $t;
 ## 1. the real webserver
 ## 2. the proxy server
 
-$tf_real->{PORT} = 2048;
+$tf_real->{PORT} = 2050;
 $tf_real->{CONFIGFILE} = 'lighttpd.conf';
 $tf_real->{LIGHTTPD_PIDFILE} = $tf_real->{SRCDIR}.'/tmp/lighttpd/lighttpd.pid';
 
-$tf_proxy->{PORT} = 2050;
+$tf_proxy->{PORT} = 2048;
 $tf_proxy->{CONFIGFILE} = 'proxy.conf';
 $tf_proxy->{LIGHTTPD_PIDFILE} = $tf_proxy->{SRCDIR}.'/tmp/lighttpd/lighttpd-proxy.pid';
 
