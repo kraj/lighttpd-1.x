@@ -66,6 +66,8 @@ typedef struct {
 	int debug;
 
 	proxy_balance_t balance;
+
+	array *last_used_backends; /* "extension" : last_used_backend */
 } plugin_config;
 
 typedef struct {
@@ -190,8 +192,8 @@ FREE_FUNC(mod_proxy_free) {
 			plugin_config *s = p->config_storage[i];
 
 			if (s) {
-
 				array_free(s->extensions);
+				array_free(s->last_used_backends);
 
 				free(s);
 			}
@@ -225,7 +227,8 @@ SETDEFAULTS_FUNC(mod_proxy_set_defaults) {
 		array *ca;
 
 		s = malloc(sizeof(plugin_config));
-		s->extensions    = array_init();
+		s->extensions         = array_init();
+		s->last_used_backends = array_init();
 		s->debug         = 0;
 
 		cv[0].destination = s->extensions;
@@ -888,6 +891,7 @@ static int mod_proxy_patch_connection(server *srv, connection *con, plugin_data 
 	PATCH_OPTION(extensions);
 	PATCH_OPTION(debug);
 	PATCH_OPTION(balance);
+	PATCH_OPTION(last_used_backends);
 
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -907,6 +911,7 @@ static int mod_proxy_patch_connection(server *srv, connection *con, plugin_data 
 				PATCH_OPTION(debug);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy.balance"))) {
 				PATCH_OPTION(balance);
+				PATCH_OPTION(last_used_backends);
 			}
 		}
 	}
@@ -1082,6 +1087,11 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 	buffer *fn;
 	data_array *extension = NULL;
 	size_t path_info_offset;
+	data_integer *last_used_backend;
+	data_proxy *host = NULL;
+	handler_ctx *hctx = NULL;
+
+	array *backends = NULL;
 
 	/* Possibly, we processed already this request */
 	if (con->file_started == 1) return HANDLER_GO_ON;
@@ -1135,6 +1145,8 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 		return HANDLER_GO_ON;
 	}
 
+	backends = extension->value;
+
 	if (p->conf.debug) {
 		log_error_write(srv, __FILE__, __LINE__,  "s", "proxy - ext found");
 	}
@@ -1145,33 +1157,33 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 
 		if (p->conf.debug) {
 			log_error_write(srv, __FILE__, __LINE__,  "sd",
-					"proxy - used hash balancing, hosts:", extension->value->used);
+					"proxy - used hash balancing, hosts:", backends->used);
 		}
 
-		for (k = 0, ndx = -1, last_max = ULONG_MAX; k < extension->value->used; k++) {
-			data_proxy *host = (data_proxy *)extension->value->data[k];
+		for (k = 0, ndx = -1, last_max = ULONG_MAX; k < backends->used; k++) {
 			unsigned long cur_max;
+			
+			data_proxy *cur = (data_proxy *)backends->data[k];
 
-			if (host->is_disabled) continue;
+			if (cur->is_disabled) continue;
 
 			cur_max = generate_crc32c(CONST_BUF_LEN(con->uri.path)) +
-				generate_crc32c(CONST_BUF_LEN(host->host)) + /* we can cache this */
+				generate_crc32c(CONST_BUF_LEN(cur->host)) + /* we can cache this */
 				generate_crc32c(CONST_BUF_LEN(con->uri.authority));
 
 			if (p->conf.debug) {
 				log_error_write(srv, __FILE__, __LINE__,  "sbbbd",
 						"proxy - election:",
 						con->uri.path,
-						host->host,
+						cur->host,
 						con->uri.authority,
 						cur_max);
 			}
 
-			if ((last_max == ULONG_MAX) || /* first round */
-		   	    (cur_max > last_max)) {
+			if (host == NULL || (cur_max > last_max)) {
 				last_max = cur_max;
 
-				ndx = k;
+				host = cur;
 			}
 		}
 
@@ -1183,15 +1195,16 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 					"proxy - used fair balancing");
 		}
 
-		for (k = 0, ndx = -1, max_usage = INT_MAX; k < extension->value->used; k++) {
-			data_proxy *host = (data_proxy *)extension->value->data[k];
+		/* try to find the host with the lowest load */
+		for (k = 0, max_usage = 0; k < backends->used; k++) {
+			data_proxy *cur = (data_proxy *)backends->data[k];
 
-			if (host->is_disabled) continue;
+			if (cur->is_disabled) continue;
 
-			if (host->usage < max_usage) {
-				max_usage = host->usage;
+			if (NULL == host || cur->usage < max_usage) {
+				max_usage = cur->usage;
 
-				ndx = k;
+				host = cur;
 			}
 		}
 
@@ -1204,30 +1217,50 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 		}
 
 		/* just to be sure */
-		assert(extension->value->used < INT_MAX);
+		assert(backends->used < INT_MAX);
 
-		for (k = 0, ndx = -1, max_usage = INT_MAX; k < extension->value->used; k++) {
-			data_proxy *host = (data_proxy *)extension->value->data[k];
+		/* send each request to another host:
+		 *
+		 * e.g.:
+		 *
+		 * if we have three hosts it is 
+		 *
+		 * 1 .. 2 .. 3 .. 1 .. 2 .. 3
+		 *
+		 **/
 
-			if (host->is_disabled) continue;
+		/* walk through the list */
+		last_used_backend = (data_integer *)array_get_element(p->conf.last_used_backends, extension->key->ptr);
 
-			/* first usable ndx */
-			if (max_usage == INT_MAX) {
-				max_usage = k;
-			}
+		if (NULL == last_used_backend) {
+			last_used_backend = data_integer_init();
 
-			/* get next ndx */
-			if ((int)k > host->last_used_ndx) {
-				ndx = k;
-				host->last_used_ndx = k;
+			buffer_copy_string_buffer(last_used_backend->key, extension->key);
+			last_used_backend->value = 0;
 
-				break;
-			}
+			array_insert_unique(p->conf.last_used_backends, (data_unset *)last_used_backend);
 		}
 
-		/* didn't found a higher id, wrap to the start */
-		if (ndx != -1 && max_usage != INT_MAX) {
-			ndx = max_usage;
+		/* scan all but the last host to see if they are up
+		 * take the first running host */
+		for (k = last_used_backend->value + 1; (int)(k % backends->used) != last_used_backend->value; k++) {
+			data_proxy *cur = (data_proxy *)backends->data[k % backends->used];
+
+			if (cur->is_disabled) continue;
+
+			host = cur;
+			
+			last_used_backend->value = k;
+
+			break;
+		}
+
+		if (NULL == host) {
+			/* we found nothing better, fallback to the last used backend 
+			 * and check if it is still up */
+			host = (data_proxy *)backends->data[last_used_backend->value];
+
+			if (host->is_disabled) host = NULL;
 		}
 
 		break;
@@ -1235,39 +1268,8 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 		break;
 	}
 
-	/* found a server */
-	if (ndx != -1) {
-		data_proxy *host = (data_proxy *)extension->value->data[ndx];
-
-		/*
-		 * if check-local is disabled, use the uri.path handler
-		 *
-		 */
-
-		/* init handler-context */
-		handler_ctx *hctx;
-		hctx = handler_ctx_init();
-
-		hctx->path_info_offset = path_info_offset;
-		hctx->remote_conn      = con;
-		hctx->plugin_data      = p;
-		hctx->host             = host;
-
-		con->plugin_ctx[p->id] = hctx;
-
-		host->usage++;
-
-		con->mode = p->id;
-
-		if (p->conf.debug) {
-			log_error_write(srv, __FILE__, __LINE__,  "sbd",
-					"proxy - found a host",
-					host->host, host->port);
-		}
-
-		return HANDLER_GO_ON;
-	} else {
-		/* no handler found */
+	/* we havn't found a host */
+	if (NULL == host) {
 		con->http_status = 500;
 
 		log_error_write(srv, __FILE__, __LINE__,  "sb",
@@ -1276,6 +1278,28 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 
 		return HANDLER_FINISHED;
 	}
+
+	/* init handler-context */
+	hctx = handler_ctx_init();
+
+	hctx->path_info_offset = path_info_offset;
+	hctx->remote_conn      = con;
+	hctx->plugin_data      = p;
+	hctx->host             = host;
+
+	con->plugin_ctx[p->id] = hctx;
+
+	host->usage++;
+
+	/* we handle this request */
+	con->mode = p->id;
+
+	if (p->conf.debug) {
+		log_error_write(srv, __FILE__, __LINE__,  "sbd",
+				"proxy - found a host",
+				host->host, host->port);
+	}
+
 	return HANDLER_GO_ON;
 }
 
