@@ -9,12 +9,16 @@ NEWS
   * added handling of ETag and If-Modified-Since to mod_compress if 
     cache-dir is not set
   * added experimental LOCK support for mod_webdav 
-  * fixed handling of If-Modified-Since if Etag is not set
-  * fixed hanging fastcgi connections
-  * fixed stalling SSL POST requests 
   * added support for X-Sendfile as addition to X-LIGHTTPD-send-file.
     This allows compatibility with mod_xsendfile for apache
     (http://celebnamer.celebworld.ws/stuff/mod_xsendfile/)
+  * fixed handling of If-Modified-Since if Etag is not set
+  * fixed hanging fastcgi connections
+  * fixed stalling SSL POST requests 
+  * fixed round-robin load-balancing in mod_proxy
+  * TODO: add fail-over to mod-proxy
+  * TODO: fix CACHE_HIT/MISS in mod_cml
+  * TODO: finish LOCK/UNLOCK in mod_webdav
 
 - 1.4.11 - 2006-03-09
 
