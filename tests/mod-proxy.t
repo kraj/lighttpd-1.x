@@ -88,7 +88,7 @@ GET /balance-rr/foo HTTP/1.0
 Host: www.example.org
 EOF
  );
-$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
 ok($tf_proxy->handle_http($t) == 0, 'balance rr - lb, backend 1');
 
 $t->{REQUEST}  = ( <<EOF
@@ -96,7 +96,7 @@ GET /balance-rr/foo HTTP/1.0
 Host: www.example.org
 EOF
  );
-$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-1' } ];
 ok($tf_proxy->handle_http($t) == 0, 'balance rr - lb, backend 2');
 
 $t->{REQUEST}  = ( <<EOF
