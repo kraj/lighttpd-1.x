@@ -87,6 +87,7 @@ static keyvalue http_status[] = {
 	{ 504, "Gateway Timeout" },
 	{ 505, "HTTP Version Not Supported" },
 	{ 507, "Insufficient Storage" }, /* WebDAV */
+	{ 509, "Bandwidth Limit exceeded" },
 
 	{ -1, NULL }
 };

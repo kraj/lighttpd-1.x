@@ -403,6 +403,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 	case 501:
 	case 503:
 	case 505:
+	case 509:
 		if (con->mode != DIRECT) break;
 
 		con->file_finished = 0;
