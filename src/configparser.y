@@ -240,6 +240,7 @@ value(A) ::= key(B). {
       A = (data_unset *)ds;
     }
     else {
+      A = NULL;
       fprintf(stderr, "Undefined env variable: %s\n", B->ptr + 4);
       ctx->ok = 0;
     }
