@@ -210,6 +210,24 @@ SETDEFAULTS_FUNC(mod_webdav_set_defaults) {
 				return HANDLER_ERROR;
 			}
 
+			if (SQLITE_OK != sqlite3_exec(s->sql,
+					"CREATE TABLE properties ("
+					"  resource TEXT NOT NULL,"
+					"  prop TEXT NOT NULL,"
+					"  ns TEXT NOT NULL,"
+					"  value TEXT NOT NULL,"
+					"  PRIMARY KEY(resource, prop, ns))",
+					NULL, NULL, &err)) {
+
+				if (0 != strcmp(err, "table properties already exists")) {
+					log_error_write(srv, __FILE__, __LINE__, "ss", "can't open transaction:", err);
+					sqlite3_free(err);
+
+					return HANDLER_ERROR;
+				}
+				sqlite3_free(err);
+			}
+
 			if (SQLITE_OK != sqlite3_prepare(s->sql,
 				CONST_STR_LEN("SELECT value FROM properties WHERE resource = ? AND prop = ? AND ns = ?"),
 				&(s->stmt_select_prop), &next_stmt)) {
@@ -228,23 +246,6 @@ SETDEFAULTS_FUNC(mod_webdav_set_defaults) {
 				return HANDLER_ERROR;
 			}
 
-			if (SQLITE_OK != sqlite3_exec(s->sql,
-					"CREATE TABLE properties ("
-					"  resource TEXT NOT NULL,"
-					"  prop TEXT NOT NULL,"
-					"  ns TEXT NOT NULL,"
-					"  value TEXT NOT NULL,"
-					"  PRIMARY KEY(resource, prop, ns))",
-					NULL, NULL, &err)) {
-
-				if (0 != strcmp(err, "table properties already exists")) {
-					log_error_write(srv, __FILE__, __LINE__, "ss", "can't open transaction:", err);
-					sqlite3_free(err);
-
-					return HANDLER_ERROR;
-				}
-				sqlite3_free(err);
-			}
 
 			if (SQLITE_OK != sqlite3_prepare(s->sql,
 				CONST_STR_LEN("REPLACE INTO properties (resource, prop, ns, value) VALUES (?, ?, ?, ?)"),
