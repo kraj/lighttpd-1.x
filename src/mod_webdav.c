@@ -1147,13 +1147,25 @@ int webdav_lockdiscovery(server *srv, connection *con,
  * 
  *
  */
-int webdav_has_lock(server *srv, connection *con, plugin_data *p) {
+int webdav_has_lock(server *srv, connection *con, plugin_data *p, buffer *uri) {
 	int has_lock = 1;
 
 #ifdef USE_LOCKS
 	data_string *ds;
 
 	/**
+	 * If can have 
+	 * - <lock-token>
+	 * - [etag]
+	 *
+	 * there is NOT, AND and OR
+	 * and a list can be tagged
+	 *
+	 * (<lock-token>) is untagged
+	 * <tag> (<lock-token>) is tagged
+	 *
+	 * as long as we don't handle collections it is simple. :)
+	 * 
 	 * X-Litmus: locks: 11 (owner_modify)
 	 * If: <http://127.0.0.1:1025/dav/litmus/lockme> (<opaquelocktoken:2165478d-0611-49c4-be92-e790d68a38f1>)
 	 *
@@ -1170,7 +1182,7 @@ int webdav_has_lock(server *srv, connection *con, plugin_data *p) {
 		sqlite3_reset(stmt);
 
 		sqlite3_bind_text(stmt, 1,
-			  CONST_BUF_LEN(con->uri.path),
+			  CONST_BUF_LEN(uri),
 			  SQLITE_TRANSIENT);
 
 		while (SQLITE_ROW == sqlite3_step(stmt)) {
@@ -1509,7 +1521,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 		}
 
 		/* does the client have a lock for this connection ? */
-		if (!webdav_has_lock(srv, con, p)) {
+		if (!webdav_has_lock(srv, con, p, con->uri.path)) {
 			con->http_status = 423;
 			return HANDLER_FINISHED;
 		}
@@ -1592,6 +1604,13 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 			con->http_status = 403;
 			return HANDLER_FINISHED;
 		}
+
+		/* is a exclusive lock set on the source */
+		if (!webdav_has_lock(srv, con, p, con->uri.path)) {
+			con->http_status = 423;
+			return HANDLER_FINISHED;
+		}
+
 
 		assert(chunkqueue_length(cq) == (off_t)con->request.content_length);
 
@@ -1756,6 +1775,14 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 			return HANDLER_FINISHED;
 		}
 
+		/* is a exclusive lock set on the source */
+		if (con->request.http_method == HTTP_METHOD_MOVE) {
+			if (!webdav_has_lock(srv, con, p, con->uri.path)) {
+				con->http_status = 423;
+				return HANDLER_FINISHED;
+			}
+		}
+
 		if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "Destination"))) {
 			destination = ds->value;
 		} else {
@@ -1893,6 +1920,12 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 			/* it is just a file, good */
 			int r;
 
+			/* does the client have a lock for this connection ? */
+			if (!webdav_has_lock(srv, con, p, p->uri.path)) {
+				con->http_status = 423;
+				return HANDLER_FINISHED;
+			}
+
 			/* destination exists */
 			if (0 == (r = stat(p->physical.path->ptr, &st))) {
 				if (S_ISDIR(st.st_mode)) {
@@ -1974,6 +2007,11 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 	case HTTP_METHOD_PROPPATCH: 
 		if (p->conf.is_readonly) {
 			con->http_status = 403;
+			return HANDLER_FINISHED;
+		}
+
+		if (!webdav_has_lock(srv, con, p, con->uri.path)) {
+			con->http_status = 423;
 			return HANDLER_FINISHED;
 		}
 
@@ -2265,8 +2303,7 @@ propmatch_cleanup:
 									  SQLITE_TRANSIENT);
 
 							sqlite3_bind_text(stmt, 2,
-									  p->uri.path->ptr,
-									  p->uri.path->used - 1,
+									  CONST_BUF_LEN(con->uri.path),
 									  SQLITE_TRANSIENT);
 
 							sqlite3_bind_text(stmt, 3,
@@ -2365,6 +2402,16 @@ propmatch_cleanup:
 
 				return HANDLER_FINISHED;
 			}
+
+			/**
+			 * FIXME:
+			 *
+			 * if the resourse is locked: 
+			 * - by us: unlock
+			 * - by someone else: 401
+			 * if the resource is not locked:
+			 * - 412
+			 *  */
 
 			buffer_copy_string_len(p->tmp_buf, locktoken->ptr + 1, locktoken->used - 3);
 
