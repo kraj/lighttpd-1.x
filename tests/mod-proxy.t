@@ -156,7 +156,7 @@ Host: www.example.org
 EOF
  );
 $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
-ok($tf_proxy->handle_http($t) == 0, 'balance rr - one backend');
+ok($tf_proxy->handle_http($t) == 0, 'balance rr - failover to backend 2');
 
 $t->{REQUEST}  = ( <<EOF
 GET /balance-fair/foo HTTP/1.0
@@ -164,7 +164,7 @@ Host: www.example.org
 EOF
  );
 $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, 'Server' => 'proxy-backend-2' } ];
-ok($tf_proxy->handle_http($t) == 0, 'balance rr - one backend');
+ok($tf_proxy->handle_http($t) == 0, 'balance fair - failover to backend 2');
 
 
 ok($tf_backend2->stop_proc == 0, "Stopping lighttpd");
