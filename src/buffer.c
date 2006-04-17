@@ -760,7 +760,7 @@ int buffer_append_string_encoded(buffer *b, const char *s, size_t s_len, buffer_
 		map = encoded_chars_hex;
 		break;
 	case ENCODING_UNSET:
-		break;
+		return buffer_append_string_len(b, s, s_len);
 	}
 
 	assert(map != NULL);
