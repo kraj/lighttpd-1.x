@@ -402,8 +402,77 @@ char hex2int(unsigned char hex) {
 
 
 /**
- * init the buffer
+ * init the ptr buffer
  *
+ */
+buffer_ptr *buffer_ptr_init(buffer_ptr_free_t freer)
+{
+	buffer_ptr *l = calloc(1, sizeof(buffer_ptr));
+	l->free = freer;
+
+	return l;
+}
+
+/**
+ * free the buffer_array 
+ * 
+ */
+void buffer_ptr_free(buffer_ptr *l)
+{
+	if (NULL != l) {
+		buffer_ptr_clear(l);
+		free(l);
+	}
+}
+
+void buffer_ptr_clear(buffer_ptr *l)
+{
+	assert(NULL != l);
+
+	if (l->free && l->used) {
+		size_t i;
+		for (i = 0; i < l->used; i ++) {
+			l->free(l->ptr[i]);
+		}
+	}
+
+	if (l->ptr) {
+		free(l->ptr);
+		l->ptr = NULL;
+	}
+	l->used = 0;
+	l->size = 0;
+}
+
+void buffer_ptr_append(buffer_ptr* l, void *item)
+{
+	assert(NULL != l);
+	if (l->ptr == NULL) {
+		l->size = 16;
+		l->ptr = (void **)malloc(sizeof(void *) * l->size);
+	}
+	else if (l->used == l->size) {
+		l->size += 16;
+		l->ptr = realloc(l->ptr, sizeof(void *) * l->size);
+	}
+	l->ptr[l->used++] = item;
+}
+
+void *buffer_ptr_pop(buffer_ptr* l)
+{
+	assert(NULL != l && l->used > 0);
+	return l->ptr[--l->used];
+}
+
+void *buffer_ptr_top(buffer_ptr* l)
+{
+	assert(NULL != l && l->used > 0);
+	return l->ptr[l->used-1];
+}
+
+/**
+ * init the buffer 
+ * 
  */
 
 buffer_array* buffer_array_init(void) {

@@ -9,7 +9,7 @@ typedef struct {
 	server *srv;
 	int     ok;
 	array  *all_configs;
-	array  *configs_stack; /* to parse nested block */
+	buffer_ptr  *configs_stack; /* to parse nested block */
 	data_config *current; /* current started with { */
 	buffer *basedir;
 } config_t;

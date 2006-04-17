@@ -21,13 +21,13 @@ static void configparser_push(config_t *ctx, data_config *dc, int isnew) {
     dc->parent = ctx->current;
     array_insert_unique(dc->parent->childs, (data_unset *)dc);
   }
-  array_insert_unique(ctx->configs_stack, (data_unset *)ctx->current);
+  buffer_ptr_append(ctx->configs_stack, (void *)ctx->current);
   ctx->current = dc;
 }
 
 static data_config *configparser_pop(config_t *ctx) {
   data_config *old = ctx->current;
-  ctx->current = (data_config *) array_pop(ctx->configs_stack);
+  ctx->current = (data_config *) buffer_ptr_pop(ctx->configs_stack);
   return old;
 }
 

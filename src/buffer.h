@@ -17,6 +17,16 @@ typedef struct {
 	size_t size;
 } buffer;
 
+
+typedef void (*buffer_ptr_free_t)(void *p);
+
+typedef struct {
+	void **ptr;
+	size_t size;
+	size_t used;
+	buffer_ptr_free_t free;
+} buffer_ptr;
+
 typedef struct {
 	buffer **ptr;
 
@@ -32,6 +42,13 @@ typedef struct {
 	size_t used;   /* output pointer */
 	size_t size;
 } read_buffer;
+
+buffer_ptr *buffer_ptr_init(buffer_ptr_free_t freer);
+void buffer_ptr_free(buffer_ptr *b);
+void buffer_ptr_clear(buffer_ptr *b);
+void buffer_ptr_append(buffer_ptr *b, void *item);
+void *buffer_ptr_pop(buffer_ptr *b);
+void *buffer_ptr_top(buffer_ptr *b);
 
 buffer_array* buffer_array_init(void);
 void buffer_array_free(buffer_array *b);
