@@ -30,17 +30,28 @@ src = Split("server.c response.c connections.c network.c \
 lemon = env.Program('lemon', 'lemon.c')
 def lemonemitter(target, source, env):
 	import os, SCons
-	base, ext = os.path.splitext(SCons.Util.to_String(target[0]))
+	path = SCons.Util.to_String(target[0])
+	base, ext = os.path.splitext(path)
 	target += [ base + '.h' ]
+
+	# the hard way to workaround scons bug
+	if os.path.exists(path) != os.path.exists(base + '.h'):
+		if os.path.exists(path):
+			print path
+			os.remove(path)
+		else:
+			print base + '.h'
+			os.remove(base + '.h')
+
 	env.Depends(target, lemon)
 	return (target, source)
 
-lemoncmd = '../' + lemon[0].path + ' -q ../$SOURCE ../src/lempar.c || (echo rm -f ../$TARGET && exit 1)'
+lemoncmd = '../' + lemon[0].path + ' -q ../$SOURCE ../src/lempar.c || (rm -f ../${TARGETS[0]} ../${TARGETS[1]} && exit 1)'
 lemonbuilder = Builder(action=lemoncmd, chdir=1, emitter=lemonemitter, suffix='c')
 env.Append(BUILDERS = {'Lemon': lemonbuilder})
 
 configparser = env.Lemon('configparser.y');
-mod_ssi_exprparser = env.Lemon('mod_ssi_exprparser.c', 'mod_ssi_exprparser.y');
+mod_ssi_exprparser = env.Lemon('mod_ssi_exprparser.y');
 
 ## the modules and how they are built
 modules = {
@@ -155,7 +166,7 @@ else:
 		bin_linkflags += [ '-Wl,--export-dynamic' ]
 
 instbin = env.Program(bin_targets, src, LINKFLAGS = bin_linkflags, LIBS= [ env['LIBS'], common_lib, env['LIBDL'] ])
-env.Depends(instbin, configparser)
+env.Depends(instbin, configparser[1])
 
 spawn_fcgi = env.Program("spawn-fcgi", "spawn-fcgi.c")
 
