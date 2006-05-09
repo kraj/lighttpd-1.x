@@ -37,10 +37,8 @@ def lemonemitter(target, source, env):
 	# the hard way to workaround scons bug
 	if os.path.exists(path) != os.path.exists(base + '.h'):
 		if os.path.exists(path):
-			print path
 			os.remove(path)
 		else:
-			print base + '.h'
 			os.remove(base + '.h')
 
 	env.Depends(target, lemon)
