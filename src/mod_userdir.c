@@ -10,6 +10,7 @@
 #include "response.h"
 
 #include "plugin.h"
+#include "sys-files.h"
 
 #ifdef HAVE_PWD_H
 #include <pwd.h>
@@ -249,10 +250,10 @@ URIHANDLER_FUNC(mod_userdir_docroot_handler) {
 		}
 
 		buffer_copy_string_buffer(p->temp_path, p->conf.basepath);
-		BUFFER_APPEND_SLASH(p->temp_path);
+		PATHNAME_APPEND_SLASH(p->temp_path);
 		buffer_append_string_buffer(p->temp_path, p->username);
 	}
-	BUFFER_APPEND_SLASH(p->temp_path);
+	PATHNAME_APPEND_SLASH(p->temp_path);
 	buffer_append_string_buffer(p->temp_path, p->conf.path);
 
 	if (buffer_is_empty(p->conf.basepath)) {
@@ -265,7 +266,7 @@ URIHANDLER_FUNC(mod_userdir_docroot_handler) {
 		}
 	}
 
-	BUFFER_APPEND_SLASH(p->temp_path);
+	PATHNAME_APPEND_SLASH(p->temp_path);
 	buffer_append_string(p->temp_path, rel_url + 1); /* skip the / */
 	buffer_copy_string_buffer(con->physical.path, p->temp_path);
 

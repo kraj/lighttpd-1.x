@@ -2,7 +2,6 @@
 #include <sys/stat.h>
 
 #include <fcntl.h>
-#include <unistd.h>
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,6 +33,7 @@
 #endif
 
 #include "sys-mmap.h"
+#include "sys-files.h"
 
 /* request: accept-encoding */
 #define HTTP_ACCEPT_ENCODING_IDENTITY BV(0)
@@ -373,7 +373,7 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 
 	buffer_reset(p->ofn);
 	buffer_copy_string_buffer(p->ofn, p->conf.compress_cache_dir);
-	BUFFER_APPEND_SLASH(p->ofn);
+	PATHNAME_APPEND_SLASH(p->ofn);
 
 	if (0 == strncmp(con->physical.path->ptr, con->physical.doc_root->ptr, con->physical.doc_root->used-1)) {
 		size_t offset = p->ofn->used - 1;

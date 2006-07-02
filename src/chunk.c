@@ -6,17 +6,18 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/mman.h>
 
 #include <stdlib.h>
 #include <fcntl.h>
-#include <unistd.h>
 
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
 
 #include "chunk.h"
+
+#include "sys-mmap.h"
+#include "sys-files.h"
 
 chunkqueue *chunkqueue_init(void) {
 	chunkqueue *cq;
@@ -278,7 +279,7 @@ chunk *chunkqueue_get_append_tempfile(chunkqueue *cq) {
 			data_string *ds = (data_string *)cq->tempdirs->data[i];
 
 			buffer_copy_string_buffer(template, ds->value);
-			BUFFER_APPEND_SLASH(template);
+			PATHNAME_APPEND_SLASH(template);
 			BUFFER_APPEND_STRING_CONST(template, "lighttpd-upload-XXXXXX");
 
 			if (-1 != (c->file.fd = mkstemp(template->ptr))) {

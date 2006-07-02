@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 #include <ctype.h>
 #include <assert.h>
 
@@ -24,6 +23,8 @@
 #include "plugin.h"
 
 #include "sys-socket.h"
+#include "sys-files.h"
+#include "sys-strings.h"
 
 int http_response_write_header(server *srv, connection *con) {
 	buffer *b;
@@ -326,7 +327,8 @@ handler_t http_response_prepare(server *srv, connection *con) {
 		buffer_copy_string_buffer(con->physical.doc_root, con->conf.document_root);
 		buffer_copy_string_buffer(con->physical.rel_path, con->uri.path);
 
-#if defined(__WIN32) || defined(__CYGWIN__)
+        filename_unix2local(con->physical.rel_path);
+#if defined(_WIN32) || defined(__CYGWIN__)
 		/* strip dots and spaces from the end
 		 *
 		 * windows/dos handle those filenames as the same file
@@ -403,14 +405,20 @@ handler_t http_response_prepare(server *srv, connection *con) {
 		 */
 
 		buffer_copy_string_buffer(con->physical.path, con->physical.doc_root);
-		BUFFER_APPEND_SLASH(con->physical.path);
+		PATHNAME_APPEND_SLASH(con->physical.path);
 		buffer_copy_string_buffer(con->physical.basedir, con->physical.path);
 		if (con->physical.rel_path->used &&
-		    con->physical.rel_path->ptr[0] == '/') {
+		    con->physical.rel_path->ptr[0] == DIR_SEPERATOR) {
 			buffer_append_string_len(con->physical.path, con->physical.rel_path->ptr + 1, con->physical.rel_path->used - 2);
 		} else {
 			buffer_append_string_buffer(con->physical.path, con->physical.rel_path);
 		}
+        
+        /* win32: directories can't have a trailing slash */
+        if (con->physical.path->ptr[con->physical.path->used - 2] == DIR_SEPERATOR) {
+            con->physical.path->ptr[con->physical.path->used - 2] = '\0';
+            con->physical.path->used--;
+        }
 
 		if (con->conf.log_request_handling) {
 			log_error_write(srv, __FILE__, __LINE__,  "s",  "-- after doc_root");
@@ -466,7 +474,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			}
 
 			if (S_ISDIR(sce->st.st_mode)) {
-				if (con->physical.path->ptr[con->physical.path->used - 2] != '/') {
+				if (con->uri.path->ptr[con->uri.path->used - 2] != '/') {
 					/* redirect to .../ */
 
 					http_response_redirect_to_directory(srv, con);

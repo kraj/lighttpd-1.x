@@ -7,6 +7,8 @@
 #include "response.h"
 #include "stat_cache.h"
 
+#include "sys-files.h"
+
 typedef struct {
 	/* unparsed pieces */
 	buffer *path_pieces_raw;
@@ -295,7 +297,7 @@ static handler_t mod_evhost_uri_handler(server *srv, connection *con, void *p_d)
 		}
 	}
 
-	BUFFER_APPEND_SLASH(p->tmp_buf);
+	PATHNAME_APPEND_SLASH(p->tmp_buf);
 
 	array_free(parsed_host);
 
