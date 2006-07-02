@@ -327,7 +327,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 		buffer_copy_string_buffer(con->physical.doc_root, con->conf.document_root);
 		buffer_copy_string_buffer(con->physical.rel_path, con->uri.path);
 
-        filename_unix2local(con->physical.rel_path);
+		filename_unix2local(con->physical.rel_path);
 #if defined(_WIN32) || defined(__CYGWIN__)
 		/* strip dots and spaces from the end
 		 *
