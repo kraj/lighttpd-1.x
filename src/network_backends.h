@@ -48,7 +48,10 @@
 * win32 only recv/send
 */
 #ifdef _WIN32
-# define USE_SEND
+# define USE_WIN32_SEND
+/* wait for async-io support
+# define USE_WIN32_TRANSMITFILE 
+*/
 #else
 # define USE_WRITE
 #endif
@@ -62,14 +65,16 @@
     network_status_t network_read_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
 
 NETWORK_BACKEND_WRITE(write);
-NETWORK_BACKEND_WRITE(send);
 NETWORK_BACKEND_WRITE(writev);
 NETWORK_BACKEND_WRITE(linuxsendfile);
 NETWORK_BACKEND_WRITE(freebsdsendfile);
 NETWORK_BACKEND_WRITE(solarissendfilev);
 
+NETWORK_BACKEND_WRITE(win32transmitfile);
+NETWORK_BACKEND_WRITE(win32send);
+
 NETWORK_BACKEND_READ(read);
-NETWORK_BACKEND_READ(recv);
+NETWORK_BACKEND_READ(win32recv);
 
 #ifdef USE_OPENSSL
 #define NETWORK_BACKEND_SSL(x) \

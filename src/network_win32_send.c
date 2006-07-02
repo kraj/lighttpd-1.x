@@ -18,7 +18,7 @@
 
 #include "network_backends.h"
 
-#ifdef USE_SEND
+#ifdef USE_WIN32_SEND
 /**
 * fill the chunkqueue will all the data that we can get
 *
@@ -26,24 +26,23 @@
 * as vectors
 */
 
-NETWORK_BACKEND_READ(recv) {
+NETWORK_BACKEND_READ(win32recv) {
     int toread = 0;
     buffer *b;
     int r;
-    fprintf(stderr, "%s.%d: fd = %d\r\n", __FILE__, __LINE__, fd);
 
 	/* check how much we have to read */
 	if (ioctlsocket(fd, FIONREAD, &toread)) {
-    fprintf(stderr, "%s.%d\r\n", __FILE__, __LINE__);
-
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"ioctl failed: ",
 				fd);
 		return NETWORK_STATUS_FATAL_ERROR;
 	}
-    fprintf(stderr, "%s.%d: toread = %d\r\n", __FILE__, __LINE__, toread);
 
-	if (toread == 0) return NETWORK_STATUS_WAIT_FOR_EVENT;
+	if (toread == 0) {
+        /* win32 is strange */
+        return con->bytes_read ? NETWORK_STATUS_CONNECTION_CLOSE : NETWORK_STATUS_WAIT_FOR_EVENT;
+    }
         
     /*
     * our chunk queue is quiet large already
@@ -56,26 +55,25 @@ NETWORK_BACKEND_READ(recv) {
     buffer_prepare_copy(b, toread + 1);
 
     r = recv(fd, b->ptr, toread, 0);
-    fprintf(stderr, "%s.%d\r\n", __FILE__, __LINE__);
     
     /* something went wrong */
     if (r < 0) {
         errno = WSAGetLastError();
         
-        if (errno == EAGAIN) return NETWORK_STATUS_WAIT_FOR_EVENT;
         if (errno == WSAEWOULDBLOCK) return NETWORK_STATUS_WAIT_FOR_EVENT;
 		if (errno == EINTR) {
 			/* we have been interrupted before we could read */
 			return NETWORK_STATUS_INTERRUPTED;
 		}
 
-		if (errno != ECONNRESET) {
-			/* expected for keep-alive */
-			log_error_write(srv, __FILE__, __LINE__, "ssdd", 
-                "connection closed - read failed: ", 
-                strerror(errno), con->fd, errno);
-		}
-    fprintf(stderr, "%s.%d\r\n", __FILE__, __LINE__);
+		if (errno == WSAECONNRESET) {
+            /* expected for keep-alive */
+            return NETWORK_STATUS_CONNECTION_CLOSE;
+        }
+        
+		log_error_write(srv, __FILE__, __LINE__, "ssdd", 
+            "connection closed - read failed: ", 
+            strerror(errno), con->fd, errno);
         
         return NETWORK_STATUS_FATAL_ERROR;
     }
@@ -83,12 +81,11 @@ NETWORK_BACKEND_READ(recv) {
 	assert(r);
 	b->used += r + 1;
 	b->ptr[b->used - 1] = '\0';
-    fprintf(stderr, "%s.%d: read = %d\r\n", __FILE__, __LINE__, r);
 
     return NETWORK_STATUS_SUCCESS;
 }
 
-NETWORK_BACKEND_WRITE(send) {
+NETWORK_BACKEND_WRITE(win32send) {
 	chunk *c;
 	size_t chunks_written = 0;
 
@@ -110,7 +107,18 @@ NETWORK_BACKEND_WRITE(send) {
 			toSend = c->mem->used - 1 - c->offset;
 
 			if ((r = send(fd, offset, toSend, 0)) < 0) {
-				log_error_write(srv, __FILE__, __LINE__, "ssd", "write failed: ", strerror(errno), fd);
+                    errno = WSAGetLastError();
+                    
+                switch(errno) {
+                case WSAEWOULDBLOCK:
+                    return NETWORK_STATUS_WAIT_FOR_EVENT;
+                case WSAECONNABORTED:
+                case WSAECONNRESET:
+                    return NETWORK_STATUS_CONNECTION_CLOSE;
+                default:
+                    log_error_write(srv, __FILE__, __LINE__, "sdd", "send to socket:", errno, fd);
+                    return NETWORK_STATUS_FATAL_ERROR;
+                }
 
 				return NETWORK_STATUS_FATAL_ERROR;
 			}
@@ -146,7 +154,6 @@ NETWORK_BACKEND_WRITE(send) {
 
             
             if (-1 == c->file.fd) {
-                fprintf(stderr, "%s.%d: opening file: %s\r\n", __FILE__, __LINE__, c->file.name->ptr);
 			    if (-1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY|O_BINARY|O_SEQUENTIAL))) {
 				    log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
 
@@ -163,7 +170,7 @@ NETWORK_BACKEND_WRITE(send) {
                 int toSend;
                 
                 /* only send 64k blocks */            
-                toSend = c->file.length - c->offset > 128 * 1024 ? 128 * 1024 : c->file.length - c->offset;
+                toSend = c->file.length - c->offset > 256 * 1024 ? 256 * 1024 : c->file.length - c->offset;
 
 		    	buffer_prepare_copy(srv->tmp_buf, toSend);
 
@@ -180,6 +187,7 @@ NETWORK_BACKEND_WRITE(send) {
                     switch(errno) {
                     case WSAEWOULDBLOCK:
                         return NETWORK_STATUS_WAIT_FOR_EVENT;
+                    case WSAECONNABORTED:
                     case WSAECONNRESET:
                         return NETWORK_STATUS_CONNECTION_CLOSE;
                     default:
@@ -212,7 +220,6 @@ NETWORK_BACKEND_WRITE(send) {
 
 		if (!chunk_finished) {
 			/* not finished yet */
-    fprintf(stderr, "%s.%d: last chunk is not finished, wait for the next event\r\n", __FILE__, __LINE__);
 
 			return NETWORK_STATUS_WAIT_FOR_EVENT;
 		}

@@ -448,12 +448,15 @@ int network_close(server *srv) {
 
 typedef enum {
 	NETWORK_BACKEND_UNSET,
+    
 	NETWORK_BACKEND_WRITE,
-    NETWORK_BACKEND_SEND,
 	NETWORK_BACKEND_WRITEV,
 	NETWORK_BACKEND_LINUX_SENDFILE,
 	NETWORK_BACKEND_FREEBSD_SENDFILE,
-	NETWORK_BACKEND_SOLARIS_SENDFILEV
+	NETWORK_BACKEND_SOLARIS_SENDFILEV,
+    
+    NETWORK_BACKEND_WIN32_SEND,
+    NETWORK_BACKEND_WIN32_TRANSMITFILE,
 } network_backend_t;
 
 int network_init(server *srv) {
@@ -481,9 +484,13 @@ int network_init(server *srv) {
 #if defined USE_WRITE
 		{ NETWORK_BACKEND_WRITE,		"write" },
 #endif
-#if defined USE_SEND
-		{ NETWORK_BACKEND_SEND,	    	"send" },
+#if defined USE_WIN32_TRANSMITFILE
+		{ NETWORK_BACKEND_WIN32_TRANSMITFILE,	"win32-transmitfile" },
 #endif
+#if defined USE_WIN32_SEND
+		{ NETWORK_BACKEND_WIN32_SEND,	    	"win32-send" },
+#endif
+
 		{ NETWORK_BACKEND_UNSET,        	NULL }
 	};
 
@@ -530,16 +537,23 @@ int network_init(server *srv) {
     srv->network_backend_read = network_read_chunkqueue_##read
     
 	switch(backend) {
+
+#ifdef USE_WIN32_SEND
+	case NETWORK_BACKEND_WIN32_SEND:
+        SET_NETWORK_BACKEND(win32recv, win32send);
+		break;
+#ifdef USE_WIN32_TRANSMITFILE
+	case NETWORK_BACKEND_WIN32_TRANSMITFILE:
+        SET_NETWORK_BACKEND(win32recv, win32transmitfile);
+		break;
+#endif
+#endif
+
 #ifdef USE_WRITE
 	case NETWORK_BACKEND_WRITE:
         SET_NETWORK_BACKEND(read, write);
 		break;
-#endif
-#ifdef USE_SEND
-	case NETWORK_BACKEND_SEND:
-        SET_NETWORK_BACKEND(recv, send);
-		break;
-#endif
+
 #ifdef USE_WRITEV
 	case NETWORK_BACKEND_WRITEV:
         SET_NETWORK_BACKEND(read, writev);
@@ -559,6 +573,7 @@ int network_init(server *srv) {
 	case NETWORK_BACKEND_SOLARIS_SENDFILEV:
         SET_NETWORK_BACKEND(read, solarissendfilev);
 		break;
+#endif
 #endif
 	default:
 		return -1;
