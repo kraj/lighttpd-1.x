@@ -1,7 +1,7 @@
 
 #include "buffer.h"
 
-#ifdef WIN32
+#ifdef _WIN32
 #include <windows.h>
 typedef HANDLE descriptor_t;
 typedef HANDLE proc_pid_t;

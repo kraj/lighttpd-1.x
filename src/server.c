@@ -1,11 +1,9 @@
 #include <sys/types.h>
-#include <sys/time.h>
 #include <sys/stat.h>
 
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <time.h>
 #include <signal.h>
@@ -29,9 +27,11 @@
 #include "plugin.h"
 #include "joblist.h"
 #include "network_backends.h"
-
+#undef HAVE_GETOPT_H
 #ifdef HAVE_GETOPT_H
 #include <getopt.h>
+#else
+#include "getopt.h"
 #endif
 
 #ifdef HAVE_VALGRIND_VALGRIND_H
@@ -59,6 +59,13 @@
 /* IRIX doesn't like the alarm based time() optimization */
 /* #define USE_ALARM */
 #endif
+
+#ifdef _WIN32
+#undef HAVE_SIGNAL
+#endif
+
+#include "sys-files.h"
+#include "sys-process.h"
 
 static volatile sig_atomic_t srv_shutdown = 0;
 static volatile sig_atomic_t graceful_shutdown = 0;
@@ -127,6 +134,7 @@ static server *server_init(void) {
 
 	server *srv = calloc(1, sizeof(*srv));
 	assert(srv);
+    srv->max_fds = 1024;
 #define CLEAN(x) \
 	srv->x = buffer_init();
 
@@ -444,6 +452,8 @@ int main (int argc, char **argv, char **envp) {
 	int num_childs = 0;
 	int pid_fd = -1, fd;
 	size_t i;
+    char *optarg = NULL;
+
 #ifdef HAVE_SIGACTION
 	struct sigaction act;
 #endif
@@ -478,14 +488,20 @@ int main (int argc, char **argv, char **envp) {
 	i_am_root = 0;
 #endif
 	srv->srvconf.dont_daemonize = 0;
-
+    
 	while(-1 != (o = getopt(argc, argv, "f:m:hvVDpt"))) {
 		switch(o) {
 		case 'f':
+#ifdef _WIN32
+            /* evil HACK for windows, optarg is not set */
+            optarg = argv[optind-1];
+#endif
 			if (config_read(srv, optarg)) {
+                fprintf(stderr, "%s.%d\r\n", __FILE__, __LINE__);
 				server_free(srv);
 				return -1;
 			}
+            
 			break;
 		case 'm':
 			buffer_copy_string(srv->srvconf.modules_dir, optarg);
@@ -586,6 +602,7 @@ int main (int argc, char **argv, char **envp) {
 		return -1;
 	}
 
+#ifndef _WIN32
 	/* open pid file BEFORE chroot */
 	if (srv->srvconf.pid_file->used) {
 		if (-1 == (pid_fd = open(srv->srvconf.pid_file->ptr, O_WRONLY | O_CREAT | O_EXCL | O_TRUNC, S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH))) {
@@ -614,13 +631,14 @@ int main (int argc, char **argv, char **envp) {
 			}
 		}
 	}
-
+#endif
 	if (srv->event_handler == FDEVENT_HANDLER_SELECT) {
 		/* select limits itself
 		 *
 		 * as it is a hard limit and will lead to a segfault we add some safety
 		 * */
-		srv->max_fds = FD_SETSIZE - 200;
+        fprintf(stderr, "%s.%d: max parallel connections: %d\r\n", __FILE__, __LINE__, FD_SETSIZE);
+		srv->max_fds = FD_SETSIZE - 4;
 	} else {
 		srv->max_fds = 4096;
 	}
@@ -758,7 +776,7 @@ int main (int argc, char **argv, char **envp) {
 		}
 
 		if (srv->event_handler == FDEVENT_HANDLER_SELECT) {
-			srv->max_fds = rlim.rlim_cur < FD_SETSIZE - 200 ? rlim.rlim_cur : FD_SETSIZE - 200;
+			srv->max_fds = rlim.rlim_cur < FD_SETSIZE - 4 ? rlim.rlim_cur : FD_SETSIZE - 4;
 		} else {
 			srv->max_fds = rlim.rlim_cur;
 		}
@@ -772,9 +790,9 @@ int main (int argc, char **argv, char **envp) {
 #endif
 		if (srv->event_handler == FDEVENT_HANDLER_SELECT) {
 			/* don't raise the limit above FD_SET_SIZE */
-			if (srv->max_fds > FD_SETSIZE - 200) {
+			if (srv->max_fds > FD_SETSIZE - 4) {
 				log_error_write(srv, __FILE__, __LINE__, "sd",
-						"can't raise max filedescriptors above",  FD_SETSIZE - 200,
+						"can't raise max filedescriptors above",  FD_SETSIZE - 4,
 						"if event-handler is 'select'. Use 'poll' or something else or reduce server.max-fds.");
 				return -1;
 			}
@@ -815,8 +833,10 @@ int main (int argc, char **argv, char **envp) {
 	if (srv->srvconf.dont_daemonize == 0) daemonize();
 #endif
 
+#ifdef HAVE_PWD_H
 	srv->gid = getgid();
 	srv->uid = getuid();
+#endif
 
 	/* write pid file */
 	if (pid_fd != -1) {
@@ -879,7 +899,6 @@ int main (int argc, char **argv, char **envp) {
 		server_free(srv);
 		return -1;
 	}
-
 
 #ifdef HAVE_SIGACTION
 	memset(&act, 0, sizeof(act));
@@ -954,7 +973,7 @@ int main (int argc, char **argv, char **envp) {
 	}
 #endif
 
-	if (NULL == (srv->ev = fdevent_init(srv->max_fds + 1, srv->event_handler))) {
+	if (NULL == (srv->ev = fdevent_init(/*srv->max_fds + 1*/ 4096, srv->event_handler))) {
 		log_error_write(srv, __FILE__, __LINE__,
 				"s", "fdevent_init failed");
 		return -1;
@@ -1018,12 +1037,13 @@ int main (int argc, char **argv, char **envp) {
 
 		if (handle_sig_hup) {
 			handler_t r;
-			pid_t pid;
 
 			/* reset notification */
 			handle_sig_hup = 0;
 
 #if 0
+            			pid_t pid;
+
 			/* send the old process into a graceful-shutdown and start a 
 			 * new process right away
 			 *

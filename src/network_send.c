@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "network.h"
 #include "fdevent.h"
@@ -16,35 +17,37 @@
 
 #include "network_backends.h"
 
-#ifdef USE_WRITE
-
-#ifdef HAVE_SYS_FILIO_H
-# include <sys/filio.h>
-#endif
-
-#ifdef HAVE_SYS_RESOURCE_H
-#include <sys/resource.h>
-#endif
-
+#ifdef USE_SEND
 /**
 * fill the chunkqueue will all the data that we can get
 *
 * this might be optimized into a readv() which uses the chunks
 * as vectors
 */
-NETWORK_BACKEND_READ(read) {
+
+typedef enum {
+    NETWORK_STATUS_UNSET,
+    NETWORK_STATUS_SUCCESS,
+    NETWORK_STATUS_FATAL_ERROR,
+    NETWORK_STATUS_CONNECTION_CLOSE,
+    NETWORK_STATUS_WAIT_FOR_EVENT,
+    NETWORK_STATUS_INTERRUPTED
+} network_status_t;
+
+NETWORK_BACKEND_READ(recv) {
     int toread;
     buffer *b;
+    int r;
     
 	/* check how much we have to read */
 	if (ioctl(fd, FIONREAD, &toread)) {
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"ioctl failed: ",
 				fd);
-		return -1;
+		return NETWORK_STATUS_FATAL_ERROR;
 	}
 
-	if (toread == 0) return 0;
+	if (toread == 0) return NETWORK_STATUS_CONNECTION_CLOSE;
         
     /*
     * our chunk queue is quiet large already
@@ -56,22 +59,37 @@ NETWORK_BACKEND_READ(read) {
     
     buffer_prepare_copy(b, toread);
 
-    if (-1 == (r = read(fd, b->ptr + b->used - 1, toread))) {
-		log_error_write(srv, __FILE__, __LINE__, "sds",
-				"unexpected end-of-file (perhaps the proxy process died):",
-				fd, strerror(errno));
-		return -1;
-	}
+    r = recv(fd, b->ptr + b->used - 1, toread, 0);
+    
+    /* something went wrong */
+    if (r < 0) {
+        errno = WSAGetLastError();
+        
+        if (errno == EAGAIN) return NETWORK_STATUS_WAIT_FOR_EVENT;
+        if (errno == WSAEWOULDBLOCK) return NETWORK_STATUS_WAIT_FOR_EVENT;
+		if (errno == EINTR) {
+			/* we have been interrupted before we could read */
+			return NETWORK_STATUS_INTERRUPTED;
+		}
 
+		if (errno != ECONNRESET) {
+			/* expected for keep-alive */
+			log_error_write(srv, __FILE__, __LINE__, "ssdd", 
+                "connection closed - read failed: ", 
+                strerror(errno), con->fd, errno);
+		}
+        
+        return NETWORK_STATUS_FATAL_ERROR;
+    }
 	/* this should be catched by the b > 0 above */
 	assert(r);
 	b->used += r;
 	b->ptr[b->used - 1] = '\0';
 
-    return 0;
+    return NETWORK_STATUS_SUCCESS;
 }
 
-int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqueue *cq) {
+NETWORK_BACKEND_WRITE(send) {
 	chunk *c;
 	size_t chunks_written = 0;
 
@@ -92,7 +110,7 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 			offset = c->mem->ptr + c->offset;
 			toSend = c->mem->used - 1 - c->offset;
 
-			if ((r = write(fd, offset, toSend)) < 0) {
+			if ((r = send(fd, offset, toSend, 0)) < 0) {
 				log_error_write(srv, __FILE__, __LINE__, "ssd", "write failed: ", strerror(errno), fd);
 
 				return -1;

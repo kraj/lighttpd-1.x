@@ -1,5 +1,4 @@
 #include <sys/types.h>
-#include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
@@ -30,7 +29,9 @@
 #endif
 
 #include "sys-socket.h"
-
+#include "sys-files.h"
+#include "sys-strings.h"
+#include "sys-process.h"
 
 #ifndef UNIX_PATH_MAX
 # define UNIX_PATH_MAX 108
@@ -60,7 +61,6 @@ typedef struct scgi_proc {
 	unsigned port;  /* config.port + pno */
 
 	pid_t pid;   /* PID of the spawned process (0 if not spawned locally) */
-
 
 	size_t load; /* number of requests waiting on this process */
 
@@ -308,7 +308,6 @@ typedef struct {
 	size_t    request_id;
 	int       fd;        /* fd to the scgi process */
 	int       fde_ndx;   /* index into the fd-event buffer */
-
 	pid_t     pid;
 	int       got_proc;
 
@@ -555,7 +554,9 @@ FREE_FUNC(mod_scgi_free) {
 					host = ex->hosts[n];
 
 					for (proc = host->first; proc; proc = proc->next) {
+#ifndef _WIN32
 						if (proc->pid != 0) kill(proc->pid, SIGTERM);
+#endif
 
 						if (proc->is_local &&
 						    !buffer_is_empty(proc->socket)) {
@@ -564,7 +565,9 @@ FREE_FUNC(mod_scgi_free) {
 					}
 
 					for (proc = host->unused_procs; proc; proc = proc->next) {
+#ifndef _WIN32
 						if (proc->pid != 0) kill(proc->pid, SIGTERM);
+#endif
 
 						if (proc->is_local &&
 						    !buffer_is_empty(proc->socket)) {
@@ -2058,6 +2061,7 @@ static int scgi_restart_dead_procs(server *srv, plugin_data *p, scgi_extension_h
 			int status;
 
 			if (proc->state == PROC_STATE_DIED_WAIT_FOR_PID) {
+#ifndef _WIN32
 				switch(waitpid(proc->pid, &status, WNOHANG)) {
 				case 0:
 					/* child is still alive */
@@ -2084,6 +2088,7 @@ static int scgi_restart_dead_procs(server *srv, plugin_data *p, scgi_extension_h
 					proc->state = PROC_STATE_DIED;
 					break;
 				}
+#endif
 			}
 
 			/*
@@ -2271,10 +2276,11 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 				 */
 				if (hctx->wb->bytes_out == 0 &&
 				    hctx->reconnects < 5) {
+#ifndef _WIN32
 					usleep(10000); /* take away the load of the webserver
 							* to let the php a chance to restart
 							*/
-
+#endif
 					scgi_reconnect(srv, hctx);
 
 					return HANDLER_WAIT_FOR_FD;
@@ -2479,7 +2485,7 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 				int status;
 
 				/* only fetch the zombie if it is not already done */
-
+#ifndef _WIN32
 				switch(waitpid(proc->pid, &status, WNOHANG)) {
 				case 0:
 					/* child is still alive */
@@ -2519,6 +2525,7 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 					break;
 				}
+#endif
 			}
 
 			if (con->file_started == 0) {
@@ -2968,7 +2975,7 @@ TRIGGER_FUNC(mod_scgi_handle_trigger) {
 					if (proc->load != 0) break;
 					if (host->num_procs <= host->min_procs) break;
 					if (proc->pid == 0) continue;
-
+#ifndef _WIN32
 					if (srv->cur_ts - proc->last_used > host->idle_timeout) {
 						/* a proc is idling for a long time now,
 						 * terminated it */
@@ -3006,13 +3013,14 @@ TRIGGER_FUNC(mod_scgi_handle_trigger) {
 						/* proc is now in unused, let the next second handle the next process */
 						break;
 					}
+#endif
 				}
 
 				for (proc = host->unused_procs; proc; proc = proc->next) {
 					int status;
 
 					if (proc->pid == 0) continue;
-
+#ifndef _WIN32
 					switch (waitpid(proc->pid, &status, WNOHANG)) {
 					case 0:
 						/* child still running after timeout, good */
@@ -3056,6 +3064,7 @@ TRIGGER_FUNC(mod_scgi_handle_trigger) {
 						proc->state = PROC_STATE_UNSET;
 						host->max_id--;
 					}
+#endif
 				}
 			}
 		}

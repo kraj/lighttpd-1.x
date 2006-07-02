@@ -9,6 +9,7 @@
 #define EINPROGRESS WSAEINPROGRESS
 #define EALREADY WSAEALREADY
 #define ENOTCONN WSAENOTCONN
+#define EWOULDBLOCK WSAEWOULDBLOCK
 #define ioctl ioctlsocket
 #define hstrerror(x) ""
 #define STDIN_FILENO 0

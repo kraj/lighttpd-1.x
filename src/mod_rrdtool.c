@@ -5,7 +5,6 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
 #include <time.h>
 
@@ -20,6 +19,10 @@
 /* no need for waitpid if we don't have fork */
 #include <sys/wait.h>
 #endif
+
+#include "sys-files.h"
+#include "sys-process.h"
+
 typedef struct {
 	buffer *path_rrdtool_bin;
 	buffer *path_rrd;

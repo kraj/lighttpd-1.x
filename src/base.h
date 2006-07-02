@@ -2,7 +2,6 @@
 #define _BASE_H_
 
 #include <sys/types.h>
-#include <sys/time.h>
 #include <sys/stat.h>
 
 #ifdef HAVE_CONFIG_H
@@ -40,10 +39,6 @@
 # define O_BINARY 0
 #endif
 
-#ifndef O_LARGEFILE
-# define O_LARGEFILE 0
-#endif
-
 #ifndef SIZE_MAX
 # ifdef SIZE_T_MAX
 #  define SIZE_MAX SIZE_T_MAX
@@ -70,7 +65,8 @@ typedef int socklen_t;
 
 /* solaris and NetBSD 1.3.x again */
 #if (!defined(HAVE_STDINT_H)) && (!defined(HAVE_INTTYPES_H)) && (!defined(uint32_t))
-# define uint32_t u_int32_t
+//# define uint32_t u_int32_t
+typedef unsigned __int32 uint32_t;
 #endif
 
 
@@ -599,8 +595,10 @@ typedef struct server {
 	int (* network_ssl_backend_read)(struct server *srv, connection *con, SSL *ssl, chunkqueue *cq);
 #endif
 
+#ifdef HAVE_PWD_H
 	uid_t uid;
 	gid_t gid;
+#endif
 } server;
 
 

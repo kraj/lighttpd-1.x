@@ -287,7 +287,7 @@ static cond_result_t config_check_cond_nocache(server *srv, connection *con, dat
 
 			/* take IP convert to the native */
 			buffer_copy_string_len(srv->cond_check_buf, dc->string->ptr, nm_slash - dc->string->ptr);
-#ifdef __WIN32
+#ifdef _WIN32
 			if (INADDR_NONE == (val_inp.s_addr = inet_addr(srv->cond_check_buf->ptr))) {
 				log_error_write(srv, __FILE__, __LINE__, "sb", "ERROR: ip addr is invalid:", srv->cond_check_buf);
 

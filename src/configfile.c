@@ -2,7 +2,6 @@
 
 #include <stdlib.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
@@ -13,14 +12,16 @@
 #include "log.h"
 #include "stream.h"
 #include "plugin.h"
-#ifdef USE_LICENSE
-#include "license.h"
-#endif
-
 #include "configparser.h"
 #include "configfile.h"
 #include "proc_open.h"
 
+#include "sys-files.h"
+
+#ifndef PATH_MAX
+/* win32 */
+#define PATH_MAX 64
+#endif
 
 static int config_insert(server *srv) {
 	size_t i;
@@ -778,6 +779,7 @@ static int config_parse(server *srv, config_t *context, tokenizer_t *t) {
 	pParser = configparserAlloc( malloc );
 	lasttoken = buffer_init();
 	token = buffer_init();
+
 	while((1 == (ret = config_tokenizer(srv, t, &token_id, token))) && context->ok) {
 		buffer_copy_string_buffer(lasttoken, token);
 		configparser(pParser, token_id, token, context);
@@ -914,13 +916,10 @@ int config_read(server *srv, const char *fn) {
 	context_init(srv, &context);
 	context.all_configs = srv->config_context;
 
-	pos = strrchr(fn,
-#ifdef __WIN32
-			'\\'
-#else
-			'/'
-#endif
-			);
+    /* use the current dir as basedir for all other includes 
+    */
+	pos = strrchr(fn, DIR_SEPERATOR);
+
 	if (pos) {
 		buffer_copy_string_len(context.basedir, fn, pos - fn + 1);
 		fn = pos + 1;
@@ -937,7 +936,7 @@ int config_read(server *srv, const char *fn) {
 	/* default context */
 	srv->config = dc->value;
 	dpid = data_integer_init();
-	dpid->value = getpid();
+	dpid->value = /* getpid() */0;
 	buffer_copy_string(dpid->key, "var.PID");
 	array_insert_unique(srv->config, (data_unset *)dpid);
 
@@ -1031,6 +1030,7 @@ int config_read(server *srv, const char *fn) {
 	return 0;
 }
 
+
 int config_set_defaults(server *srv) {
 	size_t i;
 	specific_config *s = srv->config_storage[0];
@@ -1073,10 +1073,11 @@ int config_set_defaults(server *srv) {
 	}
 
 	if (buffer_is_empty(srv->srvconf.changeroot)) {
+        filename_unix2local(s->document_root);
 		if (-1 == stat(s->document_root->ptr, &st1)) {
-			log_error_write(srv, __FILE__, __LINE__, "sb",
+			log_error_write(srv, __FILE__, __LINE__, "sbs",
 					"base-docroot doesn't exist:",
-					s->document_root);
+					s->document_root, strerror(errno));
 			return -1;
 		}
 

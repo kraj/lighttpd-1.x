@@ -1,13 +1,13 @@
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+
+#include <stdio.h>
 
 #include "network.h"
 #include "fdevent.h"
@@ -19,6 +19,7 @@
 #include "network_backends.h"
 #include "sys-mmap.h"
 #include "sys-socket.h"
+#include "sys-files.h"
 
 #ifdef USE_OPENSSL
 # include <openssl/ssl.h>
@@ -63,7 +64,7 @@ handler_t network_server_handle_fdevent(void *s, void *context, int revents) {
 }
 
 int network_server_init(server *srv, buffer *host_token, specific_config *s) {
-	int val;
+	char val;
 	socklen_t addr_len;
 	server_socket *srv_socket;
 	char *sp;
@@ -77,7 +78,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 	struct accept_filter_arg afa;
 #endif
 
-#ifdef __WIN32
+#ifdef _WIN32
 	WORD wVersionRequested;
 	WSADATA wsaData;
 	int err;
@@ -244,6 +245,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 		addr_len = sizeof(struct sockaddr_in);
 
 		break;
+#ifndef _WIN32
 	case AF_UNIX:
 		srv_socket->addr.un.sun_family = AF_UNIX;
 		strcpy(srv_socket->addr.un.sun_path, host);
@@ -283,6 +285,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 		}
 
 		break;
+#endif
 	default:
 		addr_len = 0;
 
@@ -404,7 +407,6 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 	}
 
 	srv->srv_sockets.ptr[srv->srv_sockets.used++] = srv_socket;
-
 	buffer_free(b);
 
 	return 0;
@@ -447,6 +449,7 @@ int network_close(server *srv) {
 typedef enum {
 	NETWORK_BACKEND_UNSET,
 	NETWORK_BACKEND_WRITE,
+    NETWORK_BACKEND_SEND,
 	NETWORK_BACKEND_WRITEV,
 	NETWORK_BACKEND_LINUX_SENDFILE,
 	NETWORK_BACKEND_FREEBSD_SENDFILE,
@@ -475,7 +478,12 @@ int network_init(server *srv) {
 #if defined USE_WRITEV
 		{ NETWORK_BACKEND_WRITEV,		"writev" },
 #endif
+#if defined USE_WRITE
 		{ NETWORK_BACKEND_WRITE,		"write" },
+#endif
+#if defined USE_SEND
+		{ NETWORK_BACKEND_SEND,	    	"send" },
+#endif
 		{ NETWORK_BACKEND_UNSET,        	NULL }
 	};
 
@@ -517,28 +525,39 @@ int network_init(server *srv) {
 		}
 	}
 
+#define SET_NETWORK_BACKEND(read, write) \
+    srv->network_backend_write = network_write_chunkqueue_##write;\
+    srv->network_backend_read = network_read_chunkqueue_##read
+    
 	switch(backend) {
+#ifdef USE_WRITE
 	case NETWORK_BACKEND_WRITE:
-		srv->network_backend_write = network_write_chunkqueue_write;
+        SET_NETWORK_BACKEND(read, write);
 		break;
+#endif
+#ifdef USE_SEND
+	case NETWORK_BACKEND_SEND:
+        SET_NETWORK_BACKEND(recv, send);
+		break;
+#endif
 #ifdef USE_WRITEV
 	case NETWORK_BACKEND_WRITEV:
-		srv->network_backend_write = network_write_chunkqueue_writev;
+        SET_NETWORK_BACKEND(read, writev);
 		break;
 #endif
 #ifdef USE_LINUX_SENDFILE
 	case NETWORK_BACKEND_LINUX_SENDFILE:
-		srv->network_backend_write = network_write_chunkqueue_linuxsendfile;
+        SET_NETWORK_BACKEND(read, linuxsendfile);
 		break;
 #endif
 #ifdef USE_FREEBSD_SENDFILE
 	case NETWORK_BACKEND_FREEBSD_SENDFILE:
-		srv->network_backend_write = network_write_chunkqueue_freebsdsendfile;
+        SET_NETWORK_BACKEND(read, freebsdsendfile);
 		break;
 #endif
 #ifdef USE_SOLARIS_SENDFILEV
 	case NETWORK_BACKEND_SOLARIS_SENDFILEV:
-		srv->network_backend_write = network_write_chunkqueue_solarissendfilev;
+        SET_NETWORK_BACKEND(read, solarissendfilev);
 		break;
 #endif
 	default:
@@ -578,19 +597,31 @@ int network_init(server *srv) {
 
 int network_register_fdevents(server *srv) {
 	size_t i;
-
 	if (-1 == fdevent_reset(srv->ev)) {
 		return -1;
 	}
-
 	/* register fdevents after reset */
 	for (i = 0; i < srv->srv_sockets.used; i++) {
 		server_socket *srv_socket = srv->srv_sockets.ptr[i];
-
 		fdevent_register(srv->ev, srv_socket->fd, network_server_handle_fdevent, srv_socket);
 		fdevent_event_add(srv->ev, &(srv_socket->fde_ndx), srv_socket->fd, FDEVENT_IN);
 	}
 	return 0;
+}
+
+int network_read_chunkqueue(server *srv, connection *con, chunkqueue *cq) {
+    int ret;
+    server_socket *srv_socket = con->srv_socket;
+
+   	if (srv_socket->is_ssl) {
+#ifdef USE_OPENSSL
+		ret = srv->network_ssl_backend_read(srv, con, con->ssl, cq);
+#endif
+	} else {
+		ret = srv->network_backend_read(srv, con, con->fd, cq);
+	}
+
+    return ret;
 }
 
 int network_write_chunkqueue(server *srv, connection *con, chunkqueue *cq) {

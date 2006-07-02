@@ -13,7 +13,7 @@
 #include <valgrind/valgrind.h>
 #endif
 
-#ifndef __WIN32
+#ifndef _WIN32
 #include <dlfcn.h>
 #endif
 /*
@@ -68,7 +68,7 @@ static void plugin_free(plugin *p) {
 
 #ifndef LIGHTTPD_STATIC
 	if (use_dlclose && p->lib) {
-#ifdef __WIN32
+#ifdef _WIN32
 		FreeLibrary(p->lib);
 #else
 		dlclose(p->lib);
@@ -121,7 +121,12 @@ int plugins_load(server *srv) {
 #else
 int plugins_load(server *srv) {
 	plugin *p;
+#ifdef _WIN32
+    FARPROC init;
+#else
 	int (*init)(plugin *pl);
+#endif
+    
 	const char *error;
 	size_t i;
 
@@ -133,14 +138,14 @@ int plugins_load(server *srv) {
 
 		buffer_append_string(srv->tmp_buf, "/");
 		buffer_append_string(srv->tmp_buf, modules);
-#if defined(__WIN32) || defined(__CYGWIN__)
+#if defined(_WIN32) || defined(__CYGWIN__)
 		buffer_append_string(srv->tmp_buf, ".dll");
 #else
 		buffer_append_string(srv->tmp_buf, ".so");
 #endif
 
 		p = plugin_init();
-#ifdef __WIN32
+#ifdef _WIN32
 		if (NULL == (p->lib = LoadLibrary(srv->tmp_buf->ptr))) {
 			LPVOID lpMsgBuf;
 			FormatMessage(
@@ -175,7 +180,7 @@ int plugins_load(server *srv) {
 		buffer_copy_string(srv->tmp_buf, modules);
 		buffer_append_string(srv->tmp_buf, "_plugin_init");
 
-#ifdef __WIN32
+#ifdef _WIN32
 		init = GetProcAddress(p->lib, srv->tmp_buf->ptr);
 
 		if (init == NULL)  {

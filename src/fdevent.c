@@ -2,7 +2,6 @@
 
 #include "settings.h"
 
-#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -11,6 +10,8 @@
 
 #include "fdevent.h"
 #include "buffer.h"
+
+#include "sys-socket.h"
 
 fdevents *fdevent_init(size_t maxfds, fdevent_handler_t type) {
 	fdevents *ev;
@@ -181,6 +182,9 @@ void * fdevent_get_context(fdevents *ev, int fd) {
 }
 
 int fdevent_fcntl_set(fdevents *ev, int fd) {
+#ifdef _WIN32
+    int i = 1;
+#endif
 #ifdef FD_CLOEXEC
 	/* close fd on exec (cgi) */
 	fcntl(fd, F_SETFD, FD_CLOEXEC);
@@ -188,6 +192,8 @@ int fdevent_fcntl_set(fdevents *ev, int fd) {
 	if ((ev) && (ev->fcntl_set)) return ev->fcntl_set(ev, fd);
 #ifdef O_NONBLOCK
 	return fcntl(fd, F_SETFL, O_NONBLOCK | O_RDWR);
+#elif defined _WIN32
+    return ioctlsocket(fd, FIONBIO, &i);
 #else
 	return 0;
 #endif

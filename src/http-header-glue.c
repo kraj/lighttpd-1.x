@@ -261,6 +261,7 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 						con->http_status = 304;
 						return HANDLER_FINISHED;
 					} else {
+#ifdef HAVE_STRPTIME
 						char buf[sizeof("Sat, 23 Jul 2005 21:20:01 GMT")];
 						time_t t_header, t_file;
 						struct tm tm;
@@ -289,6 +290,9 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 
 						con->http_status = 304;
 						return HANDLER_FINISHED;
+#else
+                        return HANDLER_GO_ON;
+#endif
 					}
 				} else {
 					con->http_status = 304;
@@ -313,6 +317,7 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 			con->http_status = 304;
 			return HANDLER_FINISHED;
 		} else {
+#ifdef HAVE_STRPTIME
 			char buf[sizeof("Sat, 23 Jul 2005 21:20:01 GMT")];
 			time_t t_header, t_file;
 			struct tm tm;
@@ -333,6 +338,9 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 
 			con->http_status = 304;
 			return HANDLER_FINISHED;
+#else
+            return HANDLER_GO_ON;
+#endif
 		}
 	}
 

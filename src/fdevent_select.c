@@ -1,17 +1,18 @@
-#include <sys/time.h>
 #include <sys/types.h>
 
-#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
 #include <fcntl.h>
 #include <assert.h>
+#include <stdio.h>
 
 #include "fdevent.h"
 #include "settings.h"
 #include "buffer.h"
+
+#include "sys-socket.h"
 
 #ifdef USE_SELECT
 
@@ -38,7 +39,9 @@ static int fdevent_select_event_add(fdevents *ev, int fde_ndx, int fd, int event
 	UNUSED(fde_ndx);
 
 	/* we should be protected by max-fds, but you never know */
+#ifndef _WIN32
 	assert(fd < FD_SETSIZE);
+#endif
 
 	if (events & FDEVENT_IN) {
 		FD_SET(fd, &(ev->select_set_read));

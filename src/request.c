@@ -10,6 +10,8 @@
 #include "keyvalue.h"
 #include "log.h"
 
+#include "sys-strings.h"
+
 static int request_check_hostname(server *srv, connection *con, buffer *host) {
 	enum { DOMAINLABEL, TOPLABEL } stage = TOPLABEL;
 	size_t i;

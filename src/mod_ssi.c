@@ -6,7 +6,6 @@
 #include <string.h>
 #include <errno.h>
 #include <time.h>
-#include <unistd.h>
 
 #include "base.h"
 #include "log.h"
@@ -23,6 +22,7 @@
 #include "inet_ntop_cache.h"
 
 #include "sys-socket.h"
+#include "sys-strings.h"
 
 #ifdef HAVE_PWD_H
 #include <pwd.h>
@@ -660,6 +660,8 @@ static int process_ssi_stmt(server *srv, connection *con, plugin_data *p,
 
 		break;
 	case SSI_EXEC: {
+#ifndef _WIN32
+
 		const char *cmd = NULL;
 		pid_t pid;
 		int from_exec_fds[2];
@@ -682,7 +684,7 @@ static int process_ssi_stmt(server *srv, connection *con, plugin_data *p,
 		 */
 
 		if (!cmd) break;
-#ifdef HAVE_FORK
+
 		if (pipe(from_exec_fds)) {
 			log_error_write(srv, __FILE__, __LINE__, "ss",
 					"pipe failed: ", strerror(errno));
@@ -760,7 +762,6 @@ static int process_ssi_stmt(server *srv, connection *con, plugin_data *p,
 		}
 		}
 #else
-
 		return -1;
 #endif
 

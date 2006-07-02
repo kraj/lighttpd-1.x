@@ -3,6 +3,7 @@
 
 #ifdef _WIN32
 #include <process.h>
+#define pid_t int
 #else
 #include <unistd.h>
 #endif

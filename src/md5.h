@@ -30,9 +30,15 @@ documentation and/or software.
 # include <inttypes.h>
 #endif
 
+#ifdef _WIN32
+#define UINT4 unsigned __int32
+#define UINT2 unsigned __int16
+#define POINTER unsigned char *
+#else
 #define UINT4 uint32_t
 #define UINT2 uint16_t
 #define POINTER unsigned char *
+#endif
 
 /* MD5 context. */
 typedef struct {

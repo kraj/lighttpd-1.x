@@ -1,5 +1,4 @@
 #include <sys/types.h>
-#include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
@@ -24,7 +23,7 @@
 #include "inet_ntop_cache.h"
 #include "stat_cache.h"
 
-#include <fastcgi.h>
+#include "fastcgi.h"
 #include <stdio.h>
 
 #ifdef HAVE_SYS_FILIO_H
@@ -32,7 +31,14 @@
 #endif
 
 #include "sys-socket.h"
+#include "sys-files.h"
+#include "sys-strings.h"
+#include "sys-process.h"
 
+#ifdef _WIN32
+/* win32 has no fork() */
+#define kill(x, y)
+#endif
 
 #ifndef UNIX_PATH_MAX
 # define UNIX_PATH_MAX 108
@@ -933,7 +939,7 @@ static int fcgi_spawn_connection(server *srv,
 			return -1;
 		}
 
-#ifdef HAVE_FORK
+#ifndef _WIN32
 		switch ((child = fork())) {
 		case 0: {
 			size_t i = 0;
@@ -1695,6 +1701,7 @@ static connection_result_t fcgi_establish_connection(server *srv, handler_ctx *h
 #endif
 	} else {
 		fcgi_addr_in.sin_family = AF_INET;
+
 		if (0 == inet_aton(host->host->ptr, &(fcgi_addr_in.sin_addr))) {
 			log_error_write(srv, __FILE__, __LINE__, "sbs",
 					"converting IP-adress failed for", host->host,
@@ -1702,6 +1709,7 @@ static connection_result_t fcgi_establish_connection(server *srv, handler_ctx *h
 
 			return -1;
 		}
+
 		fcgi_addr_in.sin_port = htons(proc->port);
 		servlen = sizeof(fcgi_addr_in);
 
@@ -2608,7 +2616,7 @@ static int fcgi_restart_dead_procs(server *srv, plugin_data *p, fcgi_extension_h
 			if (!proc->is_local) break;
 
 			/* the child should not terminate at all */
-
+#ifndef _WIN32
 			switch(waitpid(proc->pid, &status, WNOHANG)) {
 			case 0:
 				/* child is still alive */
@@ -2635,7 +2643,7 @@ static int fcgi_restart_dead_procs(server *srv, plugin_data *p, fcgi_extension_h
 				proc->state = PROC_STATE_DIED;
 				break;
 			}
-
+#endif
 			/* fall through if we have a dead proc now */
 			if (proc->state != PROC_STATE_DIED) break;
 
@@ -2936,10 +2944,11 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 				 */
 				if (hctx->wb->bytes_out == 0 &&
 				    hctx->reconnects < 5) {
+#ifndef _WIN32
 					usleep(10000); /* take away the load of the webserver
 							* to let the php a chance to restart
 							*/
-
+#endif
 					fcgi_reconnect(srv, hctx);
 
 					return HANDLER_WAIT_FOR_FD;
@@ -3157,7 +3166,7 @@ static handler_t fcgi_handle_fdevent(void *s, void *ctx, int revents) {
 				int status;
 
 				/* only fetch the zombie if it is not already done */
-
+#ifndef _WIN32
 				switch(waitpid(proc->pid, &status, WNOHANG)) {
 				case 0:
 					/* child is still alive */
@@ -3197,6 +3206,7 @@ static handler_t fcgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 					break;
 				}
+#endif
 			}
 
 			if (con->file_started == 0) {
@@ -3759,7 +3769,7 @@ TRIGGER_FUNC(mod_fastcgi_handle_trigger) {
 					int status;
 
 					if (proc->pid == 0) continue;
-
+#ifndef _WIN32
 					switch (waitpid(proc->pid, &status, WNOHANG)) {
 					case 0:
 						/* child still running after timeout, good */
@@ -3803,6 +3813,7 @@ TRIGGER_FUNC(mod_fastcgi_handle_trigger) {
 						proc->state = PROC_STATE_UNSET;
 						host->max_id--;
 					}
+#endif
 				}
 			}
 		}

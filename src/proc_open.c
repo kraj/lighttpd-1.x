@@ -13,13 +13,13 @@
 #endif
 
 
-#ifdef WIN32
+#ifdef _WIN32
 /* {{{ win32 stuff */
 # define SHELLENV "ComSpec"
 # define SECURITY_DC , SECURITY_ATTRIBUTES *security
 # define SECURITY_CC , security
 # define pipe(pair) (CreatePipe(&pair[0], &pair[1], security, 2048L) ? 0 : -1)
-static inline HANDLE dup_handle(HANDLE src, BOOL inherit, BOOL closeorig)
+static HANDLE dup_handle(HANDLE src, BOOL inherit, BOOL closeorig)
 {
 	HANDLE copy, self = GetCurrentProcess();
 
@@ -270,11 +270,11 @@ int proc_open(proc_handler_t *proc, const char *command) {
 	}
 }
 /* }}} */
-#endif /* WIN32 */
+#endif /* _WIN32 */
 
 /* {{{ proc_read_fd_to_buffer */
 static void proc_read_fd_to_buffer(int fd, buffer *b) {
-	ssize_t s;
+	int s; /* win32 has not ssize_t */
 
 	for (;;) {
 		buffer_prepare_append(b, 512);

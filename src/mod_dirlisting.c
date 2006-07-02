@@ -1,11 +1,9 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <time.h>
 
 #include "base.h"
@@ -30,6 +28,9 @@
 #ifdef HAVE_ATTR_ATTRIBUTES_H
 #include <attr/attributes.h>
 #endif
+
+#include "sys-files.h"
+#include "sys-strings.h"
 
 /* plugin config for all request/connections */
 
@@ -491,7 +492,7 @@ static void http_list_directory_header(server *srv, connection *con, plugin_data
 		/* if we have a HEADER file, display it in <pre class="header"></pre> */
 
 		buffer_copy_string_buffer(p->tmp_buf, con->physical.path);
-		BUFFER_APPEND_SLASH(p->tmp_buf);
+		PATHNAME_APPEND_SLASH(p->tmp_buf);
 		BUFFER_APPEND_STRING_CONST(p->tmp_buf, "HEADER.txt");
 
 		if (-1 != stream_open(&s, p->tmp_buf)) {
@@ -540,7 +541,7 @@ static void http_list_directory_footer(server *srv, connection *con, plugin_data
 		/* if we have a README file, display it in <pre class="readme"></pre> */
 
 		buffer_copy_string_buffer(p->tmp_buf,  con->physical.path);
-		BUFFER_APPEND_SLASH(p->tmp_buf);
+		PATHNAME_APPEND_SLASH(p->tmp_buf);
 		BUFFER_APPEND_STRING_CONST(p->tmp_buf, "README.txt");
 
 		if (-1 != stream_open(&s, p->tmp_buf)) {
@@ -603,7 +604,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 		name_max = 256; /* stupid default */
 #endif
 	}
-#elif defined __WIN32
+#elif defined _WIN32
 	name_max = FILENAME_MAX;
 #else
 	name_max = NAME_MAX;
@@ -612,6 +613,11 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 	path = malloc(dir->used + name_max);
 	assert(path);
 	strcpy(path, dir->ptr);
+#ifdef _WIN32
+    /* append \*.* to the path and keep the \ as part of the pathname */
+    strcat(path, "\\*.*");
+    i++;
+#endif
 	path_file = path + i;
 
 	if (NULL == (dp = opendir(path))) {
@@ -633,7 +639,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 
 	while ((dent = readdir(dp)) != NULL) {
 		unsigned short exclude_match = 0;
-
+			
 		if (dent->d_name[0] == '.') {
 			if (hide_dotfiles)
 				continue;
@@ -690,8 +696,10 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 		if (i > (size_t)name_max) continue;
 
 		memcpy(path_file, dent->d_name, i + 1);
-		if (stat(path, &st) != 0)
+		if (stat(path, &st) != 0) {
+            fprintf(stderr, "%s.%d: %s, %s\r\n", __FILE__, __LINE__, path, strerror(errno));
 			continue;
+        }
 
 		list = &files;
 		if (S_ISDIR(st.st_mode))

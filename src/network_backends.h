@@ -43,16 +43,39 @@
 # define USE_AIX_SENDFILE
 #endif
 
+/**
+* unix can use read/write or recv/send on sockets
+* win32 only recv/send
+*/
+#ifdef _WIN32
+# define USE_SEND
+#else
+# define USE_WRITE
+#endif
+
 #include "base.h"
 
+#define NETWORK_BACKEND_WRITE(x) \
+    int network_write_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
+#define NETWORK_BACKEND_READ(x) \
+    int network_read_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
 
-int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqueue *cq);
-int network_write_chunkqueue_writev(server *srv, connection *con, int fd, chunkqueue *cq);
-int network_write_chunkqueue_linuxsendfile(server *srv, connection *con, int fd, chunkqueue *cq);
-int network_write_chunkqueue_freebsdsendfile(server *srv, connection *con, int fd, chunkqueue *cq);
-int network_write_chunkqueue_solarissendfilev(server *srv, connection *con, int fd, chunkqueue *cq);
+NETWORK_BACKEND_WRITE(write);
+NETWORK_BACKEND_WRITE(send);
+NETWORK_BACKEND_WRITE(writev);
+NETWORK_BACKEND_WRITE(linuxsendfile);
+NETWORK_BACKEND_WRITE(freebsdsendfile);
+NETWORK_BACKEND_WRITE(solarissendfilev);
+
+NETWORK_BACKEND_READ(read);
+NETWORK_BACKEND_READ(recv);
+
 #ifdef USE_OPENSSL
-int network_write_chunkqueue_openssl(server *srv, connection *con, SSL *ssl, chunkqueue *cq);
+#define NETWORK_BACKEND_SSL(x) \
+    int network_write_chunkqueue_#x(server *srv, connection *con, SSL *ssl, chunkqueue *cq); \
+    int network_read_chunkqueue_#x(server *srv, connection *con, SSL *ssl, chunkqueue *cq)
+
+NETWORK_BACKEND_SSL(openssl);
 #endif
 
 #endif

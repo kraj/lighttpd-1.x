@@ -1,21 +1,8 @@
 #include <sys/types.h>
-#ifdef __WIN32
-#include <winsock2.h>
-#else
-#include <sys/socket.h>
-#include <sys/wait.h>
-#include <sys/mman.h>
 
-#include <netinet/in.h>
-
-#include <arpa/inet.h>
-#endif
-
-#include <unistd.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fdevent.h>
 #include <signal.h>
 #include <ctype.h>
 #include <assert.h>
@@ -29,8 +16,14 @@
 #include "connections.h"
 #include "joblist.h"
 #include "http_chunk.h"
+#include "fdevent.h"
 
 #include "plugin.h"
+
+#include "sys-files.h"
+#include "sys-mmap.h"
+#include "sys-socket.h"
+#include "sys-strings.h"
 
 #ifdef HAVE_SYS_FILIO_H
 # include <sys/filio.h>
@@ -45,6 +38,7 @@ typedef struct {
 	size_t used;
 } char_array;
 
+#define pid_t int
 typedef struct {
 	pid_t *ptr;
 	size_t used;
@@ -478,7 +472,7 @@ static handler_t cgi_connection_close(server *srv, handler_ctx *hctx) {
 
 	if (con->mode != p->id) return HANDLER_GO_ON;
 
-#ifndef __WIN32
+#ifndef _WIN32
 
 	/* the connection to the browser went away, but we still have a connection
 	 * to the CGI script
@@ -509,6 +503,7 @@ static handler_t cgi_connection_close(server *srv, handler_ctx *hctx) {
 	/* if waitpid hasn't been called by response.c yet, do it here */
 	if (pid) {
 		/* check if the CGI-script is already gone */
+#ifndef _WIN32
 		switch(waitpid(pid, &status, WNOHANG)) {
 		case 0:
 			/* not finished yet */
@@ -558,7 +553,7 @@ static handler_t cgi_connection_close(server *srv, handler_ctx *hctx) {
 
 
 		kill(pid, SIGTERM);
-
+#endif
 		/* cgi-script is still alive, queue the PID for removal */
 		cgi_pid_add(srv, p, pid);
 	}
@@ -695,7 +690,7 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 	int from_cgi_fds[2];
 	struct stat st;
 
-#ifndef __WIN32
+#ifndef _WIN32
 
 	if (cgi_handler->used > 1) {
 		/* stat the exec file */
@@ -1168,7 +1163,7 @@ TRIGGER_FUNC(cgi_trigger) {
 	plugin_data *p = p_d;
 	size_t ndx;
 	/* the trigger handle only cares about lonely PID which we have to wait for */
-#ifndef __WIN32
+#ifndef _WIN32
 
 	for (ndx = 0; ndx < p->cgi_pid.used; ndx++) {
 		int status;
@@ -1218,7 +1213,7 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 	log_error_write(srv, __FILE__, __LINE__, "sdd", "subrequest, pid =", hctx, hctx->pid);
 #endif
 	if (hctx->pid == 0) return HANDLER_FINISHED;
-#ifndef __WIN32
+#ifndef _WIN32
 	switch(waitpid(hctx->pid, &status, WNOHANG)) {
 	case 0:
 		/* we only have for events here if we don't have the header yet,

@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <time.h>
-#include <unistd.h>
+//#include <unistd.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -16,12 +16,18 @@
 #include "config.h"
 #endif
 
+#ifdef _WIN32
+#undef HAVE_SYSLOG_H
+#endif
+
 #ifdef HAVE_SYSLOG_H
 #include <syslog.h>
 #endif
 
 #include "log.h"
 #include "array.h"
+
+#include "sys-files.h"
 
 #ifdef HAVE_VALGRIND_VALGRIND_H
 #include <valgrind/valgrind.h>
@@ -246,9 +252,11 @@ int log_error_write(server *srv, const char *filename, unsigned int line, const 
 		BUFFER_APPEND_STRING_CONST(srv->errorlog_buf, "\n");
 		write(STDERR_FILENO, srv->errorlog_buf->ptr, srv->errorlog_buf->used - 1);
 		break;
+#ifdef HAVE_SYSLOG_H
 	case ERRORLOG_SYSLOG:
 		syslog(LOG_ERR, "%s", srv->errorlog_buf->ptr);
 		break;
+#endif
 	}
 
 	return 0;

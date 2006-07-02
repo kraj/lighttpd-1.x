@@ -2,7 +2,6 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <errno.h>
 #include <string.h>
 #include <fcntl.h>
@@ -35,6 +34,7 @@
 #endif
 
 #include "sys-socket.h"
+#include "sys-files.h"
 
 typedef struct {
 	        PLUGIN_DATA;
@@ -111,9 +111,7 @@ static int connection_del(server *srv, connection *con) {
 int connection_close(server *srv, connection *con) {
 #ifdef USE_OPENSSL
 	server_socket *srv_sock = con->srv_socket;
-#endif
 
-#ifdef USE_OPENSSL
 	if (srv_sock->is_ssl) {
 		if (con->ssl) SSL_free(con->ssl);
 		con->ssl = NULL;
@@ -122,7 +120,7 @@ int connection_close(server *srv, connection *con) {
 
 	fdevent_event_del(srv->ev, &(con->fde_ndx), con->fd);
 	fdevent_unregister(srv->ev, con->fd);
-#ifdef __WIN32
+#ifdef _WIN32
 	if (closesocket(con->fd)) {
 		log_error_write(srv, __FILE__, __LINE__, "sds",
 				"(warning) close:", con->fd, strerror(errno));
@@ -214,9 +212,10 @@ static int connection_handle_read(server *srv, connection *con) {
 		buffer_prepare_copy(b, toread);
 		len = read(con->fd, b->ptr, b->size - 1);
 	}
-#elif defined(__WIN32)
+#elif defined(_WIN32)
 	buffer_prepare_copy(b, 4096);
 	len = recv(con->fd, b->ptr, b->size - 1, 0);
+    errno = WSAGetLastError();
 #else
 	if (ioctl(con->fd, FIONREAD, &toread)) {
 		log_error_write(srv, __FILE__, __LINE__, "sd",
@@ -297,6 +296,7 @@ static int connection_handle_read(server *srv, connection *con) {
 		}
 #else
 		if (errno == EAGAIN) return 0;
+        if (errno == EWOULDBLOCK) return 0;
 		if (errno == EINTR) {
 			/* we have been interrupted before we could read */
 			con->is_readable = 1;
@@ -305,7 +305,7 @@ static int connection_handle_read(server *srv, connection *con) {
 
 		if (errno != ECONNRESET) {
 			/* expected for keep-alive */
-			log_error_write(srv, __FILE__, __LINE__, "ssd", "connection closed - read failed: ", strerror(errno), errno);
+			log_error_write(srv, __FILE__, __LINE__, "ssdd", "connection closed - read failed: ", strerror(errno), con->fd, errno);
 		}
 #endif
 		connection_set_state(srv, con, CON_STATE_ERROR);
@@ -1245,9 +1245,13 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 	cnt_len = sizeof(cnt_addr);
 
 	if (-1 == (cnt = accept(srv_socket->fd, (struct sockaddr *) &cnt_addr, &cnt_len))) {
+#ifdef _WIN32
+        errno = WSAGetLastError();
+#endif
 		if ((errno != EAGAIN) &&
+            (errno != EWOULDBLOCK) &&
 		    (errno != EINTR)) {
-			log_error_write(srv, __FILE__, __LINE__, "ssd", "accept failed:", strerror(errno), errno);
+			log_error_write(srv, __FILE__, __LINE__, "ssd", "accept failed:", strerror(errno), srv_socket->fd);
 		}
 		return NULL;
 	} else {
@@ -1263,7 +1267,6 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 		srv->con_opened++;
 
 		con = connections_get_new_connection(srv);
-
 		con->fd = cnt;
 		con->fde_ndx = -1;
 #if 0

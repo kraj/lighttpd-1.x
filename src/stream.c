@@ -1,7 +1,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include <unistd.h>
 #include <fcntl.h>
 
 #include "stream.h"
@@ -19,7 +18,7 @@ int stream_open(stream *f, buffer *fn) {
 	struct stat st;
 #ifdef HAVE_MMAP
 	int fd;
-#elif defined __WIN32
+#elif defined _WIN32
 	HANDLE *fh, *mh;
 	void *p;
 #endif
@@ -45,7 +44,7 @@ int stream_open(stream *f, buffer *fn) {
 		return -1;
 	}
 
-#elif defined __WIN32
+#elif defined _WIN32
 	fh = CreateFile(fn->ptr,
 			GENERIC_READ,
 			FILE_SHARE_READ,

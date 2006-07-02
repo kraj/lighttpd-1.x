@@ -4,8 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <unistd.h>
-#include <dirent.h>
+
 #include <stdio.h>
 
 #include "buffer.h"
@@ -92,7 +91,7 @@ int f_file_mtime(lua_State *L) {
 
 	return 1;
 }
-
+#ifndef _WIN32
 int f_dir_files_iter(lua_State *L) {
 	DIR *d;
 	struct dirent *de;
@@ -136,7 +135,7 @@ int f_dir_files(lua_State *L) {
 
 	return 1;
 }
-
+#endif
 int f_file_isreg(lua_State *L) {
 	struct stat st;
 	int n = lua_gettop(L);
