@@ -82,6 +82,8 @@ opts.AddOptions(
 	PackageOption('with_xml', 'enable xml support', 'no'),
 	PackageOption('with_pcre', 'enable pcre support', 'yes'),
 	PathOption('CC', 'path to the c-compiler', None),
+    PathOption('PSDK_HOME', 'path to the platform SDK', None),
+    PathOption('VC_TOOLKIT_HOME', 'path to the Visual C++ Toolkit', None),
 	BoolOption('build_dynamic', 'enable dynamic build', 'yes'),
 	BoolOption('build_static', 'enable static build', 'no'),
 	BoolOption('build_fullstatic', 'enable fullstatic build', 'no'),
@@ -96,22 +98,42 @@ opts.AddOptions(
 	BoolOption('with_ldap', 'enable ldap auth support', 'no'))
 
 env = Environment(
-	env = os.environ,
-	options = opts,
-	CPPPATH = Split('#build')
+	options = opts
 )
 
 env.Help(opts.GenerateHelpText(env))
+cpppath = [ '#build/' ]
+libpath = []
+path = []
 
 if env.subst('${CC}') is not '':
 	env['CC'] = env.subst('${CC}')
+
+if env.subst('${VC_TOOLKIT_HOME}') is not '': 
+	cpppath += [ '${VC_TOOLKIT_HOME}/include' ]
+	libpath += [ '${VC_TOOLKIT_HOME}/lib' ]
+	path += [ env.subst('${VC_TOOLKIT_HOME}/bin') ]
+
+if env.subst('${PSDK_HOME}') is not '': 
+	cpppath += [ '${PSDK_HOME}/include' ]
+	libpath += [ '${PSDK_HOME}/lib' ]
+	path += [ env.subst('${PSDK_HOME}/bin') ]
+
+
+## build new environment with a clean PATH
+
+env = Environment(options = opts, ENV = { "PATH" : path})
+
+env.Append(CPPPATH = cpppath)
+env.Append(LIBPATH = libpath)
 
 env['package'] = package
 env['version'] = version
 if env['CC'] == 'gcc':
 	## we need x-open 6 and bsd 4.3 features
 	env.Append(CCFLAGS = Split('-Wall -O2 -g -W -pedantic -Wunused -Wshadow -std=gnu99'))
-
+else:
+    env.Append(CCFLAGS = Split('/Zi /W3'))
 # cache configure checks
 if 1:
 	autoconf = Configure(env, custom_tests = {'CheckStructMember': checkStructMember })
@@ -257,6 +279,9 @@ if re.compile("cygwin|mingw").search(env['PLATFORM']):
 	env.Append(COMMON_LIB = 'bin')
 elif re.compile("darwin|aix").search(env['PLATFORM']):
 	env.Append(COMMON_LIB = 'lib')
+elif re.compile("win32").search(env['PLATFORM']):
+    env['LIBS'] += [ 'wsock32' ]
+    env.Append(COMMON_LIB = False)
 else:
 	env.Append(COMMON_LIB = False)
 
