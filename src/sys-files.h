@@ -41,6 +41,7 @@ struct dirent *readdir(DIR *d);
 void closedir(DIR *d);
 
 buffer *filename_unix2local(buffer *b);
+buffer *pathname_unix2local(buffer *b);
 
 #else
 #include <unistd.h>
@@ -49,6 +50,7 @@ buffer *filename_unix2local(buffer *b);
 #define DIR_SEPERATOR DIR_SEPERATOR_UNIX
 
 #define filename_unix2local(x) (x)
+#define pathname_unix2local(x) (x)
 #endif
 
 #define PATHNAME_APPEND_SLASH(x) \

@@ -33,7 +33,7 @@ void closedir(DIR *d) {
     free(d);
 }
 
-buffer *filename_unix2local(buffer *fn) {
+buffer *pathname_unix2local(buffer *fn) {
     size_t i;
     
     for (i = 0; i < fn->used; i++) {
@@ -42,6 +42,23 @@ buffer *filename_unix2local(buffer *fn) {
         }
     }
     
+    return fn;
+}
+
+buffer *filename_unix2local(buffer *fn) {
+    size_t i;
+    
+    for (i = 0; i < fn->used; i++) {
+        if (fn->ptr[i] == '/') {
+            fn->ptr[i] = '\\';
+        }
+    }
+#if 0    
+    buffer_prepare_append(fn, 4);
+    memmove(fn->ptr + 4, fn->ptr, fn->used);
+    memcpy(fn->ptr, "\\\\?\\", 4);
+    fn->used += 4;
+#endif    
     return fn;
 }
 #endif
