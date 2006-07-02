@@ -1073,7 +1073,7 @@ int config_set_defaults(server *srv) {
 	}
 
 	if (buffer_is_empty(srv->srvconf.changeroot)) {
-        filename_unix2local(s->document_root);
+        pathname_unix2local(s->document_root);
 		if (-1 == stat(s->document_root->ptr, &st1)) {
 			log_error_write(srv, __FILE__, __LINE__, "sbs",
 					"base-docroot doesn't exist:",
