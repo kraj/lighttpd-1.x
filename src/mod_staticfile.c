@@ -14,6 +14,8 @@
 #include "http_chunk.h"
 #include "response.h"
 
+#include "sys-files.h"
+#include "sys-strings.h"
 /**
  * this is a staticfile for a lighttpd plugin
  *

@@ -8,6 +8,7 @@
 #include "buffer.h"
 
 #include "plugin.h"
+#include "sys-strings.h"
 
 /* plugin config for all request/connections */
 typedef struct {

@@ -3,13 +3,10 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#include <dirent.h>
 #include <errno.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <assert.h>
-#include <sys/mman.h>
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -38,6 +35,8 @@
 #include "stream.h"
 #include "stat_cache.h"
 
+#include "sys-files.h"
+#include "sys-mmap.h"
 
 /**
  * this is a webdav for a lighttpd plugin

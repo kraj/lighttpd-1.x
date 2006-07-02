@@ -6,8 +6,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <fcntl.h> /* only the defines on windows */
 #include <errno.h>
 #include <time.h>
 
@@ -22,6 +21,7 @@
 #include "inet_ntop_cache.h"
 
 #include "sys-socket.h"
+#include "sys-files.h"
 
 #ifdef HAVE_SYSLOG_H
 # include <syslog.h>
@@ -517,8 +517,9 @@ SETDEFAULTS_FUNC(log_access_open) {
 
 			return HANDLER_ERROR;
 		}
+#ifndef _WIN32
 		fcntl(s->log_access_fd, F_SETFD, FD_CLOEXEC);
-
+#endif
 	}
 
 	return HANDLER_GO_ON;

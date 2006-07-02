@@ -5,12 +5,14 @@
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
 
 #include "plugin.h"
 #include "http_auth.h"
 #include "log.h"
 #include "response.h"
+
+#include "sys-strings.h"
+#include "sys-files.h"
 
 handler_t auth_ldap_init(server *srv, mod_auth_plugin_config *s);
 

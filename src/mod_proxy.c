@@ -1,6 +1,5 @@
 #include <sys/types.h>
 
-#include <unistd.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <string.h>
@@ -31,6 +30,8 @@
 #endif
 
 #include "sys-socket.h"
+#include "sys-files.h"
+#include "sys-strings.h"
 
 #define data_proxy data_fastcgi
 #define data_proxy_init data_fastcgi_init

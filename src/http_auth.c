@@ -22,7 +22,6 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
-#include <unistd.h>
 #include <ctype.h>
 
 #include "server.h"
@@ -30,6 +29,8 @@
 #include "http_auth.h"
 #include "http_auth_digest.h"
 #include "stream.h"
+
+#include "sys-strings.h"
 
 #ifdef USE_OPENSSL
 # include <openssl/md5.h>

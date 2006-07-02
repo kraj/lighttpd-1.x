@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <unistd.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <assert.h>
@@ -25,19 +24,8 @@
 #endif
 
 #include "sys-mmap.h"
-
-/* NetBSD 1.3.x needs it */
-#ifndef MAP_FAILED
-# define MAP_FAILED -1
-#endif
-
-#ifndef O_LARGEFILE
-# define O_LARGEFILE 0
-#endif
-
-#ifndef HAVE_LSTAT
-#define lstat stat
-#endif
+#include "sys-files.h"
+#include "sys-strings.h"
 
 #if 0
 /* enables debug code for testing if all nodes in the stat-cache as accessable */
