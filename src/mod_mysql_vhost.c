@@ -1,8 +1,7 @@
-#include <unistd.h>
 #include <stdio.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <strings.h>
+#include <string.h>
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
