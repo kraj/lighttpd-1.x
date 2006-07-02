@@ -190,7 +190,6 @@ static void dump_packet(const unsigned char *data, size_t len) {
 
 static network_status_t connection_handle_read(server *srv, connection *con) {
 	off_t oldlen, newlen;
-    fprintf(stderr, "%s.%d: goign to read from fd %d\r\n", __FILE__, __LINE__, con->fd);
     
     oldlen = chunkqueue_length(con->read_queue);
     
@@ -220,8 +219,6 @@ static network_status_t connection_handle_read(server *srv, connection *con) {
     newlen = chunkqueue_length(con->read_queue);
 
 	con->bytes_read += (newlen - oldlen);
-    
-    fprintf(stderr, "%s.%d: %ld\r\n", __FILE__, __LINE__, con->bytes_read);
 
 	return NETWORK_STATUS_SUCCESS;
 }
@@ -746,10 +743,13 @@ int connection_handle_read_state(server *srv, connection *con)  {
 			 * if we still have content, handle it, if not leave here */
 
 			if (cq->first == cq->last &&
-			    cq->first->mem->used == 0) {
+                (NULL == cq->first ||
+			    cq->first->mem->used == 0)) {
 
 				/* conn-closed, leave here */
 				connection_set_state(srv, con, CON_STATE_ERROR);
+    
+                return 0;
 			}
 		default:
 			break;
@@ -819,8 +819,6 @@ int connection_handle_read_state(server *srv, connection *con)  {
 
 				/* the buffer has been read up to the terminator */
 				c->offset += h_term - b.ptr + 4;
-                
-    fprintf(stderr, "%s.%d: found request header\r\n", __FILE__, __LINE__);
 
 			} else {
 				/* not found, copy everything */
