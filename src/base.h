@@ -25,7 +25,6 @@
 #include "sys-socket.h"
 #include "splaytree.h"
 
-
 #if defined HAVE_LIBSSL && defined HAVE_OPENSSL_SSL_H
 # define USE_OPENSSL
 # include <openssl/ssl.h>
@@ -436,6 +435,15 @@ typedef struct {
 	size_t size;
 } buffer_plugin;
 
+typedef enum {
+    NETWORK_STATUS_UNSET,
+    NETWORK_STATUS_SUCCESS,
+    NETWORK_STATUS_FATAL_ERROR,
+    NETWORK_STATUS_CONNECTION_CLOSE,
+    NETWORK_STATUS_WAIT_FOR_EVENT,
+    NETWORK_STATUS_INTERRUPTED
+} network_status_t;
+
 typedef struct {
 	unsigned short port;
 	buffer *bindhost;
@@ -588,11 +596,11 @@ typedef struct server {
 
 	fdevent_handler_t event_handler;
 
-	int (* network_backend_write)(struct server *srv, connection *con, int fd, chunkqueue *cq);
-	int (* network_backend_read)(struct server *srv, connection *con, int fd, chunkqueue *cq);
+	network_status_t (* network_backend_write)(struct server *srv, connection *con, int fd, chunkqueue *cq);
+	network_status_t (* network_backend_read)(struct server *srv, connection *con, int fd, chunkqueue *cq);
 #ifdef USE_OPENSSL
-	int (* network_ssl_backend_write)(struct server *srv, connection *con, SSL *ssl, chunkqueue *cq);
-	int (* network_ssl_backend_read)(struct server *srv, connection *con, SSL *ssl, chunkqueue *cq);
+	network_status_t (* network_ssl_backend_write)(struct server *srv, connection *con, SSL *ssl, chunkqueue *cq);
+	network_status_t (* network_ssl_backend_read)(struct server *srv, connection *con, SSL *ssl, chunkqueue *cq);
 #endif
 
 #ifdef HAVE_PWD_H

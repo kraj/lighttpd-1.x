@@ -188,151 +188,42 @@ static void dump_packet(const unsigned char *data, size_t len) {
 }
 #endif
 
-static int connection_handle_read(server *srv, connection *con) {
-	int len;
-	buffer *b;
-	int toread;
-#ifdef USE_OPENSSL
-	server_socket *srv_sock = con->srv_socket;
-#endif
+static network_status_t connection_handle_read(server *srv, connection *con) {
+	off_t oldlen, newlen;
+    fprintf(stderr, "%s.%d: goign to read from fd %d\r\n", __FILE__, __LINE__, con->fd);
+    
+    oldlen = chunkqueue_length(con->read_queue);
+    
+    switch(network_read_chunkqueue(srv, con, con->read_queue)) {
+    case NETWORK_STATUS_SUCCESS:
+        break;
+    case NETWORK_STATUS_WAIT_FOR_EVENT:
+        con->is_readable = 0;
+        return NETWORK_STATUS_WAIT_FOR_EVENT;
+    case NETWORK_STATUS_INTERRUPTED:
+        con->is_readable = 1;
+        return NETWORK_STATUS_WAIT_FOR_EVENT;
+    case NETWORK_STATUS_CONNECTION_CLOSE:
+        /* pipelining */
+        con->is_readable = 0;
+        return NETWORK_STATUS_CONNECTION_CLOSE;
+    case NETWORK_STATUS_FATAL_ERROR:
+        con->is_readable = 0;
+    
+        connection_set_state(srv, con, CON_STATE_ERROR);
+        return NETWORK_STATUS_FATAL_ERROR;
+    default:
+        SEGFAULT();
+        break;
+    }
+        
+    newlen = chunkqueue_length(con->read_queue);
 
-	b = chunkqueue_get_append_buffer(con->read_queue);
+	con->bytes_read += (newlen - oldlen);
+    
+    fprintf(stderr, "%s.%d: %ld\r\n", __FILE__, __LINE__, con->bytes_read);
 
-#ifdef USE_OPENSSL
-	if (srv_sock->is_ssl) {
-		buffer_prepare_copy(b, 4096);
-		len = SSL_read(con->ssl, b->ptr, b->size - 1);
-	} else {
-		if (ioctl(con->fd, FIONREAD, &toread)) {
-			log_error_write(srv, __FILE__, __LINE__, "sd",
-					"unexpected end-of-file:",
-					con->fd);
-			return -1;
-		}
-		buffer_prepare_copy(b, toread);
-		len = read(con->fd, b->ptr, b->size - 1);
-	}
-#elif defined(_WIN32)
-	buffer_prepare_copy(b, 4096);
-	len = recv(con->fd, b->ptr, b->size - 1, 0);
-    errno = WSAGetLastError();
-#else
-	if (ioctl(con->fd, FIONREAD, &toread)) {
-		log_error_write(srv, __FILE__, __LINE__, "sd",
-				"unexpected end-of-file:",
-				con->fd);
-		return -1;
-	}
-	buffer_prepare_copy(b, toread);
-	len = read(con->fd, b->ptr, b->size - 1);
-#endif
-
-	if (len < 0) {
-		con->is_readable = 0;
-
-#ifdef USE_OPENSSL
-		if (srv_sock->is_ssl) {
-			int r, ssl_err;
-
-			switch ((r = SSL_get_error(con->ssl, len))) {
-			case SSL_ERROR_WANT_READ:
-				return 0;
-			case SSL_ERROR_SYSCALL:
-				/**
-				 * man SSL_get_error()
-				 *
-				 * SSL_ERROR_SYSCALL
-				 *   Some I/O error occurred.  The OpenSSL error queue may contain more
-				 *   information on the error.  If the error queue is empty (i.e.
-				 *   ERR_get_error() returns 0), ret can be used to find out more about
-				 *   the error: If ret == 0, an EOF was observed that violates the
-				 *   protocol.  If ret == -1, the underlying BIO reported an I/O error
-				 *   (for socket I/O on Unix systems, consult errno for details).
-				 *
-				 */
-				while((ssl_err = ERR_get_error())) {
-					/* get all errors from the error-queue */
-					log_error_write(srv, __FILE__, __LINE__, "sds", "SSL:",
-							r, ERR_error_string(ssl_err, NULL));
-				}
-
-				switch(errno) {
-				default:
-					log_error_write(srv, __FILE__, __LINE__, "sddds", "SSL:",
-							len, r, errno,
-							strerror(errno));
-					break;
-				}
-
-				break;
-			case SSL_ERROR_ZERO_RETURN:
-				/* clean shutdown on the remote side */
-
-				if (r == 0) {
-					/* FIXME: later */
-				}
-
-				/* fall thourgh */
-			default:
-				while((ssl_err = ERR_get_error())) {
-					/* get all errors from the error-queue */
-					log_error_write(srv, __FILE__, __LINE__, "sds", "SSL:",
-							r, ERR_error_string(ssl_err, NULL));
-				}
-				break;
-			}
-		} else {
-			if (errno == EAGAIN) return 0;
-			if (errno == EINTR) {
-				/* we have been interrupted before we could read */
-				con->is_readable = 1;
-				return 0;
-			}
-
-			if (errno != ECONNRESET) {
-				/* expected for keep-alive */
-				log_error_write(srv, __FILE__, __LINE__, "ssd", "connection closed - read failed: ", strerror(errno), errno);
-			}
-		}
-#else
-		if (errno == EAGAIN) return 0;
-        if (errno == EWOULDBLOCK) return 0;
-		if (errno == EINTR) {
-			/* we have been interrupted before we could read */
-			con->is_readable = 1;
-			return 0;
-		}
-
-		if (errno != ECONNRESET) {
-			/* expected for keep-alive */
-			log_error_write(srv, __FILE__, __LINE__, "ssdd", "connection closed - read failed: ", strerror(errno), con->fd, errno);
-		}
-#endif
-		connection_set_state(srv, con, CON_STATE_ERROR);
-
-		return -1;
-	} else if (len == 0) {
-		con->is_readable = 0;
-		/* the other end close the connection -> KEEP-ALIVE */
-
-		/* pipelining */
-
-		return -2;
-	} else if ((size_t)len < b->size - 1) {
-		/* we got less then expected, wait for the next fd-event */
-
-		con->is_readable = 0;
-	}
-
-	b->used = len;
-	b->ptr[b->used++] = '\0';
-
-	con->bytes_read += len;
-#if 0
-	dump_packet(b->ptr, len);
-#endif
-
-	return 0;
+	return NETWORK_STATUS_SUCCESS;
 }
 
 static int connection_handle_write_prepare(server *srv, connection *con) {
@@ -532,24 +423,24 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 }
 
 static int connection_handle_write(server *srv, connection *con) {
-	switch(network_write_chunkqueue(srv, con, con->write_queue)) {
-	case 0:
+    switch(network_write_chunkqueue(srv, con, con->write_queue)) {
+	case NETWORK_STATUS_SUCCESS:
 		if (con->file_finished) {
 			connection_set_state(srv, con, CON_STATE_RESPONSE_END);
 			joblist_append(srv, con);
 		}
 		break;
-	case -1: /* error on our side */
+	case NETWORK_STATUS_FATAL_ERROR: /* error on our side */
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"connection closed: write failed on fd", con->fd);
 		connection_set_state(srv, con, CON_STATE_ERROR);
 		joblist_append(srv, con);
 		break;
-	case -2: /* remote close */
+	case NETWORK_STATUS_CONNECTION_CLOSE: /* remote close */
 		connection_set_state(srv, con, CON_STATE_ERROR);
 		joblist_append(srv, con);
 		break;
-	case 1:
+	case NETWORK_STATUS_WAIT_FOR_EVENT:
 		con->is_writable = 0;
 
 		/* not finished yet -> WRITE */
@@ -558,8 +449,6 @@ static int connection_handle_write(server *srv, connection *con) {
 
 	return 0;
 }
-
-
 
 connection *connection_init(server *srv) {
 	connection *con;
@@ -850,9 +739,9 @@ int connection_handle_read_state(server *srv, connection *con)  {
 		con->read_idle_ts = srv->cur_ts;
 
 		switch(connection_handle_read(srv, con)) {
-		case -1:
+		case NETWORK_STATUS_FATAL_ERROR:
 			return -1;
-		case -2:
+		case NETWORK_STATUS_CONNECTION_CLOSE:
 			/* remote side closed the connection
 			 * if we still have content, handle it, if not leave here */
 
@@ -918,7 +807,7 @@ int connection_handle_read_state(server *srv, connection *con)  {
 
 			b.ptr = c->mem->ptr + c->offset;
 			b.used = c->mem->used - c->offset;
-
+            
 			if (NULL != (h_term = buffer_search_rnrn(&b))) {
 				/* \r\n\r\n found
 				 * - copy everything incl. the terminator to request.request
@@ -930,6 +819,9 @@ int connection_handle_read_state(server *srv, connection *con)  {
 
 				/* the buffer has been read up to the terminator */
 				c->offset += h_term - b.ptr + 4;
+                
+    fprintf(stderr, "%s.%d: found request header\r\n", __FILE__, __LINE__);
+
 			} else {
 				/* not found, copy everything */
 				buffer_copy_string_len(con->request.request, c->mem->ptr + c->offset, c->mem->used - c->offset - 1);

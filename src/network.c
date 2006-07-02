@@ -609,23 +609,20 @@ int network_register_fdevents(server *srv) {
 	return 0;
 }
 
-int network_read_chunkqueue(server *srv, connection *con, chunkqueue *cq) {
-    int ret;
+network_status_t network_read_chunkqueue(server *srv, connection *con, chunkqueue *cq) {
     server_socket *srv_socket = con->srv_socket;
 
    	if (srv_socket->is_ssl) {
 #ifdef USE_OPENSSL
-		ret = srv->network_ssl_backend_read(srv, con, con->ssl, cq);
+		return srv->network_ssl_backend_read(srv, con, con->ssl, cq);
 #endif
 	} else {
-		ret = srv->network_backend_read(srv, con, con->fd, cq);
+		return srv->network_backend_read(srv, con, con->fd, cq);
 	}
-
-    return ret;
 }
 
-int network_write_chunkqueue(server *srv, connection *con, chunkqueue *cq) {
-	int ret = -1;
+network_status_t network_write_chunkqueue(server *srv, connection *con, chunkqueue *cq) {
+	network_status_t ret = NETWORK_STATUS_UNSET;
 	off_t written = 0;
 #ifdef TCP_CORK
 	int corked = 0;
@@ -662,9 +659,14 @@ int network_write_chunkqueue(server *srv, connection *con, chunkqueue *cq) {
 		ret = srv->network_backend_write(srv, con, con->fd, cq);
 	}
 
-	if (ret >= 0) {
+    switch (ret) {
+    case NETWORK_STATUS_WAIT_FOR_EVENT:
+    case NETWORK_STATUS_SUCCESS:
 		chunkqueue_remove_finished_chunks(cq);
-		ret = chunkqueue_is_empty(cq) ? 0 : 1;
+
+        break;        
+    default:
+        break;
 	}
 
 #ifdef TCP_CORK

@@ -54,11 +54,12 @@
 #endif
 
 #include "base.h"
+#include "network.h"
 
 #define NETWORK_BACKEND_WRITE(x) \
-    int network_write_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
+    network_status_t network_write_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
 #define NETWORK_BACKEND_READ(x) \
-    int network_read_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
+    network_status_t network_read_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
 
 NETWORK_BACKEND_WRITE(write);
 NETWORK_BACKEND_WRITE(send);
@@ -72,8 +73,8 @@ NETWORK_BACKEND_READ(recv);
 
 #ifdef USE_OPENSSL
 #define NETWORK_BACKEND_SSL(x) \
-    int network_write_chunkqueue_#x(server *srv, connection *con, SSL *ssl, chunkqueue *cq); \
-    int network_read_chunkqueue_#x(server *srv, connection *con, SSL *ssl, chunkqueue *cq)
+    network_status_t network_write_chunkqueue_#x(server *srv, connection *con, SSL *ssl, chunkqueue *cq); \
+    network_status_t network_read_chunkqueue_#x(server *srv, connection *con, SSL *ssl, chunkqueue *cq)
 
 NETWORK_BACKEND_SSL(openssl);
 #endif

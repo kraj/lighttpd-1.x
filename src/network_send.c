@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <stdio.h>
 
 #include "network.h"
 #include "fdevent.h"
@@ -25,29 +26,24 @@
 * as vectors
 */
 
-typedef enum {
-    NETWORK_STATUS_UNSET,
-    NETWORK_STATUS_SUCCESS,
-    NETWORK_STATUS_FATAL_ERROR,
-    NETWORK_STATUS_CONNECTION_CLOSE,
-    NETWORK_STATUS_WAIT_FOR_EVENT,
-    NETWORK_STATUS_INTERRUPTED
-} network_status_t;
-
 NETWORK_BACKEND_READ(recv) {
-    int toread;
+    int toread = 0;
     buffer *b;
     int r;
-    
+    fprintf(stderr, "%s.%d: fd = %d\r\n", __FILE__, __LINE__, fd);
+
 	/* check how much we have to read */
-	if (ioctl(fd, FIONREAD, &toread)) {
+	if (ioctlsocket(fd, FIONREAD, &toread)) {
+    fprintf(stderr, "%s.%d\r\n", __FILE__, __LINE__);
+
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"ioctl failed: ",
 				fd);
 		return NETWORK_STATUS_FATAL_ERROR;
 	}
+    fprintf(stderr, "%s.%d: toread = %d\r\n", __FILE__, __LINE__, toread);
 
-	if (toread == 0) return NETWORK_STATUS_CONNECTION_CLOSE;
+	if (toread == 0) return NETWORK_STATUS_WAIT_FOR_EVENT;
         
     /*
     * our chunk queue is quiet large already
@@ -57,9 +53,10 @@ NETWORK_BACKEND_READ(recv) {
     
     b = chunkqueue_get_append_buffer(cq);
     
-    buffer_prepare_copy(b, toread);
+    buffer_prepare_copy(b, toread + 1);
 
-    r = recv(fd, b->ptr + b->used - 1, toread, 0);
+    r = recv(fd, b->ptr, toread, 0);
+    fprintf(stderr, "%s.%d\r\n", __FILE__, __LINE__);
     
     /* something went wrong */
     if (r < 0) {
@@ -78,13 +75,15 @@ NETWORK_BACKEND_READ(recv) {
                 "connection closed - read failed: ", 
                 strerror(errno), con->fd, errno);
 		}
+    fprintf(stderr, "%s.%d\r\n", __FILE__, __LINE__);
         
         return NETWORK_STATUS_FATAL_ERROR;
     }
 	/* this should be catched by the b > 0 above */
 	assert(r);
-	b->used += r;
+	b->used += r + 1;
 	b->ptr[b->used - 1] = '\0';
+    fprintf(stderr, "%s.%d: read = %d\r\n", __FILE__, __LINE__, r);
 
     return NETWORK_STATUS_SUCCESS;
 }
@@ -113,7 +112,7 @@ NETWORK_BACKEND_WRITE(send) {
 			if ((r = send(fd, offset, toSend, 0)) < 0) {
 				log_error_write(srv, __FILE__, __LINE__, "ssd", "write failed: ", strerror(errno), fd);
 
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 
 			c->offset += r;
@@ -126,73 +125,77 @@ NETWORK_BACKEND_WRITE(send) {
 			break;
 		}
 		case FILE_CHUNK: {
-#ifdef USE_MMAP
-			char *p = NULL;
-#endif
 			ssize_t r;
 			off_t offset;
-			size_t toSend;
+			
 			stat_cache_entry *sce = NULL;
-			int ifd;
-
+			
 			if (HANDLER_ERROR == stat_cache_get_entry(srv, con, c->file.name, &sce)) {
 				log_error_write(srv, __FILE__, __LINE__, "sb",
 						strerror(errno), c->file.name);
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 
 			offset = c->file.start + c->offset;
-			toSend = c->file.length - c->offset;
-
+			
 			if (offset > sce->st.st_size) {
 				log_error_write(srv, __FILE__, __LINE__, "sb", "file was shrinked:", c->file.name);
 
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 
-			if (-1 == (ifd = open(c->file.name->ptr, O_RDONLY))) {
-				log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
+            
+            if (-1 == c->file.fd) {
+                fprintf(stderr, "%s.%d: opening file: %s\r\n", __FILE__, __LINE__, c->file.name->ptr);
+			    if (-1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY|O_BINARY|O_SEQUENTIAL))) {
+				    log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
 
-				return -1;
-			}
+				    return NETWORK_STATUS_FATAL_ERROR;
+			    }
+            }
+            
+            if (-1 == lseek(c->file.fd, offset, SEEK_SET)) {
+                log_error_write(srv, __FILE__, __LINE__, "ss", "lseek failed: ", strerror(errno));
+            }
+            
+            while(1) {
+                off_t haveRead = 0;
+                int toSend;
+                
+                /* only send 64k blocks */            
+                toSend = c->file.length - c->offset > 128 * 1024 ? 128 * 1024 : c->file.length - c->offset;
 
-#if defined USE_MMAP
-			if (MAP_FAILED == (p = mmap(0, sce->st.st_size, PROT_READ, MAP_SHARED, ifd, 0))) {
-				log_error_write(srv, __FILE__, __LINE__, "ss", "mmap failed: ", strerror(errno));
+		    	buffer_prepare_copy(srv->tmp_buf, toSend);
 
-				close(ifd);
+			    if (-1 == (haveRead = read(c->file.fd, srv->tmp_buf->ptr, toSend))) {
+				    log_error_write(srv, __FILE__, __LINE__, "ss", "read from file: ", strerror(errno));
+				    
 
-				return -1;
-			}
-			close(ifd);
+				    return NETWORK_STATUS_FATAL_ERROR;
+			    }
 
-			if ((r = write(fd, p + offset, toSend)) <= 0) {
-				log_error_write(srv, __FILE__, __LINE__, "ss", "write failed: ", strerror(errno));
-				munmap(p, sce->st.st_size);
-				return -1;
-			}
+			    if (-1 == (r = send(fd, srv->tmp_buf->ptr, haveRead, 0))) {
+                    errno = WSAGetLastError();
+                    
+                    switch(errno) {
+                    case WSAEWOULDBLOCK:
+                        return NETWORK_STATUS_WAIT_FOR_EVENT;
+                    case WSAECONNRESET:
+                        return NETWORK_STATUS_CONNECTION_CLOSE;
+                    default:
+				        log_error_write(srv, __FILE__, __LINE__, "sd", "send to socket:", errno);
 
-			munmap(p, sce->st.st_size);
-#else
-			buffer_prepare_copy(srv->tmp_buf, toSend);
+	    			    return NETWORK_STATUS_FATAL_ERROR;
+                    }
+		    	}
 
-			lseek(ifd, offset, SEEK_SET);
-			if (-1 == (toSend = read(ifd, srv->tmp_buf->ptr, toSend))) {
-				log_error_write(srv, __FILE__, __LINE__, "ss", "read: ", strerror(errno));
-				close(ifd);
-
-				return -1;
-			}
-			close(ifd);
-
-			if (-1 == (r = send(fd, srv->tmp_buf->ptr, toSend, 0))) {
-				log_error_write(srv, __FILE__, __LINE__, "ss", "write: ", strerror(errno));
-
-				return -1;
-			}
-#endif
-			c->offset += r;
-			cq->bytes_out += r;
+       			c->offset += r;
+    			cq->bytes_out += r;
+                
+                if (r != haveRead) {
+                    break;
+                }                    
+            }
 
 			if (c->offset == c->file.length) {
 				chunk_finished = 1;
@@ -204,19 +207,21 @@ NETWORK_BACKEND_WRITE(send) {
 
 			log_error_write(srv, __FILE__, __LINE__, "ds", c, "type not known");
 
-			return -1;
+			return NETWORK_STATUS_FATAL_ERROR;
 		}
 
 		if (!chunk_finished) {
 			/* not finished yet */
+    fprintf(stderr, "%s.%d: last chunk is not finished, wait for the next event\r\n", __FILE__, __LINE__);
 
-			break;
+			return NETWORK_STATUS_WAIT_FOR_EVENT;
 		}
 
 		chunks_written++;
 	}
+    fprintf(stderr, "%s.%d: chunks_written: %d\r\n", __FILE__, __LINE__, chunks_written);
 
-	return chunks_written;
+	return NETWORK_STATUS_SUCCESS;
 }
 
 #endif
