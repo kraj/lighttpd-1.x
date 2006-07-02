@@ -24,6 +24,7 @@
 #include "sys-mmap.h"
 #include "sys-socket.h"
 #include "sys-strings.h"
+#include "sys-process.h"
 
 #ifdef HAVE_SYS_FILIO_H
 # include <sys/filio.h>

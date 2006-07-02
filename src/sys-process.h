@@ -5,7 +5,9 @@
 #include <process.h>
 #define pid_t int
 #else
+#include <sys/wait.h>
 #include <unistd.h>
 #endif
 
 #endif
+

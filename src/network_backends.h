@@ -59,10 +59,15 @@
 #include "base.h"
 #include "network.h"
 
+#define NETWORK_BACKEND_WRITE_CHUNK(x) \
+    network_status_t network_write_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq, chunk **rc)
+
 #define NETWORK_BACKEND_WRITE(x) \
     network_status_t network_write_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
 #define NETWORK_BACKEND_READ(x) \
     network_status_t network_read_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)
+
+NETWORK_BACKEND_WRITE_CHUNK(writev_mem);
 
 NETWORK_BACKEND_WRITE(write);
 NETWORK_BACKEND_WRITE(writev);
@@ -77,11 +82,13 @@ NETWORK_BACKEND_READ(read);
 NETWORK_BACKEND_READ(win32recv);
 
 #ifdef USE_OPENSSL
-#define NETWORK_BACKEND_SSL(x) \
-    network_status_t network_write_chunkqueue_#x(server *srv, connection *con, SSL *ssl, chunkqueue *cq); \
-    network_status_t network_read_chunkqueue_#x(server *srv, connection *con, SSL *ssl, chunkqueue *cq)
+#define NETWORK_BACKEND_WRITE_SSL(x) \
+    network_status_t network_write_chunkqueue_##x(server *srv, connection *con, SSL *ssl, chunkqueue *cq)
+#define NETWORK_BACKEND_READ_SSL(x) \
+    network_status_t network_read_chunkqueue_##x(server *srv, connection *con, SSL *ssl, chunkqueue *cq)
 
-NETWORK_BACKEND_SSL(openssl);
+NETWORK_BACKEND_WRITE_SSL(openssl);
+NETWORK_BACKEND_READ_SSL(openssl);
 #endif
 
 #endif

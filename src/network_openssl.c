@@ -26,70 +26,72 @@
 # include <openssl/ssl.h>
 # include <openssl/err.h>
 
-int network_read_chunkqueue_openssl(server *srv, connection *con, SSL *ssl, chunkqueue *cq) {
+NETWORK_BACKEND_READ_SSL(openssl) {
 	server_socket *srv_sock = con->srv_socket;
 	int r, ssl_err;
+	buffer *b;
+	off_t len;
 
-	if (!srv_sock->is_ssl) {
-        return network_read_chunkqueue_read(srv, con, ssl->fd, cq);
-    }
-    
-    b = chunkqueue_get_append_buffer(con->read_queue);
+	b = chunkqueue_get_append_buffer(con->read_queue);
 	buffer_prepare_copy(b, 4096);
 	len = SSL_read(con->ssl, b->ptr, b->size - 1);
 
-    if (len < 0) {
-    	switch ((r = SSL_get_error(con->ssl, len))) {
-			case SSL_ERROR_WANT_READ:
-				return 0;
-			case SSL_ERROR_SYSCALL:
-				/**
-				 * man SSL_get_error()
-				 *
-				 * SSL_ERROR_SYSCALL
-				 *   Some I/O error occurred.  The OpenSSL error queue may contain more
-				 *   information on the error.  If the error queue is empty (i.e.
-				 *   ERR_get_error() returns 0), ret can be used to find out more about
-				 *   the error: If ret == 0, an EOF was observed that violates the
-				 *   protocol.  If ret == -1, the underlying BIO reported an I/O error
-				 *   (for socket I/O on Unix systems, consult errno for details).
-				 *
-				 */
-				while((ssl_err = ERR_get_error())) {
-					/* get all errors from the error-queue */
-					log_error_write(srv, __FILE__, __LINE__, "sds", "SSL:",
-							r, ERR_error_string(ssl_err, NULL));
-				}
+	if (len < 0) {
+		switch ((r = SSL_get_error(con->ssl, len))) {
+		case SSL_ERROR_WANT_READ:
+			return NETWORK_STATUS_WAIT_FOR_EVENT;
+		case SSL_ERROR_SYSCALL:
+			/**
+			 * man SSL_get_error()
+			 *
+			 * SSL_ERROR_SYSCALL
+			 *   Some I/O error occurred.  The OpenSSL error queue may contain more
+			 *   information on the error.  If the error queue is empty (i.e.
+			 *   ERR_get_error() returns 0), ret can be used to find out more about
+			 *   the error: If ret == 0, an EOF was observed that violates the
+			 *   protocol.  If ret == -1, the underlying BIO reported an I/O error
+			 *   (for socket I/O on Unix systems, consult errno for details).
+			 *
+			 */
+			while((ssl_err = ERR_get_error())) {
+				/* get all errors from the error-queue */
+				log_error_write(srv, __FILE__, __LINE__, "sds", "SSL:",
+						r, ERR_error_string(ssl_err, NULL));
+			}
 
-				switch(errno) {
-				default:
-					log_error_write(srv, __FILE__, __LINE__, "sddds", "SSL:",
-							len, r, errno,
-							strerror(errno));
-					break;
-				}
-
-				break;
-			case SSL_ERROR_ZERO_RETURN:
-				/* clean shutdown on the remote side */
-
-				if (r == 0) {
-					/* FIXME: later */
-				}
-
-				/* fall thourgh */
+			switch(errno) {
 			default:
-				while((ssl_err = ERR_get_error())) {
-					/* get all errors from the error-queue */
-					log_error_write(srv, __FILE__, __LINE__, "sds", "SSL:",
-							r, ERR_error_string(ssl_err, NULL));
-				}
+				log_error_write(srv, __FILE__, __LINE__, "sddds", "SSL:",
+						len, r, errno,
+						strerror(errno));
 				break;
 			}
-    }
+
+			break;
+		case SSL_ERROR_ZERO_RETURN:
+			/* clean shutdown on the remote side */
+
+			if (r == 0) {
+				/* FIXME: later */
+			}
+
+			/* fall thourgh */
+		default:
+			while((ssl_err = ERR_get_error())) {
+				/* get all errors from the error-queue */
+				log_error_write(srv, __FILE__, __LINE__, "sds", "SSL:",
+						r, ERR_error_string(ssl_err, NULL));
+			}
+			break;
+		}
+	}
+
+
+	return NETWORK_STATUS_SUCCESS;
 }
 
-int network_write_chunkqueue_openssl(server *srv, connection *con, SSL *ssl, chunkqueue *cq) {
+
+NETWORK_BACKEND_WRITE_SSL(openssl) {
 	int ssl_r;
 	chunk *c;
 	size_t chunks_written = 0;

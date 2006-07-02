@@ -27,7 +27,10 @@
 #include "plugin.h"
 #include "joblist.h"
 #include "network_backends.h"
-#undef HAVE_GETOPT_H
+#ifdef _WIN32
+/* use local getopt implementation */
+# undef HAVE_GETOPT_H
+#endif
 #ifdef HAVE_GETOPT_H
 #include <getopt.h>
 #else
@@ -452,7 +455,9 @@ int main (int argc, char **argv, char **envp) {
 	int num_childs = 0;
 	int pid_fd = -1, fd;
 	size_t i;
-    char *optarg = NULL;
+#ifdef _WIN32
+	char *optarg = NULL;
+#endif
 
 #ifdef HAVE_SIGACTION
 	struct sigaction act;
@@ -493,11 +498,10 @@ int main (int argc, char **argv, char **envp) {
 		switch(o) {
 		case 'f':
 #ifdef _WIN32
-            /* evil HACK for windows, optarg is not set */
-            optarg = argv[optind-1];
+			/* evil HACK for windows, optarg is not set */
+			optarg = argv[optind-1];
 #endif
 			if (config_read(srv, optarg)) {
-                fprintf(stderr, "%s.%d\r\n", __FILE__, __LINE__);
 				server_free(srv);
 				return -1;
 			}

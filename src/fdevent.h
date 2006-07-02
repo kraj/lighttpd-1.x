@@ -31,7 +31,9 @@
 #  include <signal.h>
 # endif
 #endif
-#define HAVE_SELECT
+#ifdef _WIN32
+# define HAVE_SELECT
+#endif
 #if defined HAVE_SELECT
 # ifdef _WIN32
 #  include <winsock2.h>

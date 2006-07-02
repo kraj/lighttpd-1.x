@@ -25,7 +25,10 @@ common_src = Split("buffer.c log.c \
 ")
       
 src = Split("server.c response.c connections.c network.c sys-socket.c sys-files.c\
-      configfile.c configparser.c request.c proc_open.c getopt.c")
+      configfile.c configparser.c request.c proc_open.c")
+
+if re.compile("win32").search(env['PLATFORM']):
+	src += [ 'getopt.c' ]
 
 lemon = env.Program('lemon', 'lemon.c')
 def lemonemitter(target, source, env):
@@ -44,7 +47,10 @@ def lemonemitter(target, source, env):
 	env.Depends(target, lemon)
 	return (target, source)
 
-lemoncmd = '..\\' + lemon[0].path + ' -q ..\\$SOURCE ..\\src\\lempar.c || (del ..\\${TARGETS[0]} ..\\${TARGETS[1]} && exit 1)'
+if re.compile("win32").search(env['PLATFORM']):
+	lemoncmd = '..\\' + lemon[0].path + ' -q ..\\$SOURCE ..\\src\\lempar.c || (del ..\\${TARGETS[0]} ..\\${TARGETS[1]} && exit 1)'
+else:
+	lemoncmd = '../' + lemon[0].path + ' -q ../$SOURCE ../src/lempar.c || (rm ../${TARGETS[0]} ../${TARGETS[1]} && exit 1)'
 lemonbuilder = Builder(action=lemoncmd, chdir=1, emitter=lemonemitter, suffix='c')
 env.Append(BUILDERS = {'Lemon': lemonbuilder})
 

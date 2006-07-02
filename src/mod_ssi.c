@@ -23,6 +23,7 @@
 
 #include "sys-socket.h"
 #include "sys-strings.h"
+#include "sys-files.h"
 
 #ifdef HAVE_PWD_H
 #include <pwd.h>

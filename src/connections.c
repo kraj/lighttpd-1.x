@@ -442,6 +442,11 @@ static int connection_handle_write(server *srv, connection *con) {
 
 		/* not finished yet -> WRITE */
 		break;
+	case NETWORK_STATUS_INTERRUPTED:
+		con->is_writable = 1;
+		break;
+	case NETWORK_STATUS_UNSET:
+		break;
 	}
 
 	return 0;

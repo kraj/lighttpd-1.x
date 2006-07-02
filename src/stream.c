@@ -9,6 +9,7 @@
 #endif
 
 #include "sys-mmap.h"
+#include "sys-files.h"
 
 #ifndef O_BINARY
 # define O_BINARY 0

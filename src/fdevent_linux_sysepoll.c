@@ -11,6 +11,8 @@
 #include "settings.h"
 #include "buffer.h"
 
+#include "sys-files.h"
+
 #ifdef USE_LINUX_EPOLL
 static void fdevent_linux_sysepoll_free(fdevents *ev) {
 	close(ev->epoll_fd);

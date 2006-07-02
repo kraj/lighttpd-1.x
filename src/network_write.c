@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "network.h"
 #include "fdevent.h"
@@ -35,16 +36,17 @@
 NETWORK_BACKEND_READ(read) {
     int toread;
     buffer *b;
+    off_t r;
     
 	/* check how much we have to read */
 	if (ioctl(fd, FIONREAD, &toread)) {
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"ioctl failed: ",
 				fd);
-		return -1;
+		return NETWORK_STATUS_FATAL_ERROR;
 	}
 
-	if (toread == 0) return 0;
+	if (toread == 0) return NETWORK_STATUS_CONNECTION_CLOSE;
         
     /*
     * our chunk queue is quiet large already
@@ -60,7 +62,7 @@ NETWORK_BACKEND_READ(read) {
 		log_error_write(srv, __FILE__, __LINE__, "sds",
 				"unexpected end-of-file (perhaps the proxy process died):",
 				fd, strerror(errno));
-		return -1;
+		return NETWORK_STATUS_FATAL_ERROR;
 	}
 
 	/* this should be catched by the b > 0 above */
@@ -68,10 +70,10 @@ NETWORK_BACKEND_READ(read) {
 	b->used += r;
 	b->ptr[b->used - 1] = '\0';
 
-    return 0;
+    return NETWORK_STATUS_SUCCESS;
 }
 
-int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqueue *cq) {
+NETWORK_BACKEND_WRITE(write) {
 	chunk *c;
 	size_t chunks_written = 0;
 
@@ -95,7 +97,7 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 			if ((r = write(fd, offset, toSend)) < 0) {
 				log_error_write(srv, __FILE__, __LINE__, "ssd", "write failed: ", strerror(errno), fd);
 
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 
 			c->offset += r;
@@ -120,7 +122,7 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 			if (HANDLER_ERROR == stat_cache_get_entry(srv, con, c->file.name, &sce)) {
 				log_error_write(srv, __FILE__, __LINE__, "sb",
 						strerror(errno), c->file.name);
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 
 			offset = c->file.start + c->offset;
@@ -129,13 +131,13 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 			if (offset > sce->st.st_size) {
 				log_error_write(srv, __FILE__, __LINE__, "sb", "file was shrinked:", c->file.name);
 
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 
 			if (-1 == (ifd = open(c->file.name->ptr, O_RDONLY))) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
 
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 
 #if defined USE_MMAP
@@ -144,14 +146,14 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 
 				close(ifd);
 
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 			close(ifd);
 
 			if ((r = write(fd, p + offset, toSend)) <= 0) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "write failed: ", strerror(errno));
 				munmap(p, sce->st.st_size);
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 
 			munmap(p, sce->st.st_size);
@@ -163,14 +165,14 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 				log_error_write(srv, __FILE__, __LINE__, "ss", "read: ", strerror(errno));
 				close(ifd);
 
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 			close(ifd);
 
 			if (-1 == (r = send(fd, srv->tmp_buf->ptr, toSend, 0))) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "write: ", strerror(errno));
 
-				return -1;
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 #endif
 			c->offset += r;
@@ -186,7 +188,7 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 
 			log_error_write(srv, __FILE__, __LINE__, "ds", c, "type not known");
 
-			return -1;
+			return NETWORK_STATUS_FATAL_ERROR;
 		}
 
 		if (!chunk_finished) {
@@ -198,7 +200,7 @@ int network_write_chunkqueue_write(server *srv, connection *con, int fd, chunkqu
 		chunks_written++;
 	}
 
-	return chunks_written;
+	return NETWORK_STATUS_SUCCESS;
 }
 
 #endif
