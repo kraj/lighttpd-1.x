@@ -448,13 +448,13 @@ int network_close(server *srv) {
 
 typedef enum {
 	NETWORK_BACKEND_UNSET,
-    
+
 	NETWORK_BACKEND_WRITE,
 	NETWORK_BACKEND_WRITEV,
 	NETWORK_BACKEND_LINUX_SENDFILE,
 	NETWORK_BACKEND_FREEBSD_SENDFILE,
 	NETWORK_BACKEND_SOLARIS_SENDFILEV,
-    
+
     NETWORK_BACKEND_WIN32_SEND,
     NETWORK_BACKEND_WIN32_TRANSMITFILE,
 } network_backend_t;
@@ -535,7 +535,7 @@ int network_init(server *srv) {
 #define SET_NETWORK_BACKEND(read, write) \
     srv->network_backend_write = network_write_chunkqueue_##write;\
     srv->network_backend_read = network_read_chunkqueue_##read
-    
+
 	switch(backend) {
 
 #ifdef USE_WIN32_SEND
@@ -679,7 +679,7 @@ network_status_t network_write_chunkqueue(server *srv, connection *con, chunkque
     case NETWORK_STATUS_SUCCESS:
 		chunkqueue_remove_finished_chunks(cq);
 
-        break;        
+        break;
     default:
         break;
 	}

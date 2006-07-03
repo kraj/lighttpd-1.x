@@ -3625,7 +3625,7 @@ TRIGGER_FUNC(mod_fastcgi_handle_trigger) {
 		connection *con = srv->conns->ptr[i];
 		handler_ctx *hctx = con->plugin_ctx[p->id];
 
-		/* if a connection is ours and is in handle-req for more than max-request-time 
+		/* if a connection is ours and is in handle-req for more than max-request-time
 		 * kill the connection */
 
 		if (con->mode != p->id) continue;

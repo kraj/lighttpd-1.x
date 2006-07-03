@@ -4,7 +4,7 @@
 #ifdef _WIN32
 #define strcasecmp stricmp
 #define strncasecmp strnicmp
-#define strtoll(p, e, b) _strtoi64(p, e, b) 
+#define strtoll(p, e, b) _strtoi64(p, e, b)
 #endif
 
 #endif

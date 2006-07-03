@@ -493,7 +493,7 @@ int main (int argc, char **argv, char **envp) {
 	i_am_root = 0;
 #endif
 	srv->srvconf.dont_daemonize = 0;
-    
+
 	while(-1 != (o = getopt(argc, argv, "f:m:hvVDpt"))) {
 		switch(o) {
 		case 'f':
@@ -505,7 +505,7 @@ int main (int argc, char **argv, char **envp) {
 				server_free(srv);
 				return -1;
 			}
-            
+
 			break;
 		case 'm':
 			buffer_copy_string(srv->srvconf.modules_dir, optarg);
@@ -1048,21 +1048,21 @@ int main (int argc, char **argv, char **envp) {
 #if 0
             			pid_t pid;
 
-			/* send the old process into a graceful-shutdown and start a 
+			/* send the old process into a graceful-shutdown and start a
 			 * new process right away
 			 *
 			 * BUGS:
 			 * - if webserver is running on port < 1024 (e.g. 80, 433)
 			 *   we don't have the permissions to bind to that port anymore
 			 *
-			 * 
+			 *
 			 *  */
 			if (0 == (pid = fork())) {
 				execve(argv[0], argv, envp);
 
 				exit(-1);
 			} else if (pid == -1) {
-				
+
 			} else {
 				/* parent */
 

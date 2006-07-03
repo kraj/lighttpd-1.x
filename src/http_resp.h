@@ -15,13 +15,13 @@ typedef struct {
     int protocol;   /* http/1.0, http/1.1 */
     int status;     /* e.g. 200 */
     buffer *reason; /* e.g. Ok */
-    array *headers; 
+    array *headers;
 } http_resp;
 
 typedef struct {
 	int     ok;
     buffer *errmsg;
-    
+
     http_resp *resp;
 } http_resp_ctx_t;
 

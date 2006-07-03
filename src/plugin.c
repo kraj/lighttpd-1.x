@@ -126,7 +126,7 @@ int plugins_load(server *srv) {
 #else
 	int (*init)(plugin *pl);
 #endif
-    
+
 	const char *error;
 	size_t i;
 

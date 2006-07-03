@@ -264,7 +264,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 
 		config_patch_connection(srv, con, COMP_HTTP_URL); /* HTTPurl */
 
-		/* do we have to downgrade to 1.0 ? */ 
+		/* do we have to downgrade to 1.0 ? */
 		if (!con->conf.allow_http11) {
 			con->request.http_version = HTTP_VERSION_1_0;
 		}
@@ -413,7 +413,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 		} else {
 			buffer_append_string_buffer(con->physical.path, con->physical.rel_path);
 		}
-        
+
         /* win32: directories can't have a trailing slash */
         if (con->physical.path->ptr[con->physical.path->used - 2] == DIR_SEPERATOR) {
             con->physical.path->ptr[con->physical.path->used - 2] = '\0';

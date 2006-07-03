@@ -63,7 +63,7 @@ void buffer_reset(buffer *b) {
 
 /**
  *
- * allocate (if necessary) enough space for 'size' bytes and 
+ * allocate (if necessary) enough space for 'size' bytes and
  * set the 'used' counter to 0
  *
  */
@@ -414,8 +414,8 @@ buffer_ptr *buffer_ptr_init(buffer_ptr_free_t freer)
 }
 
 /**
- * free the buffer_array 
- * 
+ * free the buffer_array
+ *
  */
 void buffer_ptr_free(buffer_ptr *l)
 {
@@ -471,8 +471,8 @@ void *buffer_ptr_top(buffer_ptr* l)
 }
 
 /**
- * init the buffer 
- * 
+ * init the buffer
+ *
  */
 
 buffer_array* buffer_array_init(void) {
@@ -924,7 +924,7 @@ static int buffer_urldecode_internal(buffer *url, int is_query) {
 				if (low != 0xFF) {
 					high = (high << 4) | low;
 
-					/* map out control characters */	
+					/* map out control characters */
 					if (high < 32 || high == 127) high = '_';
 
 					*dst = high;

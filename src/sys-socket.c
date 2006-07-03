@@ -5,13 +5,13 @@
 #ifdef HAVE_INET_ADDR
 int inet_aton(const char *cp, struct in_addr *inp) {
     struct in_addr a;
-    
+
     a.s_addr = inet_addr(cp);
-    
+
     if (INADDR_NONE == a.s_addr) {
         return 0;
     }
-    
+
     inp->s_addr = a.s_addr;
 
     return 1;

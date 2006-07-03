@@ -916,7 +916,7 @@ int config_read(server *srv, const char *fn) {
 	context_init(srv, &context);
 	context.all_configs = srv->config_context;
 
-    /* use the current dir as basedir for all other includes 
+    /* use the current dir as basedir for all other includes
     */
 	pos = strrchr(fn, DIR_SEPERATOR);
 

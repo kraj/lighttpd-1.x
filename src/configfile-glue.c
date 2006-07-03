@@ -74,7 +74,7 @@ int config_insert_values_internal(server *srv, array *ca, const config_values_t 
 				buffer_copy_string_buffer(cv[i].destination, ds->value);
 			} else if (du->type == TYPE_INTEGER) {
 				data_integer *di = (data_integer *)du;
-				
+
 				buffer_copy_long(cv[i].destination, di->value);
 			} else {
 				log_error_write(srv, __FILE__, __LINE__, "ssss", "unexpected type for key: ", cv[i].key, "(string)", "\"...\"");

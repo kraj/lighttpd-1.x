@@ -190,9 +190,9 @@ static void dump_packet(const unsigned char *data, size_t len) {
 
 static network_status_t connection_handle_read(server *srv, connection *con) {
 	off_t oldlen, newlen;
-    
+
     oldlen = chunkqueue_length(con->read_queue);
-    
+
     switch(network_read_chunkqueue(srv, con, con->read_queue)) {
     case NETWORK_STATUS_SUCCESS:
         break;
@@ -208,14 +208,14 @@ static network_status_t connection_handle_read(server *srv, connection *con) {
         return NETWORK_STATUS_CONNECTION_CLOSE;
     case NETWORK_STATUS_FATAL_ERROR:
         con->is_readable = 0;
-    
+
         connection_set_state(srv, con, CON_STATE_ERROR);
         return NETWORK_STATUS_FATAL_ERROR;
     default:
         SEGFAULT();
         break;
     }
-        
+
     newlen = chunkqueue_length(con->read_queue);
 
 	con->bytes_read += (newlen - oldlen);
@@ -753,7 +753,7 @@ int connection_handle_read_state(server *srv, connection *con)  {
 
 				/* conn-closed, leave here */
 				connection_set_state(srv, con, CON_STATE_ERROR);
-    
+
                 return 0;
 			}
 		default:
@@ -812,7 +812,7 @@ int connection_handle_read_state(server *srv, connection *con)  {
 
 			b.ptr = c->mem->ptr + c->offset;
 			b.used = c->mem->used - c->offset;
-            
+
 			if (NULL != (h_term = buffer_search_rnrn(&b))) {
 				/* \r\n\r\n found
 				 * - copy everything incl. the terminator to request.request

@@ -50,7 +50,7 @@
 #ifdef _WIN32
 # define USE_WIN32_SEND
 /* wait for async-io support
-# define USE_WIN32_TRANSMITFILE 
+# define USE_WIN32_TRANSMITFILE
 */
 #else
 # define USE_WRITE

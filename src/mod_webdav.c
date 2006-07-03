@@ -134,7 +134,7 @@ FREE_FUNC(mod_webdav_free) {
 				sqlite3_finalize(s->stmt_update_prop);
 				sqlite3_finalize(s->stmt_select_prop);
 				sqlite3_finalize(s->stmt_select_propnames);
-				
+
 				sqlite3_finalize(s->stmt_read_lock);
 				sqlite3_finalize(s->stmt_read_lock_by_uri);
 				sqlite3_finalize(s->stmt_create_lock);
@@ -389,7 +389,7 @@ static int mod_webdav_patch_connection(server *srv, connection *con, plugin_data
 	PATCH_OPTION(stmt_delete_uri);
 	PATCH_OPTION(stmt_move_uri);
 	PATCH_OPTION(stmt_copy_uri);
-	
+
 	PATCH_OPTION(stmt_remove_lock);
 	PATCH_OPTION(stmt_refresh_lock);
 	PATCH_OPTION(stmt_create_lock);
@@ -425,7 +425,7 @@ static int mod_webdav_patch_connection(server *srv, connection *con, plugin_data
 				PATCH_OPTION(stmt_delete_uri);
 				PATCH_OPTION(stmt_move_uri);
 				PATCH_OPTION(stmt_copy_uri);
-	
+
 				PATCH_OPTION(stmt_remove_lock);
 				PATCH_OPTION(stmt_refresh_lock);
 				PATCH_OPTION(stmt_create_lock);
@@ -1088,15 +1088,15 @@ static int webdav_parse_chunkqueue(server *srv, connection *con, plugin_data *p,
 }
 #endif
 
-int webdav_lockdiscovery(server *srv, connection *con, 
+int webdav_lockdiscovery(server *srv, connection *con,
 		buffer *locktoken, const char *lockscope, const char *locktype, int depth) {
 
 	buffer *b;
 
 	response_header_overwrite(srv, con, CONST_STR_LEN("Lock-Token"), CONST_BUF_LEN(locktoken));
-					
-	response_header_overwrite(srv, con, 
-		CONST_STR_LEN("Content-Type"), 
+
+	response_header_overwrite(srv, con,
+		CONST_STR_LEN("Content-Type"),
 		CONST_STR_LEN("text/xml; charset=\"utf-8\""));
 
 	b = chunkqueue_get_append_buffer(con->write_queue);
@@ -1106,17 +1106,17 @@ int webdav_lockdiscovery(server *srv, connection *con,
 	buffer_append_string(b,"<D:prop xmlns:D=\"DAV:\" xmlns:ns0=\"urn:uuid:c2f41010-65b3-11d1-a29f-00aa00c14882/\">\n");
 	buffer_append_string(b,"<D:lockdiscovery>\n");
 	buffer_append_string(b,"<D:activelock>\n");
-	
+
 	buffer_append_string(b,"<D:lockscope>");
 	buffer_append_string(b,"<D:");
 	buffer_append_string(b, lockscope);
-	buffer_append_string(b, "/>"); 
+	buffer_append_string(b, "/>");
 	buffer_append_string(b,"</D:lockscope>\n");
 
 	buffer_append_string(b,"<D:locktype>");
 	buffer_append_string(b,"<D:");
 	buffer_append_string(b, locktype);
-	buffer_append_string(b, "/>"); 
+	buffer_append_string(b, "/>");
 	buffer_append_string(b,"</D:locktype>\n");
 
 	buffer_append_string(b,"<D:depth>");
@@ -1145,7 +1145,7 @@ int webdav_lockdiscovery(server *srv, connection *con,
 /**
  * check if resource is having the right locks to access to resource
  *
- * 
+ *
  *
  */
 int webdav_has_lock(server *srv, connection *con, plugin_data *p, buffer *uri) {
@@ -1155,7 +1155,7 @@ int webdav_has_lock(server *srv, connection *con, plugin_data *p, buffer *uri) {
 	data_string *ds;
 
 	/**
-	 * If can have 
+	 * If can have
 	 * - <lock-token>
 	 * - [etag]
 	 *
@@ -1166,7 +1166,7 @@ int webdav_has_lock(server *srv, connection *con, plugin_data *p, buffer *uri) {
 	 * <tag> (<lock-token>) is tagged
 	 *
 	 * as long as we don't handle collections it is simple. :)
-	 * 
+	 *
 	 * X-Litmus: locks: 11 (owner_modify)
 	 * If: <http://127.0.0.1:1025/dav/litmus/lockme> (<opaquelocktoken:2165478d-0611-49c4-be92-e790d68a38f1>)
 	 *
@@ -2005,7 +2005,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 
 		return HANDLER_FINISHED;
 	}
-	case HTTP_METHOD_PROPPATCH: 
+	case HTTP_METHOD_PROPPATCH:
 		if (p->conf.is_readonly) {
 			con->http_status = 403;
 			return HANDLER_FINISHED;
@@ -2108,7 +2108,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 									}
 
 									if (SQLITE_DONE != (r = sqlite3_step(stmt))) {
-										log_error_write(srv, __FILE__, __LINE__, "ss", 
+										log_error_write(srv, __FILE__, __LINE__, "ss",
 												"sql-set failed:", sqlite3_errmsg(p->conf.sql));
 									}
 								}
@@ -2153,7 +2153,7 @@ propmatch_cleanup:
 		return HANDLER_FINISHED;
 	case HTTP_METHOD_LOCK:
 		/**
-		 * a mac wants to write 
+		 * a mac wants to write
 		 *
 		 * LOCK /dav/expire.txt HTTP/1.1\r\n
 		 * User-Agent: WebDAVFS/1.3 (01308000) Darwin/8.1.0 (Power Macintosh)\r\n
@@ -2242,8 +2242,8 @@ propmatch_cleanup:
 
 						/* is this resourse already locked ? */
 
-						/* SELECT locktoken, resource, lockscope, locktype, owner, depth, timeout 
-						 *   FROM locks 
+						/* SELECT locktoken, resource, lockscope, locktype, owner, depth, timeout
+						 *   FROM locks
 						 *  WHERE resource = ? */
 
 						if (stmt) {
@@ -2287,7 +2287,7 @@ propmatch_cleanup:
 
 							buffer_copy_string(p->tmp_buf, "opaquelocktoken:");
 							buffer_append_string(p->tmp_buf, uuid);
-							
+
 							/* "CREATE TABLE locks ("
 							 * "  locktoken TEXT NOT NULL,"
 							 * "  resource TEXT NOT NULL,"
@@ -2329,13 +2329,13 @@ propmatch_cleanup:
 
 
 							if (SQLITE_DONE != sqlite3_step(stmt)) {
-								log_error_write(srv, __FILE__, __LINE__, "ss", 
+								log_error_write(srv, __FILE__, __LINE__, "ss",
 										"create lock:", sqlite3_errmsg(p->conf.sql));
 							}
 
 							/* looks like we survived */
 							webdav_lockdiscovery(srv, con, p->tmp_buf, lockscope, locktype, depth);
-				
+
 							con->http_status = 201;
 							con->file_finished = 1;
 						}
@@ -2349,7 +2349,7 @@ propmatch_cleanup:
 				return HANDLER_FINISHED;
 			}
 		} else {
-	
+
 			if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "If"))) {
 				buffer *locktoken = ds->value;
 				sqlite3_stmt *stmt = p->conf.stmt_refresh_lock;
@@ -2368,9 +2368,9 @@ propmatch_cleanup:
 				sqlite3_bind_text(stmt, 1,
 					  CONST_BUF_LEN(p->tmp_buf),
 					  SQLITE_TRANSIENT);
-	
+
 				if (SQLITE_DONE != sqlite3_step(stmt)) {
-					log_error_write(srv, __FILE__, __LINE__, "ss", 
+					log_error_write(srv, __FILE__, __LINE__, "ss",
 						"refresh lock:", sqlite3_errmsg(p->conf.sql));
 				}
 
@@ -2407,7 +2407,7 @@ propmatch_cleanup:
 			/**
 			 * FIXME:
 			 *
-			 * if the resourse is locked: 
+			 * if the resourse is locked:
 			 * - by us: unlock
 			 * - by someone else: 401
 			 * if the resource is not locked:
@@ -2421,13 +2421,13 @@ propmatch_cleanup:
 			sqlite3_bind_text(stmt, 1,
 				  CONST_BUF_LEN(p->tmp_buf),
 				  SQLITE_TRANSIENT);
-	
+
 			sqlite3_bind_text(stmt, 2,
 				  CONST_BUF_LEN(con->uri.path),
 				  SQLITE_TRANSIENT);
 
 			if (SQLITE_DONE != sqlite3_step(stmt)) {
-				log_error_write(srv, __FILE__, __LINE__, "ss", 
+				log_error_write(srv, __FILE__, __LINE__, "ss",
 					"remove lock:", sqlite3_errmsg(p->conf.sql));
 			}
 

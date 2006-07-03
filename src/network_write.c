@@ -37,7 +37,7 @@ NETWORK_BACKEND_READ(read) {
     int toread;
     buffer *b;
     off_t r;
-    
+
 	/* check how much we have to read */
 	if (ioctl(fd, FIONREAD, &toread)) {
 		log_error_write(srv, __FILE__, __LINE__, "sd",
@@ -47,15 +47,15 @@ NETWORK_BACKEND_READ(read) {
 	}
 
 	if (toread == 0) return NETWORK_STATUS_CONNECTION_CLOSE;
-        
+
     /*
     * our chunk queue is quiet large already
     *
     * let's buffer it to disk
     */
-    
+
     b = chunkqueue_get_append_buffer(cq);
-    
+
     buffer_prepare_copy(b, toread);
 
     if (-1 == (r = read(fd, b->ptr + b->used - 1, toread))) {

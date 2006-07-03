@@ -639,7 +639,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 
 	while ((dent = readdir(dp)) != NULL) {
 		unsigned short exclude_match = 0;
-			
+
 		if (dent->d_name[0] == '.') {
 			if (hide_dotfiles)
 				continue;

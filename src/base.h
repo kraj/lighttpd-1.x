@@ -274,7 +274,7 @@ typedef struct {
 	 * the connected conns are "offline" a little bit
 	 *
 	 * the problem:
-	 * we somehow have to lose our "we are writable" signal 
+	 * we somehow have to lose our "we are writable" signal
 	 * on the way.
 	 *
 	 */

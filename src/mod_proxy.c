@@ -159,7 +159,7 @@ INIT_FUNC(mod_proxy_init) {
 	size_t i;
 
 	char *hop2hop_headers[] = {
-		"Connection", 
+		"Connection",
 		"Keep-Alive",
 		"Host",
 		NULL
@@ -580,7 +580,7 @@ static int proxy_set_state(server *srv, handler_ctx *hctx, proxy_connection_stat
 
 static void chunkqueue_print(chunkqueue *cq) {
     chunk *c;
-    
+
     for (c = cq->first; c; c = c->next) {
         fprintf(stderr, "%s", c->mem->ptr + c->offset);
     }
@@ -611,65 +611,65 @@ static int proxy_demux_response(server *srv, handler_ctx *hctx) {
         /* oops */
         return -1;
     }
-    
+
     /* looks like we got some content
     *
     * split off the header from the incoming stream
     */
-    
+
     if (hctx->state == PROXY_STATE_RESPONSE_HEADER) {
         http_resp *resp = http_response_init();
-        
+
         /* the response header is not fully received yet,
-        * 
+        *
         * extract the http-response header from the rb-cq
         */
         fprintf(stderr, "%s.%d: network-read\r\n", __FILE__, __LINE__);
         chunkqueue_print(hctx->rb);
-        
+
         switch (http_response_parse_cq(hctx->rb, resp)) {
         case PARSE_ERROR:
             /* parsing failed */
-    
+
             con->http_status = 502; /* Bad Gateway */
             return 1;
         case PARSE_NEED_MORE:
             return 0;
         case PARSE_SUCCESS:
             con->http_status = resp->status;
-        
+
             fprintf(stderr, "%s.%d: parsing done\r\n", __FILE__, __LINE__);
             chunkqueue_print(hctx->rb);
-        
+
             con->file_started = 1;
-        
+
             hctx->state = PROXY_STATE_RESPONSE_CONTENT;
             break;
         }
     }
-    
-    /* FIXME: pass the response-header to the other plugins to 
+
+    /* FIXME: pass the response-header to the other plugins to
     * setup the filter-queue
     *
     * - use next-queue instead of con->write_queue
     */
-    
+
     next_queue = con->write_queue;
-    
+
     assert(hctx->state == PROXY_STATE_RESPONSE_CONTENT);
-    
+
     /* FIXME: if we have a content-length or chunked-encoding
     * handle it.
     *
     * for now we wait for EOF on the socket */
-    
+
     /* copy the content to the next cq */
     for (c = hctx->rb->first; c; c = c->next) {
         http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
-        
+
         c->offset = c->mem->used - 1;
 	}
-    
+
     chunkqueue_remove_finished_chunks(hctx->rb);
 
 	return 0;
@@ -794,7 +794,7 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 		return HANDLER_WAIT_FOR_EVENT;
 	case PROXY_STATE_RESPONSE_HEADER:
 		/* waiting for a response */
-    
+
 		return HANDLER_WAIT_FOR_EVENT;
 	default:
 		log_error_write(srv, __FILE__, __LINE__, "s", "(debug) unknown state");
@@ -1083,7 +1083,7 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 
 		for (k = 0, ndx = -1, last_max = ULONG_MAX; k < backends->used; k++) {
 			unsigned long cur_max;
-			
+
 			data_proxy *cur = (data_proxy *)backends->data[k];
 
 			if (cur->is_disabled) continue;
@@ -1144,7 +1144,7 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 		 *
 		 * e.g.:
 		 *
-		 * if we have three hosts it is 
+		 * if we have three hosts it is
 		 *
 		 * 1 .. 2 .. 3 .. 1 .. 2 .. 3
 		 *
@@ -1170,14 +1170,14 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 			if (cur->is_disabled) continue;
 
 			host = cur;
-			
+
 			last_used_backend->value = k;
 
 			break;
 		}
 
 		if (NULL == host) {
-			/* we found nothing better, fallback to the last used backend 
+			/* we found nothing better, fallback to the last used backend
 			 * and check if it is still up */
 			host = (data_proxy *)backends->data[last_used_backend->value];
 
