@@ -12,6 +12,7 @@
 #include "log.h"
 #include "plugin.h"
 #include "response.h"
+#include "sys-files.h"
 
 #include "mod_cml.h"
 #include "mod_cml_funcs.h"
