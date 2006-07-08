@@ -34,6 +34,14 @@ http_resp *http_response_init(void) {
     return resp;
 }
 
+void http_response_reset(http_resp *resp) {
+    if (!resp) return;
+
+    buffer_reset(resp->reason);
+    array_reset(resp->headers);
+
+}
+
 void http_response_free(http_resp *resp) {
     if (!resp) return;
 
@@ -131,6 +139,7 @@ static int http_resp_tokenizer(
         default:
             while (c >= 32 && c != 127 && c != 255) {
                 if (t->is_statusline) {
+			if (c == ':') {t->is_statusline = 0; break; } /* this is not a status line by a real header */
                     if (c == 32) break; /* the space is a splitter in the statusline */
                 } else {
                     if (t->is_key) {
@@ -205,7 +214,7 @@ parse_status_t http_response_parse_cq(chunkqueue *cq, http_resp *resp) {
 
 	pParser = http_resp_parserAlloc( malloc );
 	token = buffer_init();
-    http_resp_parserTrace(stderr, "http-response: ");
+    /* http_resp_parserTrace(stderr, "http-response: "); */
 
 	while((1 == http_resp_tokenizer(&t, &token_id, token)) && context.ok) {
 		http_resp_parser(pParser, token_id, token, &context);

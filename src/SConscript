@@ -22,7 +22,7 @@ common_src = Split("buffer.c log.c \
       network_write.c network_linux_sendfile.c \
       network_freebsd_sendfile.c  network_win32_send.c \
       network_solaris_sendfilev.c network_openssl.c \
-")
+      http_resp.c http_resp_parser.c ")
       
 src = Split("server.c response.c connections.c network.c sys-socket.c sys-files.c\
       configfile.c configparser.c request.c proc_open.c")
@@ -77,7 +77,7 @@ modules = {
 	'mod_setenv' : { 'src' : [ 'mod_setenv.c' ] },
 	'mod_rrdtool' : { 'src' : [ 'mod_rrdtool.c' ] },
 	'mod_usertrack' : { 'src' : [ 'mod_usertrack.c' ] },
-	'mod_proxy' : { 'src' : [ 'mod_proxy.c', 'http_resp.c', 'http_resp_parser.c' ] },
+	'mod_proxy' : { 'src' : [ 'mod_proxy.c' ] },
 	'mod_userdir' : { 'src' : [ 'mod_userdir.c' ] },
 	'mod_secdownload' : { 'src' : [ 'mod_secure_download.c' ] },
 	'mod_accesslog' : { 'src' : [ 'mod_accesslog.c' ] },

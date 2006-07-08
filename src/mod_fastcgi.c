@@ -35,10 +35,7 @@
 #include "sys-strings.h"
 #include "sys-process.h"
 
-#ifdef _WIN32
-/* win32 has no fork() */
-#define kill(x, y)
-#endif
+#include "http_resp.h"
 
 #ifndef UNIX_PATH_MAX
 # define UNIX_PATH_MAX 108
@@ -50,7 +47,6 @@
 #ifdef HAVE_SYS_WAIT_H
 #include <sys/wait.h>
 #endif
-
 
 /*
  *
@@ -316,9 +312,10 @@ typedef struct {
 	buffer *fcgi_env;
 
 	buffer *path;
-	buffer *parse_response;
 
 	buffer *statuskey;
+
+	http_resp *resp;
 
 	plugin_config **config_storage;
 
@@ -345,10 +342,9 @@ typedef struct {
 
 	int      reconnects; /* number of reconnect attempts */
 
-	chunkqueue *rb; /* read queue */
+	chunkqueue *rb; /* the raw fcgi read-queue */
+	chunkqueue *http_rb; /* the decoded read-queue for http-parsing */
 	chunkqueue *wb; /* write queue */
-
-	buffer   *response_header;
 
 	size_t    request_id;
 	int       fd;        /* fd to the fastcgi process */
@@ -457,8 +453,6 @@ static handler_ctx * handler_ctx_init() {
 
 	hctx->fde_ndx = -1;
 
-	hctx->response_header = buffer_init();
-
 	hctx->request_id = 0;
 	hctx->state = FCGI_STATE_INIT;
 	hctx->proc = NULL;
@@ -469,6 +463,7 @@ static handler_ctx * handler_ctx_init() {
 	hctx->send_content_body = 1;
 
 	hctx->rb = chunkqueue_init();
+	hctx->http_rb = chunkqueue_init();
 	hctx->wb = chunkqueue_init();
 
 	return hctx;
@@ -480,9 +475,8 @@ static void handler_ctx_free(handler_ctx *hctx) {
 		hctx->host = NULL;
 	}
 
-	buffer_free(hctx->response_header);
-
 	chunkqueue_free(hctx->rb);
+	chunkqueue_free(hctx->http_rb);
 	chunkqueue_free(hctx->wb);
 
 	free(hctx);
@@ -645,7 +639,8 @@ INIT_FUNC(mod_fastcgi_init) {
 	p->fcgi_env = buffer_init();
 
 	p->path = buffer_init();
-	p->parse_response = buffer_init();
+
+	p->resp = http_response_init();
 
 	p->statuskey = buffer_init();
 
@@ -663,8 +658,9 @@ FREE_FUNC(mod_fastcgi_free) {
 
 	buffer_free(p->fcgi_env);
 	buffer_free(p->path);
-	buffer_free(p->parse_response);
 	buffer_free(p->statuskey);
+
+	http_response_free(p->resp);
 
 	if (p->config_storage) {
 		size_t i, j, n;
@@ -2187,105 +2183,6 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	return 0;
 }
 
-static int fcgi_response_parse(server *srv, connection *con, plugin_data *p, buffer *in) {
-	char *s, *ns;
-
-	handler_ctx *hctx = con->plugin_ctx[p->id];
-	fcgi_extension_host *host= hctx->host;
-
-	UNUSED(srv);
-
-	buffer_copy_string_buffer(p->parse_response, in);
-
-	/* search for \n */
-	for (s = p->parse_response->ptr; NULL != (ns = strchr(s, '\n')); s = ns + 1) {
-		char *key, *value;
-		int key_len;
-		data_string *ds;
-
-		/* a good day. Someone has read the specs and is sending a \r\n to us */
-
-		if (ns > p->parse_response->ptr &&
-		    *(ns-1) == '\r') {
-			*(ns-1) = '\0';
-		}
-
-		ns[0] = '\0';
-
-		key = s;
-		if (NULL == (value = strchr(s, ':'))) {
-			/* we expect: "<key>: <value>\n" */
-			continue;
-		}
-
-		key_len = value - key;
-
-		value++;
-		/* strip WS */
-		while (*value == ' ' || *value == '\t') value++;
-
-		if (host->mode != FCGI_AUTHORIZER ||
-		    !(con->http_status == 0 ||
-		      con->http_status == 200)) {
-			/* authorizers shouldn't affect the response headers sent back to the client */
-
-			/* don't forward Status: */
-			if (0 != strncasecmp(key, "Status", key_len)) {
-				if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
-					ds = data_response_init();
-				}
-				buffer_copy_string_len(ds->key, key, key_len);
-				buffer_copy_string(ds->value, value);
-
-				array_insert_unique(con->response.headers, (data_unset *)ds);
-			}
-		}
-
-		switch(key_len) {
-		case 4:
-			if (0 == strncasecmp(key, "Date", key_len)) {
-				con->parsed_response |= HTTP_DATE;
-			}
-			break;
-		case 6:
-			if (0 == strncasecmp(key, "Status", key_len)) {
-				con->http_status = strtol(value, NULL, 10);
-				con->parsed_response |= HTTP_STATUS;
-			}
-			break;
-		case 8:
-			if (0 == strncasecmp(key, "Location", key_len)) {
-				con->parsed_response |= HTTP_LOCATION;
-			}
-			break;
-		case 10:
-			if (0 == strncasecmp(key, "Connection", key_len)) {
-				con->response.keep_alive = (0 == strcasecmp(value, "Keep-Alive")) ? 1 : 0;
-				con->parsed_response |= HTTP_CONNECTION;
-			}
-			break;
-		case 14:
-			if (0 == strncasecmp(key, "Content-Length", key_len)) {
-				con->response.content_length = strtol(value, NULL, 10);
-				con->parsed_response |= HTTP_CONTENT_LENGTH;
-
-				if (con->response.content_length < 0) con->response.content_length = 0;
-			}
-			break;
-		default:
-			break;
-		}
-	}
-
-	/* CGI/1.1 rev 03 - 7.2.1.2 */
-	if ((con->parsed_response & HTTP_LOCATION) &&
-	    !(con->parsed_response & HTTP_STATUS)) {
-		con->http_status = 302;
-	}
-
-	return 0;
-}
-
 typedef struct {
 	buffer  *b;
 	size_t   len;
@@ -2387,52 +2284,24 @@ static int fastcgi_get_packet(server *srv, handler_ctx *hctx, fastcgi_response_p
 
 static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 	int fin = 0;
-	int toread;
-	ssize_t r;
 
 	plugin_data *p    = hctx->plugin_data;
 	connection *con   = hctx->remote_conn;
-	int fcgi_fd       = hctx->fd;
 	fcgi_extension_host *host= hctx->host;
 	fcgi_proc *proc   = hctx->proc;
 
-	/*
-	 * check how much we have to read
-	 */
-	if (ioctl(hctx->fd, FIONREAD, &toread)) {
-		log_error_write(srv, __FILE__, __LINE__, "sd",
-				"unexpected end-of-file (perhaps the fastcgi process died):",
-				fcgi_fd);
-		return -1;
-	}
-
-	/* init read-buffer */
-
-	if (toread > 0) {
-		buffer *b;
-
-		b = chunkqueue_get_append_buffer(hctx->rb);
-		buffer_prepare_copy(b, toread + 1);
-
-		/* append to read-buffer */
-		if (-1 == (r = read(hctx->fd, b->ptr, toread))) {
-			log_error_write(srv, __FILE__, __LINE__, "sds",
-					"unexpected end-of-file (perhaps the fastcgi process died):",
-					fcgi_fd, strerror(errno));
-			return -1;
-		}
-
-		/* this should be catched by the b > 0 above */
-		assert(r);
-
-		b->used = r + 1; /* one extra for the fake \0 */
-		b->ptr[b->used - 1] = '\0';
-	} else {
+	switch(srv->network_backend_read(srv, con, hctx->fd, hctx->rb)) {
+	case NETWORK_STATUS_WAIT_FOR_EVENT:
+		/* we are only triggered when there is a event */
 		log_error_write(srv, __FILE__, __LINE__, "ssdsb",
 				"unexpected end-of-file (perhaps the fastcgi process died):",
 				"pid:", proc->pid,
 				"socket:", proc->connection_name);
-
+		return -1;
+	case NETWORK_STATUS_SUCCESS:
+		break;
+	default:
+		log_error_write(srv, __FILE__, __LINE__, "s", "fastcgi-read failed");
 		return -1;
 	}
 
@@ -2455,82 +2324,123 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 
 			/* is the header already finished */
 			if (0 == con->file_started) {
-				char *c;
-				size_t blen;
-				data_string *ds;
+				int have_content_length = 0;
+				int need_more = 0;
+				size_t i;
 
-				/* search for header terminator
-				 *
-				 * if we start with \r\n check if last packet terminated with \r\n
-				 * if we start with \n check if last packet terminated with \n
-				 * search for \r\n\r\n
-				 * search for \n\n
-				 */
+				/* append the current packet to the chunk queue */
+				chunkqueue_append_buffer(hctx->http_rb, packet.b);
+				http_response_reset(p->resp);
 
-				if (hctx->response_header->used == 0) {
-					buffer_copy_string_buffer(hctx->response_header, packet.b);
-				} else {
-					buffer_append_string_buffer(hctx->response_header, packet.b);
-				}
+				switch(http_response_parse_cq(hctx->http_rb, p->resp)) {
+				case PARSE_ERROR:
+					/* parsing the response header failed */
 
-				if (NULL != (c = buffer_search_string_len(hctx->response_header, CONST_STR_LEN("\r\n\r\n")))) {
-					blen = hctx->response_header->used - (c - hctx->response_header->ptr) - 4;
-					hctx->response_header->used = (c - hctx->response_header->ptr) + 3;
-					c += 4; /* point the the start of the response */
-				} else if (NULL != (c = buffer_search_string_len(hctx->response_header, CONST_STR_LEN("\n\n")))) {
-					blen = hctx->response_header->used - (c - hctx->response_header->ptr) - 2;
-					hctx->response_header->used = c - hctx->response_header->ptr + 2;
-					c += 2; /* point the the start of the response */
-				} else {
-					/* no luck, no header found */
+					con->http_status = 502; /* Bad Gateway */
+
+					return 1;
+				case PARSE_NEED_MORE:
+					need_more = 1;
+					break; /* leave the loop */
+				case PARSE_SUCCESS:
 					break;
+				default:
+					/* should not happen */
+					SEGFAULT();
 				}
 
-				/* parse the response header */
-				fcgi_response_parse(srv, con, p, hctx->response_header);
+				if (need_more) break;
+
+				chunkqueue_remove_finished_chunks(hctx->http_rb);
+
+				con->http_status = p->resp->status;
+
+				/* handle the header fields */
+				if (host->mode == FCGI_AUTHORIZER) {
+					/* auth mode is a bit different */
+
+    					if (con->http_status == 0 ||
+					    con->http_status == 200) {
+						/* a authorizer with approved the static request, ignore the content here */
+						hctx->send_content_body = 0;
+					}
+				}
+
+				/* copy the http-headers */
+				for (i = 0; i < p->resp->headers->used; i++) {
+					const char *ign[] = { "Status", NULL };
+					size_t j;
+					data_string *ds;
+
+					data_string *header = (data_string *)p->resp->headers->data[i];
+
+					/* ignore all headers in AUTHORIZER mode */
+					if (host->mode == FCGI_AUTHORIZER) continue;
+
+					/* some headers are ignored by default */
+					for (j = 0; ign[j]; j++) {
+						if (0 == strcasecmp(ign[j], header->key->ptr)) break;
+					}
+					if (ign[j]) continue;
+
+					if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("Location"))) {
+						/* CGI/1.1 rev 03 - 7.2.1.2 */
+						con->http_status = 302;
+					} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("Content-Length"))) {
+						have_content_length = 1;
+					} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("X-Sendfile")) || 
+						   0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("X-LIGHTTPD-send-file"))) {
+						
+						stat_cache_entry *sce;
+						
+						if (host->allow_xsendfile &&
+						    HANDLER_ERROR != stat_cache_get_entry(srv, con, header->value, &sce)) {
+							http_chunk_append_file(srv, con, header->value, 0, sce->st.st_size);
+							hctx->send_content_body = 0; /* ignore the content */
+					
+							joblist_append(srv, con);
+						}
+
+						continue; /* ignore header */
+					}
+					
+					if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
+						ds = data_response_init();
+					}
+					buffer_copy_string_buffer(ds->key, header->key);
+					buffer_copy_string_buffer(ds->value, header->value);
+
+					array_insert_unique(con->response.headers, (data_unset *)ds);
+				}
+
+				/* header is complete ... go on with the body */
 
 				con->file_started = 1;
 
-				if (host->mode == FCGI_AUTHORIZER &&
-				    (con->http_status == 0 ||
-				     con->http_status == 200)) {
-					/* a authorizer with approved the static request, ignore the content here */
-					hctx->send_content_body = 0;
-				}
+				if (hctx->send_content_body) {
+					chunk *c = hctx->http_rb->first;
 
-				if (host->allow_xsendfile &&
-				    (NULL != (ds = (data_string *) array_get_element(con->response.headers, "X-LIGHTTPD-send-file")) ||
-				     NULL != (ds = (data_string *) array_get_element(con->response.headers, "X-Sendfile")))
-				   ) {
-					stat_cache_entry *sce;
-
-					if (HANDLER_ERROR != stat_cache_get_entry(srv, con, ds->value, &sce)) {
-						/* found */
-
-						http_chunk_append_file(srv, con, ds->value, 0, sce->st.st_size);
-						hctx->send_content_body = 0; /* ignore the content */
-						joblist_append(srv, con);
-					}
-				}
-
-
-				if (hctx->send_content_body && blen > 1) {
-					/* enable chunked-transfer-encoding */
+					/* if we don't have a content-length enable chunked encoding 
+					 * if possible
+					 * 
+					 * TODO: move this to a later stage in the filter-queue
+					 *  */
 					if (con->request.http_version == HTTP_VERSION_1_1 &&
-					    !(con->parsed_response & HTTP_CONTENT_LENGTH)) {
+					    !have_content_length) {
 						con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
 					}
 
-					http_chunk_append_mem(srv, con, c, blen);
+					/* copy the rest of the data */
+					for (c = hctx->http_rb->first; c; c = c->next) {
+						if (c->mem->used > 1) {
+							http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+							c->offset = c->mem->used - 1;
+						}
+					}
+					chunkqueue_remove_finished_chunks(hctx->http_rb);
 					joblist_append(srv, con);
 				}
 			} else if (hctx->send_content_body && packet.b->used > 1) {
-				if (con->request.http_version == HTTP_VERSION_1_1 &&
-				    !(con->parsed_response & HTTP_CONTENT_LENGTH)) {
-					/* enable chunked-transfer-encoding */
-					con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
-				}
-
 				http_chunk_append_mem(srv, con, packet.b->ptr, packet.b->used);
 				joblist_append(srv, con);
 			}

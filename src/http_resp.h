@@ -27,6 +27,7 @@ typedef struct {
 
 http_resp *http_response_init(void);
 void http_response_free(http_resp *resp);
+void http_response_reset(http_resp *resp);
 
 parse_status_t http_response_parse_cq(chunkqueue *cq, http_resp *http_response);
 

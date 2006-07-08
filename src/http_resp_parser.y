@@ -22,6 +22,35 @@
 %type header { data_string * }
 %token_destructor { buffer_free($$); }
 
+/* just headers + Status: ... */
+response_hdr ::= headers(HDR) CRLF . {
+    http_resp *resp = ctx->resp;
+    data_string *ds;
+ 
+    resp->protocol = HTTP_VERSION_UNSET;
+
+    buffer_copy_string(resp->reason, ""); /* no reason */
+    array_free(resp->headers);
+    resp->headers = HDR;
+
+    if (NULL == (ds = (data_string *)array_get_element(HDR, "Status"))) { 
+        resp->status = 0;
+    } else {
+        char *err;
+        resp->status = strtol(ds->value->ptr, &err, 10);
+    
+        if (*err != '\0') {
+            buffer_copy_string(ctx->errmsg, "expected a number: ");
+            buffer_append_string_buffer(ctx->errmsg, ds->value);
+        
+            ctx->ok = 0;
+        }
+
+    }
+
+    HDR = NULL;
+}
+/* HTTP/1.0 <status> ... */
 response_hdr ::= protocol(B) number(C) reason(D) CRLF headers(HDR) CRLF . {
     http_resp *resp = ctx->resp;
     
