@@ -15,9 +15,9 @@
   ctx->ok = 0;
 }
 
-%type statuscode { int }
 %type protocol { int }
 %type response_hdr { http_resp * }
+%type number { int }
 %type headers { array * }
 %type header { data_string * }
 %token_destructor { buffer_free($$); }
@@ -50,7 +50,7 @@ protocol(A) ::= STRING(B). {
 }
 
 number(A) ::= STRING(B). {
-    const char *err;
+    char *err;
     A = strtol(B->ptr, &err, 10);
     
     if (*err != '\0') {
