@@ -58,9 +58,8 @@ NETWORK_BACKEND_WRITE_CHUNK(writev_mem) {
 
 	size_t num_chunks, i;
 	struct iovec chunks[UIO_MAXIOV];
-	chunk *tc, *c = *rc;
+	chunk *tc; /* transfer chunks */
 	size_t num_bytes = 0;
-	int chunk_finished = 0;
 
 	/* we can't send more then SSIZE_MAX bytes in one chunk */
 
@@ -122,30 +121,19 @@ NETWORK_BACKEND_WRITE_CHUNK(writev_mem) {
 			/* written */
 			r -= chunks[i].iov_len;
 			tc->offset += chunks[i].iov_len;
-
-			if (chunk_finished) {
-				/* skip the chunks from further touches */
-				c = c->next;
-			} else {
-				/* chunks_written + c = c->next is done in the for()*/
-				chunk_finished++;
-			}
 		} else {
 			/* partially written */
 
 			tc->offset += r;
-
 			break;
 		}
 	}
-
-	*rc = c;
 
 	return NETWORK_STATUS_SUCCESS;
 }
 
 NETWORK_BACKEND_WRITE(writev) {
-	chunk *c;
+	chunk *c, *tc;
 	size_t chunks_written = 0;
 
 	for(c = cq->first; c; c = c->next) {
@@ -154,13 +142,26 @@ NETWORK_BACKEND_WRITE(writev) {
 
 		switch(c->type) {
 		case MEM_CHUNK:
-			ret = network_write_chunkqueue_writev_mem(srv, con, fd, cq, &c);
+			ret = network_write_chunkqueue_writev_mem(srv, con, fd, cq, c);
+
+			/* check which chunks are finished now */
+			for (tc = c; tc; tc = tc->next) {
+				/* finished the chunk */
+				if (tc->offset == tc->mem->used - 1) {
+					/* skip the first c->next as that will be done by the c = c->next in the other for()-loop */
+					if (chunk_finished) {
+						c = c->next;
+					} else {
+						chunk_finished = 1;
+					}
+				} else {
+					break;
+				}
+			}
 
 			if (ret != NETWORK_STATUS_SUCCESS) {
 				return ret;
 			}
-
-			chunk_finished = 1;
 
 			break;
 		case FILE_CHUNK: {

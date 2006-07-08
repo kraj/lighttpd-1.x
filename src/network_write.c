@@ -46,7 +46,7 @@ NETWORK_BACKEND_READ(read) {
 		return NETWORK_STATUS_FATAL_ERROR;
 	}
 
-	if (toread == 0) return NETWORK_STATUS_CONNECTION_CLOSE;
+	if (toread == 0) return NETWORK_STATUS_WAIT_FOR_EVENT;
 
     /*
     * our chunk queue is quiet large already
@@ -58,7 +58,7 @@ NETWORK_BACKEND_READ(read) {
 
     buffer_prepare_copy(b, toread);
 
-    if (-1 == (r = read(fd, b->ptr + b->used - 1, toread))) {
+    if (-1 == (r = read(fd, b->ptr, toread))) {
 		log_error_write(srv, __FILE__, __LINE__, "sds",
 				"unexpected end-of-file (perhaps the proxy process died):",
 				fd, strerror(errno));
@@ -67,7 +67,7 @@ NETWORK_BACKEND_READ(read) {
 
 	/* this should be catched by the b > 0 above */
 	assert(r);
-	b->used += r;
+	b->used += r + 1;
 	b->ptr[b->used - 1] = '\0';
 
     return NETWORK_STATUS_SUCCESS;

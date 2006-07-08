@@ -60,7 +60,7 @@
 #include "network.h"
 
 #define NETWORK_BACKEND_WRITE_CHUNK(x) \
-    network_status_t network_write_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq, chunk **rc)
+    network_status_t network_write_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq, chunk *c)
 
 #define NETWORK_BACKEND_WRITE(x) \
     network_status_t network_write_chunkqueue_##x(server *srv, connection *con, int fd, chunkqueue *cq)

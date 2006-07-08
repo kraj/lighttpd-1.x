@@ -27,16 +27,18 @@
 # include <openssl/err.h>
 
 NETWORK_BACKEND_READ_SSL(openssl) {
-	server_socket *srv_sock = con->srv_socket;
-	int r, ssl_err;
 	buffer *b;
 	off_t len;
 
-	b = chunkqueue_get_append_buffer(con->read_queue);
-	buffer_prepare_copy(b, 4096);
-	len = SSL_read(con->ssl, b->ptr, b->size - 1);
+	b = chunkqueue_get_append_buffer(cq);
+	buffer_prepare_copy(b, 8192);
+	len = SSL_read(ssl, b->ptr, b->size - 1);
+
+	log_error_write(srv, __FILE__, __LINE__, "so", "SSL:", len);
 
 	if (len < 0) {
+		int r, ssl_err;
+
 		switch ((r = SSL_get_error(con->ssl, len))) {
 		case SSL_ERROR_WANT_READ:
 			return NETWORK_STATUS_WAIT_FOR_EVENT;
@@ -86,6 +88,9 @@ NETWORK_BACKEND_READ_SSL(openssl) {
 		}
 	}
 
+	assert(len > 0);
+	b->used += len;
+	b->ptr[b->used - 1] = '\0';
 
 	return NETWORK_STATUS_SUCCESS;
 }

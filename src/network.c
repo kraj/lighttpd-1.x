@@ -64,7 +64,7 @@ handler_t network_server_handle_fdevent(void *s, void *context, int revents) {
 }
 
 int network_server_init(server *srv, buffer *host_token, specific_config *s) {
-	char val;
+	int val;
 	socklen_t addr_len;
 	server_socket *srv_socket;
 	char *sp;
@@ -536,6 +536,10 @@ int network_init(server *srv) {
     srv->network_backend_write = network_write_chunkqueue_##write;\
     srv->network_backend_read = network_read_chunkqueue_##read
 
+#define SET_NETWORK_BACKEND_SSL(read, write) \
+    srv->network_ssl_backend_write = network_write_chunkqueue_##write;\
+    srv->network_ssl_backend_read = network_read_chunkqueue_##read
+
 	switch(backend) {
 
 #ifdef USE_WIN32_SEND
@@ -578,6 +582,9 @@ int network_init(server *srv) {
 	default:
 		return -1;
 	}
+#ifdef USE_OPENSSL
+        SET_NETWORK_BACKEND_SSL(openssl, openssl);
+#endif
 
 	/* check for $SERVER["socket"] */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -630,6 +637,8 @@ network_status_t network_read_chunkqueue(server *srv, connection *con, chunkqueu
    	if (srv_socket->is_ssl) {
 #ifdef USE_OPENSSL
 		return srv->network_ssl_backend_read(srv, con, con->ssl, cq);
+#else
+		return NETWORK_STATUS_FATAL_ERROR;
 #endif
 	} else {
 		return srv->network_backend_read(srv, con, con->fd, cq);

@@ -27,7 +27,7 @@
 #undef HAVE_POSIX_FADVISE
 
 NETWORK_BACKEND_WRITE(linuxsendfile) {
-	chunk *c;
+	chunk *c, *tc;
 	size_t chunks_written = 0;
 
 	for(c = cq->first; c; c = c->next, chunks_written++) {
@@ -36,7 +36,22 @@ NETWORK_BACKEND_WRITE(linuxsendfile) {
 
 		switch(c->type) {
 		case MEM_CHUNK:
-			ret = network_write_chunkqueue_writev_mem(srv, con, fd, cq, &c);
+			ret = network_write_chunkqueue_writev_mem(srv, con, fd, cq, c);
+
+			/* check which chunks are finished now */
+			for (tc = c; tc; tc = tc->next) {
+				/* finished the chunk */
+				if (tc->offset == tc->mem->used - 1) {
+					/* skip the first c->next as that will be done by the c = c->next in the other for()-loop */
+					if (chunk_finished) {
+						c = c->next;
+					} else {
+						chunk_finished = 1;
+					}
+				} else {
+					break;
+				}
+			}
 
 			if (ret != NETWORK_STATUS_SUCCESS) {
 				return ret;
