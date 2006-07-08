@@ -29,6 +29,11 @@ int inet_aton(const char *cp, struct in_addr *inp);
 #include <sys/un.h>
 #include <arpa/inet.h>
 
+#ifndef SUN_LEN
+#define SUN_LEN(su) \
+        (sizeof(*(su)) - sizeof((su)->sun_path) + strlen((su)->sun_path))
+#endif
+
 #include <netdb.h>
 #endif
 

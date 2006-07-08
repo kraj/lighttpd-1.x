@@ -644,12 +644,8 @@ static int scgi_spawn_connection(server *srv,
 		scgi_addr_un.sun_family = AF_UNIX;
 		strcpy(scgi_addr_un.sun_path, proc->socket->ptr);
 
-#ifdef SUN_LEN
 		servlen = SUN_LEN(&scgi_addr_un);
-#else
-		/* stevens says: */
-		servlen = proc->socket->used + sizeof(scgi_addr_un.sun_family);
-#endif
+
 		socket_type = AF_UNIX;
 		scgi_addr = (struct sockaddr *) &scgi_addr_un;
 #else
@@ -1295,12 +1291,9 @@ static int scgi_establish_connection(server *srv, handler_ctx *hctx) {
 		/* use the unix domain socket */
 		scgi_addr_un.sun_family = AF_UNIX;
 		strcpy(scgi_addr_un.sun_path, proc->socket->ptr);
-#ifdef SUN_LEN
+		
 		servlen = SUN_LEN(&scgi_addr_un);
-#else
-		/* stevens says: */
-		servlen = proc->socket->used + sizeof(scgi_addr_un.sun_family);
-#endif
+
 		scgi_addr = (struct sockaddr *) &scgi_addr_un;
 #else
 		return -1;

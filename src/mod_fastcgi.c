@@ -831,12 +831,8 @@ static int fcgi_spawn_connection(server *srv,
 		fcgi_addr_un.sun_family = AF_UNIX;
 		strcpy(fcgi_addr_un.sun_path, proc->unixsocket->ptr);
 
-#ifdef SUN_LEN
 		servlen = SUN_LEN(&fcgi_addr_un);
-#else
-		/* stevens says: */
-		servlen = proc->unixsocket->used + sizeof(fcgi_addr_un.sun_family);
-#endif
+
 		socket_type = AF_UNIX;
 		fcgi_addr = (struct sockaddr *) &fcgi_addr_un;
 
@@ -1683,12 +1679,9 @@ static connection_result_t fcgi_establish_connection(server *srv, handler_ctx *h
 		/* use the unix domain socket */
 		fcgi_addr_un.sun_family = AF_UNIX;
 		strcpy(fcgi_addr_un.sun_path, proc->unixsocket->ptr);
-#ifdef SUN_LEN
+
 		servlen = SUN_LEN(&fcgi_addr_un);
-#else
-		/* stevens says: */
-		servlen = proc->unixsocket->used + sizeof(fcgi_addr_un.sun_family);
-#endif
+
 		fcgi_addr = (struct sockaddr *) &fcgi_addr_un;
 
 		if (buffer_is_empty(proc->connection_name)) {
