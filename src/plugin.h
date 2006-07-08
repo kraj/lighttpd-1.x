@@ -65,6 +65,8 @@ typedef struct {
 
 	/* dlopen handle */
 	void *lib;
+
+	array *required_plugins;
 } plugin;
 
 int plugins_load(server *srv);
@@ -95,5 +97,7 @@ int config_patch_connection(server *srv, connection *con, comp_key_t comp);
 int config_check_cond(server *srv, connection *con, data_config *dc);
 int config_append_cond_match_buffer(connection *con, data_config *dc, buffer *buf, int n);
 int config_exec_pcre_keyvalue_buffer(connection *con, pcre_keyvalue_buffer *kvb, data_config *context, buffer *match_buf, buffer *result);
+
+void *plugin_get_config(server *srv, const char *name);
 
 #endif

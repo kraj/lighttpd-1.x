@@ -56,12 +56,16 @@ static plugin *plugin_init(void) {
 
 	p = calloc(1, sizeof(*p));
 
+	p->required_plugins = array_init();
+
 	return p;
 }
 
 static void plugin_free(plugin *p) {
 	int use_dlclose = 1;
 	if (p->name) buffer_free(p->name);
+
+	array_free(p->required_plugins);
 #ifdef HAVE_VALGRIND_VALGRIND_H
 	/*if (RUNNING_ON_VALGRIND) use_dlclose = 0;*/
 #endif
@@ -128,7 +132,7 @@ int plugins_load(server *srv) {
 #endif
 
 	const char *error;
-	size_t i;
+	size_t i, j, k;
 
 	for (i = 0; i < srv->srvconf.modules->used; i++) {
 		data_string *d = (data_string *)srv->srvconf.modules->data[i];
@@ -223,6 +227,25 @@ int plugins_load(server *srv) {
 #if 0
 		log_error_write(srv, __FILE__, __LINE__, "ss", modules, "plugin loaded" );
 #endif
+		/* check if the required plugin is loaded */
+		for (k = 0; k < p->required_plugins->used; k++) {
+			data_string *req = (data_string *)p->required_plugins->data[k];
+
+			for (j = 0; j < i; j++) {
+				data_string *mod = (data_string *)srv->srvconf.modules->data[j];
+
+				if (buffer_is_equal(req->value, mod->value)) break;
+			}
+
+			if (j == i) {
+				/* not found */
+				log_error_write(srv, __FILE__, __LINE__, "ssbs", modules, "failed to load. required plugin", req->value, "was not loaded" );
+
+				plugin_free(p);
+			
+				return -1;
+			}
+		}
 		plugins_register(srv, p);
 	}
 
@@ -429,6 +452,23 @@ handler_t plugins_call_init(server *srv) {
 	}
 
 	return HANDLER_GO_ON;
+}
+
+/**
+ * get the config-storage of the named plugin 
+ */
+void *plugin_get_config(server *srv, const char *name) {
+	size_t i;
+
+	for (i = 0; i < srv->plugins.used; i++) {
+		plugin *p = ((plugin **)srv->plugins.ptr)[i];
+
+		if (buffer_is_equal_string(p->name, name, strlen(name))) {
+			return p->data;
+		}
+	}
+
+	return NULL;
 }
 
 void plugins_free(server *srv) {
