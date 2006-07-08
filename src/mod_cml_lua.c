@@ -31,6 +31,7 @@ typedef char HASHHEX[HASHHEXLEN+1];
 
 #include <lua.h>
 #include <lualib.h>
+#include <lauxlib.h>
 
 typedef struct {
 	stream st;
@@ -220,13 +221,8 @@ int cache_parse_lua(server *srv, connection *con, plugin_data *p, buffer *fn) {
 	stream_open(&rm.st, fn);
 
 	/* push the lua file to the interpreter and see what happends */
-	L = lua_open();
-
-	luaopen_base(L);
-	luaopen_table(L);
-	luaopen_string(L);
-	luaopen_math(L);
-	luaopen_io(L);
+	L = luaL_newstate();
+	luaL_openlibs(L);
 
 	/* register functions */
 	lua_register(L, "md5", f_crypto_md5);
