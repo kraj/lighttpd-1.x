@@ -64,7 +64,7 @@ typedef int socklen_t;
 
 /* solaris and NetBSD 1.3.x again */
 #if (!defined(HAVE_STDINT_H)) && (!defined(HAVE_INTTYPES_H)) && (!defined(uint32_t))
-//# define uint32_t u_int32_t
+/* # define uint32_t u_int32_t */
 typedef unsigned __int32 uint32_t;
 #endif
 

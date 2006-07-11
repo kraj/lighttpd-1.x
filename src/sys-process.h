@@ -6,6 +6,7 @@
 #define pid_t int
 /* win32 has no fork() */
 #define kill(x, y)
+#define getpid() 0
 
 #else
 #include <sys/wait.h>

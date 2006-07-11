@@ -13,6 +13,7 @@
 #include "fdevent.h"
 #include "settings.h"
 #include "buffer.h"
+#include "sys-process.h"
 
 #ifdef USE_LINUX_SIGIO
 static void fdevent_linux_rtsig_free(fdevents *ev) {

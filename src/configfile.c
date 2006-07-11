@@ -17,6 +17,7 @@
 #include "proc_open.h"
 
 #include "sys-files.h"
+#include "sys-process.h"
 
 #ifndef PATH_MAX
 /* win32 */
@@ -936,7 +937,7 @@ int config_read(server *srv, const char *fn) {
 	/* default context */
 	srv->config = dc->value;
 	dpid = data_integer_init();
-	dpid->value = /* getpid() */0;
+	dpid->value = getpid();
 	buffer_copy_string(dpid->key, "var.PID");
 	array_insert_unique(srv->config, (data_unset *)dpid);
 
