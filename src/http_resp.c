@@ -66,7 +66,9 @@ static int http_resp_get_next_char(http_resp_tokenizer_t *t, unsigned char *c) {
     t->lookup_offset = t->offset;
     t->lookup_c = t->c;
 
-    //fprintf(stderr, "%s.%d: get: %c (%d) at offset: %d\r\n", __FILE__, __LINE__, *c > 31 ? *c : ' ', *c, t->offset - 1);
+#if 0
+    fprintf(stderr, "%s.%d: get: %c (%d) at offset: %d\r\n", __FILE__, __LINE__, *c > 31 ? *c : ' ', *c, t->offset - 1);
+#endif
 
     return 0;
 }
@@ -82,9 +84,9 @@ static int http_resp_lookup_next_char(http_resp_tokenizer_t *t, unsigned char *c
     }
 
     *c = t->lookup_c->mem->ptr[t->lookup_offset++];
-
-    //fprintf(stderr, "%s.%d: lookup: %c (%d) at offset: %d\r\n", __FILE__, __LINE__, *c > 31 ? *c : ' ', *c, t->lookup_offset - 1);
-
+#if 0
+    fprintf(stderr, "%s.%d: lookup: %c (%d) at offset: %d\r\n", __FILE__, __LINE__, *c > 31 ? *c : ' ', *c, t->lookup_offset - 1);
+#endif
 
     return 0;
 }
