@@ -16,14 +16,19 @@ mod_ssi_exprparser.c mod_ssi_exprparser.h:
 else
 configparser.y: lemon
 mod_ssi_exprparser.y: lemon
+http_resp_parser.y: lemon
 
 configparser.c configparser.h: configparser.y
 	rm -f configparser.h
-	$(LEMON) -q $(srcdir)/configparser.y $(srcdir)/lempar.c
+	$(LEMON) -q $(srcdir)/$< $(srcdir)/lempar.c
+
+http_resp_parser.c http_resp_parser.h: http_resp_parser.y
+	rm -f http_resp_parser.h
+	$(LEMON) -q $(srcdir)/$< $(srcdir)/lempar.c
 
 mod_ssi_exprparser.c mod_ssi_exprparser.h: mod_ssi_exprparser.y 
 	rm -f mod_ssi_exprparser.h
-	$(LEMON) -q $(srcdir)/mod_ssi_exprparser.y $(srcdir)/lempar.c
+	$(LEMON) -q $(srcdir)/$< $(srcdir)/lempar.c
 endif
 
 configfile.c: configparser.h
@@ -46,7 +51,7 @@ common_src=buffer.c log.c \
       network_write.c network_linux_sendfile.c \
       network_freebsd_sendfile.c network_writev.c \
       network_solaris_sendfilev.c network_openssl.c \
-      splaytree.c 
+      splaytree.c http_resp.c http_resp_parser.c 
       
 src = server.c response.c connections.c network.c \
       configfile.c configparser.c request.c proc_open.c
@@ -102,6 +107,11 @@ mod_mysql_vhost_la_SOURCES = mod_mysql_vhost.c
 mod_mysql_vhost_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
 mod_mysql_vhost_la_LIBADD = $(MYSQL_LIBS) $(common_libadd)
 mod_mysql_vhost_la_CPPFLAGS = $(MYSQL_INCLUDE)
+
+lib_LTLIBRARIES += mod_sql_vhost_core.la
+mod_sql_vhost_core_la_SOURCES = mod_sql_vhost_core.c
+mod_sql_vhost_core_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
+mod_sql_vhost_core_la_LIBADD = $(common_libadd)
 
 lib_LTLIBRARIES += mod_cgi.la
 mod_cgi_la_SOURCES = mod_cgi.c 
@@ -240,7 +250,7 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       mod_ssi.h mod_ssi_expr.h inet_ntop_cache.h \
       configparser.h mod_ssi_exprparser.h \
       sys-mmap.h sys-socket.h mod_cml.h mod_cml_funcs.h \
-      splaytree.h proc_open.h
+      splaytree.h proc_open.h http_resp.h mod_sql_vhost_core.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 
