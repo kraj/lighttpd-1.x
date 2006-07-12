@@ -47,7 +47,10 @@ CONFS=fastcgi-10.conf \
       lowercase.t \
       lowercase.conf \
       proxy.conf \
-      cachable.t
+      cachable.t \
+      default.conf \
+      proxy-backend-1.conf \
+      proxy-backend-2.conf 
 
 
 TESTS_ENVIRONMENT=$(srcdir)/wrapper.sh $(srcdir) $(top_builddir) 

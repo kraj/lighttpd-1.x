@@ -33,6 +33,7 @@ endif
 
 configfile.c: configparser.h
 mod_ssi_expr.c: mod_ssi_exprparser.h
+http_resp.c: http_resp_parser.h
 
 common_src=buffer.c log.c \
       keyvalue.c chunk.c  \
@@ -250,7 +251,8 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       mod_ssi.h mod_ssi_expr.h inet_ntop_cache.h \
       configparser.h mod_ssi_exprparser.h \
       sys-mmap.h sys-socket.h mod_cml.h mod_cml_funcs.h \
-      splaytree.h proc_open.h http_resp.h mod_sql_vhost_core.h
+      splaytree.h proc_open.h http_resp.h mod_sql_vhost_core.h \
+      sys-files.h sys-process.h sys-strings.h http_resp_parser.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 
@@ -277,4 +279,4 @@ proc_open_CPPFLAGS= -DDEBUG_PROC_OPEN
 #ajp_SOURCES = ajp.c
 
 noinst_HEADERS   = $(hdr)
-EXTRA_DIST = mod_skeleton.c configparser.y mod_ssi_exprparser.y lempar.c
+EXTRA_DIST = mod_skeleton.c configparser.y mod_ssi_exprparser.y lempar.c http_resp_parser.y
