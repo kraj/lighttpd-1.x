@@ -91,7 +91,8 @@ number(A) ::= STRING(B). {
 }
 
 reason(A) ::= STRING(B). {
-    buffer_copy_string_buffer(A, B);
+    A = B;
+    B = NULL;
 }
 
 reason(A) ::= reason(C) STRING(B). {
