@@ -37,4 +37,15 @@ int inet_aton(const char *cp, struct in_addr *inp);
 #include <netdb.h>
 #endif
 
+typedef union {
+#ifdef HAVE_IPV6
+	struct sockaddr_in6 ipv6;
+#endif
+	struct sockaddr_in ipv4;
+#ifdef HAVE_SYS_UN_H
+	struct sockaddr_un un;
+#endif
+	struct sockaddr plain;
+} sock_addr;
+
 #endif
