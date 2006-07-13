@@ -38,14 +38,14 @@ response_hdr ::= headers(HDR) CRLF . {
     } else {
         char *err;
         resp->status = strtol(ds->value->ptr, &err, 10);
-    
-        if (*err != '\0') {
+   
+        if (*err != '\0' && *err != ' ') {
             buffer_copy_string(ctx->errmsg, "expected a number: ");
             buffer_append_string_buffer(ctx->errmsg, ds->value);
+            buffer_append_string(ctx->errmsg, err);
         
             ctx->ok = 0;
         }
-
     }
 
     HDR = NULL;
