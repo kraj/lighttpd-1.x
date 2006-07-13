@@ -12,6 +12,8 @@
 
 #include "stat_cache.h"
 
+#include "sys-strings.h"
+#include "sys-files.h"
 /* plugin config for all request/connections */
 
 typedef struct {
@@ -157,6 +159,7 @@ URIHANDLER_FUNC(mod_indexfile_subrequest) {
 			buffer_copy_string_buffer(p->tmp_buf, con->physical.doc_root);
 		} else {
 			buffer_copy_string_buffer(p->tmp_buf, con->physical.path);
+			PATHNAME_APPEND_SLASH(p->tmp_buf);
 		}
 		buffer_append_string_buffer(p->tmp_buf, ds->value);
 
