@@ -15,6 +15,7 @@
 #include "response.h"
 #include "stat_cache.h"
 #include "stream.h"
+#include "etag.h"
 
 #include "sys-strings.h"
 
@@ -69,6 +70,7 @@ typedef struct {
 
 	buffer *tmp_buf;
 	buffer *content_charset;
+	buffer *path;
 
 	plugin_config **config_storage;
 
@@ -154,6 +156,7 @@ INIT_FUNC(mod_dirlisting_init) {
 
 	p->tmp_buf = buffer_init();
 	p->content_charset = buffer_init();
+	p->path = buffer_init();
 
 	return p;
 }
@@ -183,6 +186,7 @@ FREE_FUNC(mod_dirlisting_free) {
 	}
 
 	buffer_free(p->tmp_buf);
+	buffer_free(p->path);
 	buffer_free(p->content_charset);
 
 	free(p);
@@ -576,7 +580,6 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 	buffer *out;
 	struct dirent *dent;
 	struct stat st;
-	char *path, *path_file;
 	size_t i;
 	int hide_dotfiles = p->conf.hide_dot_files;
 	dirls_list_t dirs, files, *list;
@@ -586,6 +589,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 	size_t k;
 	const char *content_type;
 	long name_max;
+
 #ifdef HAVE_XATTR
 	char attrval[128];
 	int attrlen;
@@ -594,10 +598,10 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 	struct tm tm;
 #endif
 
-	if (dir->used == 0) return -1;
+	/* empty pathname, never ... */
+	if (buffer_is_empty(dir)) return -1;
 
-	i = dir->used - 1;
-
+	/* max-length for the opendir */
 #ifdef HAVE_PATHCONF
 	if (-1 == (name_max = pathconf(dir->ptr, _PC_NAME_MAX))) {
 #ifdef NAME_MAX
@@ -612,20 +616,18 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 	name_max = NAME_MAX;
 #endif
 
-	path = malloc(dir->used + name_max);
-	assert(path);
-	strcpy(path, dir->ptr);
-#ifdef _WIN32
-	/* append \*.* to the path and keep the \ as part of the pathname */
-	strcat(path, "\\*.*");
-#endif
-	path_file = path + i + 1;
+	buffer_copy_string_buffer(p->path, dir);
+	PATHNAME_APPEND_SLASH(p->path);
 
-	if (NULL == (dp = opendir(path))) {
+#ifdef _WIN32
+	/* append *.* to the path */
+	buffer_append_string(path, "*.*");
+#endif
+
+	if (NULL == (dp = opendir(p->path->ptr))) {
 		log_error_write(srv, __FILE__, __LINE__, "sbs",
 			"opendir failed:", dir, strerror(errno));
 
-		free(path);
 		return -1;
 	}
 
@@ -696,9 +698,13 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 		 */
 		if (i > (size_t)name_max) continue;
 
-		memcpy(path_file, dent->d_name, i + 1);
-		if (stat(path, &st) != 0) {
-			fprintf(stderr, "%s.%d: %s, %s\r\n", __FILE__, __LINE__, path, strerror(errno));
+		/* build the dirname */
+		buffer_copy_string_buffer(p->path, dir);
+		PATHNAME_APPEND_SLASH(p->path);
+		buffer_append_string(p->path, dent->d_name);
+
+		if (stat(p->path->ptr, &st) != 0) {
+			fprintf(stderr, "%s.%d: %s, %s\r\n", __FILE__, __LINE__, p->path->ptr, strerror(errno));
 			continue;
 		}
 
@@ -763,10 +769,14 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 		tmp = files.ent[i];
 
 		content_type = NULL;
-#ifdef HAVE_XATTR
 
+#ifdef HAVE_XATTR
 		if (con->conf.use_xattr) {
-			memcpy(path_file, DIRLIST_ENT_NAME(tmp), tmp->namelen + 1);
+			/* build the dirname */
+			buffer_copy_string_buffer(p->path, dir);
+			PATHNAME_APPEND_SLASH(p->path);
+			buffer_append_string_len(p->path, DIRLIST_ENT_NAME(tmp), tmp->namelen);
+
 			attrlen = sizeof(attrval) - 1;
 			if (attr_get(path, "Content-Type", attrval, &attrlen, 0) == 0) {
 				attrval[attrlen] = '\0';
@@ -820,7 +830,6 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 
 	free(files.ent);
 	free(dirs.ent);
-	free(path);
 
 	http_list_directory_footer(srv, con, p, out);
 
@@ -843,28 +852,47 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 URIHANDLER_FUNC(mod_dirlisting_subrequest) {
 	plugin_data *p = p_d;
 	stat_cache_entry *sce = NULL;
+	buffer *mtime;
+	data_string *ds;
 
-	UNUSED(srv);
-
-	if (con->physical.path->used == 0) return HANDLER_GO_ON;
-	if (con->uri.path->used == 0) return HANDLER_GO_ON;
+	if (con->uri.path->used < 2) return HANDLER_GO_ON;
 	if (con->uri.path->ptr[con->uri.path->used - 2] != '/') return HANDLER_GO_ON;
+	if (con->physical.path->used == 0) return HANDLER_GO_ON;
 
 	mod_dirlisting_patch_connection(srv, con, p);
 
 	if (!p->conf.dir_listing) return HANDLER_GO_ON;
+
+	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+		/* just a second ago the file was still there */
+		return HANDLER_GO_ON;
+	}
+
+	if (!S_ISDIR(sce->st.st_mode)) return HANDLER_GO_ON;
 
 	if (con->conf.log_request_handling) {
 		log_error_write(srv, __FILE__, __LINE__,  "s",  "-- handling the request as Dir-Listing");
 		log_error_write(srv, __FILE__, __LINE__,  "sb", "URI          :", con->uri.path);
 	}
 
-	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
-		fprintf(stderr, "%s.%d: %s\n", __FILE__, __LINE__, con->physical.path->ptr);
-		SEGFAULT();
+	/* perhaps this a cachable request
+	 * - we use the etag of the directory
+	 * */
+
+	etag_mutate(con->physical.etag, sce->etag);
+	response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
+
+	/* prepare header */
+	if (NULL == (ds = (data_string *)array_get_element(con->response.headers, "Last-Modified"))) {
+		mtime = strftime_cache_get(srv, sce->st.st_mtime);
+		response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
+	} else {
+		mtime = ds->value;
 	}
 
-	if (!S_ISDIR(sce->st.st_mode)) return HANDLER_GO_ON;
+	if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {
+		return HANDLER_FINISHED;
+	}
 
 	if (http_list_directory(srv, con, p, con->physical.path)) {
 		/* dirlisting failed */
