@@ -16,6 +16,8 @@
 #include "stat_cache.h"
 #include "stream.h"
 
+#include "sys-strings.h"
+
 /**
  * this is a dirlisting for a lighttpd plugin
  */
@@ -614,11 +616,10 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 	assert(path);
 	strcpy(path, dir->ptr);
 #ifdef _WIN32
-    /* append \*.* to the path and keep the \ as part of the pathname */
-    strcat(path, "\\*.*");
-    i++;
+	/* append \*.* to the path and keep the \ as part of the pathname */
+	strcat(path, "\\*.*");
 #endif
-	path_file = path + i;
+	path_file = path + i + 1;
 
 	if (NULL == (dp = opendir(path))) {
 		log_error_write(srv, __FILE__, __LINE__, "sbs",
@@ -697,9 +698,9 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 
 		memcpy(path_file, dent->d_name, i + 1);
 		if (stat(path, &st) != 0) {
-            fprintf(stderr, "%s.%d: %s, %s\r\n", __FILE__, __LINE__, path, strerror(errno));
+			fprintf(stderr, "%s.%d: %s, %s\r\n", __FILE__, __LINE__, path, strerror(errno));
 			continue;
-        }
+		}
 
 		list = &files;
 		if (S_ISDIR(st.st_mode))
