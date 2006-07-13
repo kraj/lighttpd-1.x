@@ -34,43 +34,41 @@
 * as vectors
 */
 NETWORK_BACKEND_READ(read) {
-    int toread;
-    buffer *b;
-    off_t r;
+	int toread;
+	buffer *b;
+	off_t r;
 
-	/* check how much we have to read */
-	if (ioctl(fd, FIONREAD, &toread)) {
-		log_error_write(srv, __FILE__, __LINE__, "sd",
-				"ioctl failed: ",
-				fd);
-		return NETWORK_STATUS_FATAL_ERROR;
-	}
+	/* use a chunk-size of 8k */
+	do {
+		toread = 8192;
 
-	if (toread == 0) return NETWORK_STATUS_WAIT_FOR_EVENT;
+		b = chunkqueue_get_append_buffer(cq);
 
-    /*
-    * our chunk queue is quiet large already
-    *
-    * let's buffer it to disk
-    */
+		buffer_prepare_copy(b, toread);
 
-    b = chunkqueue_get_append_buffer(cq);
+		if (-1 == (r = read(fd, b->ptr, toread))) {
+			switch (errno) {
+			case EAGAIN:
+				return NETWORK_STATUS_WAIT_FOR_EVENT;
+			default:
+				log_error_write(srv, __FILE__, __LINE__, "sds",
+					"unexpected end-of-file (perhaps the proxy process died):",
+					fd, strerror(errno));
+				return NETWORK_STATUS_FATAL_ERROR;
+			}
+		}
 
-    buffer_prepare_copy(b, toread);
+		if (r == 0) {
+			return NETWORK_STATUS_CONNECTION_CLOSE;
+		}
 
-    if (-1 == (r = read(fd, b->ptr, toread))) {
-		log_error_write(srv, __FILE__, __LINE__, "sds",
-				"unexpected end-of-file (perhaps the proxy process died):",
-				fd, strerror(errno));
-		return NETWORK_STATUS_FATAL_ERROR;
-	}
+		/* this should be catched by the b > 0 above */
+		assert(r);
+		b->used += r + 1;
+		b->ptr[b->used - 1] = '\0';
+	} while (r == toread);
 
-	/* this should be catched by the b > 0 above */
-	assert(r);
-	b->used += r + 1;
-	b->ptr[b->used - 1] = '\0';
-
-    return NETWORK_STATUS_SUCCESS;
+	return NETWORK_STATUS_SUCCESS;
 }
 
 NETWORK_BACKEND_WRITE(write) {

@@ -171,7 +171,7 @@ NETWORK_BACKEND_WRITE(linuxsendfile) {
 		}
 	}
 
-	return chunks_written;
+	return NETWORK_STATUS_SUCCESS;
 }
 
 #endif

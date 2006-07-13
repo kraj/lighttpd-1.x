@@ -98,9 +98,9 @@ NETWORK_BACKEND_WRITE_CHUNK(writev_mem) {
 	if ((r = writev(fd, chunks, num_chunks)) < 0) {
 		switch (errno) {
 		case EAGAIN:
+			return NETWORK_STATUS_WAIT_FOR_EVENT;
 		case EINTR:
-			r = 0;
-			break;
+			return NETWORK_STATUS_INTERRUPTED;
 		case EPIPE:
 		case ECONNRESET:
 			return NETWORK_STATUS_CONNECTION_CLOSE;
@@ -125,10 +125,12 @@ NETWORK_BACKEND_WRITE_CHUNK(writev_mem) {
 			/* partially written */
 
 			tc->offset += r;
-			break;
+
+			return NETWORK_STATUS_WAIT_FOR_EVENT;
 		}
 	}
 
+	/* all chunks have been pushed out */
 	return NETWORK_STATUS_SUCCESS;
 }
 
