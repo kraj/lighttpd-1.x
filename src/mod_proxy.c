@@ -58,6 +58,9 @@
  *            - persistent connection with upstream servers
  *            - HTTP/1.1
  */
+
+
+
 typedef enum {
 	PROXY_BALANCE_UNSET,
 	PROXY_BALANCE_FAIR,
@@ -80,6 +83,8 @@ typedef struct {
 	buffer *parse_response;
 	buffer *balance_buf;
 
+	http_resp *resp;
+
 	array *ignore_headers;
 
 	plugin_config **config_storage;
@@ -92,8 +97,8 @@ typedef enum {
 	PROXY_STATE_CONNECT,
 	PROXY_STATE_PREPARE_WRITE,
 	PROXY_STATE_WRITE,
-    PROXY_STATE_RESPONSE_HEADER,
-    PROXY_STATE_RESPONSE_CONTENT,
+	PROXY_STATE_RESPONSE_HEADER,
+	PROXY_STATE_RESPONSE_CONTENT,
 	PROXY_STATE_ERROR
 } proxy_connection_state_t;
 
@@ -105,11 +110,8 @@ typedef struct {
 
 	data_proxy *host;
 
-	buffer *response;
-	buffer *response_header;
-
 	chunkqueue *wb;
-    chunkqueue *rb;
+	chunkqueue *rb;
 
 	int fd; /* fd to the proxy process */
 	int fde_ndx; /* index into the fd-event buffer */
@@ -133,11 +135,8 @@ static handler_ctx * handler_ctx_init() {
 	hctx->state = PROXY_STATE_INIT;
 	hctx->host = NULL;
 
-	hctx->response = buffer_init();
-	hctx->response_header = buffer_init();
-
 	hctx->wb = chunkqueue_init();
-    hctx->rb = chunkqueue_init();
+	hctx->rb = chunkqueue_init();
 
 	hctx->fd = -1;
 	hctx->fde_ndx = -1;
@@ -146,10 +145,8 @@ static handler_ctx * handler_ctx_init() {
 }
 
 static void handler_ctx_free(handler_ctx *hctx) {
-	buffer_free(hctx->response);
-	buffer_free(hctx->response_header);
 	chunkqueue_free(hctx->wb);
-    chunkqueue_free(hctx->rb);
+	chunkqueue_free(hctx->rb);
 
 	free(hctx);
 }
@@ -167,17 +164,18 @@ INIT_FUNC(mod_proxy_init) {
 
 	p = calloc(1, sizeof(*p));
 
-	p->parse_response = buffer_init();
 	p->balance_buf = buffer_init();
 	p->ignore_headers = array_init();
+	p->resp = http_response_init();
 
 	for (i = 0; hop2hop_headers[i]; i++) {
 		data_string *ds;
 
-	    	if (NULL == (ds = (data_string *)array_get_unused_element(p->ignore_headers, TYPE_STRING))) {
+		if (NULL == (ds = (data_string *)array_get_unused_element(p->ignore_headers, TYPE_STRING))) {
 			ds = data_string_init();
 		}
 
+		buffer_copy_string(ds->key, hop2hop_headers[i]);
 		buffer_copy_string(ds->value, hop2hop_headers[i]);
 		array_insert_unique(p->ignore_headers, (data_unset *)ds);
 	}
@@ -190,9 +188,6 @@ FREE_FUNC(mod_proxy_free) {
 	plugin_data *p = p_d;
 
 	UNUSED(srv);
-
-	buffer_free(p->parse_response);
-	buffer_free(p->balance_buf);
 
 	if (p->config_storage) {
 		size_t i;
@@ -209,7 +204,9 @@ FREE_FUNC(mod_proxy_free) {
 		free(p->config_storage);
 	}
 
-	free(p->ignore_headers);
+	array_free(p->ignore_headers);
+	buffer_free(p->balance_buf);
+	http_response_free(p->resp);
 
 	free(p);
 
@@ -262,7 +259,7 @@ SETDEFAULTS_FUNC(mod_proxy_set_defaults) {
 			s->balance = PROXY_BALANCE_HASH;
 		} else {
 			log_error_write(srv, __FILE__, __LINE__, "sb",
-				        "proxy.balance has to be one of: fair, round-robin, hash, but not:", p->balance_buf);
+				"proxy.balance has to be one of: fair, round-robin, hash, but not:", p->balance_buf);
 			return HANDLER_ERROR;
 		}
 
@@ -408,14 +405,14 @@ static int proxy_establish_connection(server *srv, handler_ctx *hctx) {
 
 	if (-1 == connect(proxy_fd, proxy_addr, servlen)) {
 #ifdef _WIN32
-        errno = WSAGetLastError();
+	errno = WSAGetLastError();
 #endif
-        switch(errno) {
+	switch(errno) {
 #ifdef _WIN32
-        case WSAEWOULDBLOCK:
+	case WSAEWOULDBLOCK:
 #endif
-        case EINPROGRESS:
-        case EALREADY:
+	case EINPROGRESS:
+	case EALREADY:
 			if (p->conf.debug) {
 				log_error_write(srv, __FILE__, __LINE__, "sd",
 						"connect delayed:", proxy_fd);
@@ -430,7 +427,7 @@ static int proxy_establish_connection(server *srv, handler_ctx *hctx) {
 			return -1;
 		}
 	}
-    fprintf(stderr, "%s.%d: connected fd = %d\r\n", __FILE__, __LINE__, proxy_fd);
+	fprintf(stderr, "%s.%d: connected fd = %d\r\n", __FILE__, __LINE__, proxy_fd);
 	if (p->conf.debug) {
 		log_error_write(srv, __FILE__, __LINE__, "sd",
 				"connect succeeded: ", proxy_fd);
@@ -440,27 +437,27 @@ static int proxy_establish_connection(server *srv, handler_ctx *hctx) {
 }
 
 void proxy_set_header(connection *con, const char *key, const char *value) {
-    data_string *ds_dst;
+	data_string *ds_dst;
 
-    if (NULL == (ds_dst = (data_string *)array_get_unused_element(con->request.headers, TYPE_STRING))) {
-          ds_dst = data_string_init();
-    }
+	if (NULL == (ds_dst = (data_string *)array_get_unused_element(con->request.headers, TYPE_STRING))) {
+		ds_dst = data_string_init();
+	}
 
-    buffer_copy_string(ds_dst->key, key);
-    buffer_copy_string(ds_dst->value, value);
-    array_insert_unique(con->request.headers, (data_unset *)ds_dst);
+	buffer_copy_string(ds_dst->key, key);
+	buffer_copy_string(ds_dst->value, value);
+	array_insert_unique(con->request.headers, (data_unset *)ds_dst);
 }
 
 void proxy_append_header(connection *con, const char *key, const char *value) {
-    data_string *ds_dst;
+	data_string *ds_dst;
 
-    if (NULL == (ds_dst = (data_string *)array_get_unused_element(con->request.headers, TYPE_STRING))) {
-          ds_dst = data_string_init();
-    }
+	if (NULL == (ds_dst = (data_string *)array_get_unused_element(con->request.headers, TYPE_STRING))) {
+		ds_dst = data_string_init();
+	}
 
-    buffer_copy_string(ds_dst->key, key);
-    buffer_append_string(ds_dst->value, value);
-    array_insert_unique(con->request.headers, (data_unset *)ds_dst);
+	buffer_copy_string(ds_dst->key, key);
+	buffer_append_string(ds_dst->value, value);
+	array_insert_unique(con->request.headers, (data_unset *)ds_dst);
 }
 
 
@@ -497,16 +494,15 @@ static int proxy_create_env(server *srv, handler_ctx *hctx) {
 
 		ds = (data_string *)con->request.headers->data[i];
 
-		if (ds->value->used && ds->key->used) {
+		if (buffer_is_empty(ds->value) || buffer_is_empty(ds->key)) continue;
 
-			/* don't copy hop-to-hop headers */
-			if (array_get_element(p->ignore_headers, ds->key->ptr)) continue;
+		if (!buffer_is_equal_string(ds->key, CONST_STR_LEN("Connection"))) continue;
+		if (!buffer_is_equal_string(ds->key, CONST_STR_LEN("Keep-Alive"))) continue;
 
-			buffer_append_string_buffer(b, ds->key);
-			BUFFER_APPEND_STRING_CONST(b, ": ");
-			buffer_append_string_buffer(b, ds->value);
-			BUFFER_APPEND_STRING_CONST(b, "\r\n");
-		}
+		buffer_append_string_buffer(b, ds->key);
+		BUFFER_APPEND_STRING_CONST(b, ": ");
+		buffer_append_string_buffer(b, ds->value);
+		BUFFER_APPEND_STRING_CONST(b, "\r\n");
 	}
 
 	BUFFER_APPEND_STRING_CONST(b, "\r\n");
@@ -579,98 +575,134 @@ static int proxy_set_state(server *srv, handler_ctx *hctx, proxy_connection_stat
 
 
 static void chunkqueue_print(chunkqueue *cq) {
-    chunk *c;
+	chunk *c;
 
-    for (c = cq->first; c; c = c->next) {
-        fprintf(stderr, "%s", c->mem->ptr + c->offset);
-    }
-    fprintf(stderr, "\r\n");
+	for (c = cq->first; c; c = c->next) {
+		fprintf(stderr, "%s", c->mem->ptr + c->offset);
+	}
+	fprintf(stderr, "\r\n");
 }
 
 static int proxy_demux_response(server *srv, handler_ctx *hctx) {
 	plugin_data *p    = hctx->plugin_data;
 	connection *con   = hctx->remote_conn;
 	int proxy_fd       = hctx->fd;
-    chunkqueue *next_queue = NULL;
-    chunk *c = NULL;
+	chunkqueue *next_queue = NULL;
+	chunk *c = NULL;
 
-    switch(srv->network_backend_read(srv, con, proxy_fd, hctx->rb)) {
-    case NETWORK_STATUS_SUCCESS:
-        /* we got content */
-        break;
-    case NETWORK_STATUS_CONNECTION_CLOSE:
-        /* we are done, get out of here */
+	switch(srv->network_backend_read(srv, con, proxy_fd, hctx->rb)) {
+	case NETWORK_STATUS_SUCCESS:
+		/* we got content */
+		break;
+	case NETWORK_STATUS_WAIT_FOR_EVENT:
+		/* the ioctl will return WAIT_FOR_EVENT on a read */
+		if (0 == con->file_started) return -1;
+	case NETWORK_STATUS_CONNECTION_CLOSE:
+		/* we are done, get out of here */
 		con->file_finished = 1;
 
-        /* close the chunk-queue with a empty chunk */
-		http_chunk_append_mem(srv, con, NULL, 0);
-		joblist_append(srv, con);
+		/* close the chunk-queue with a empty chunk */
 
-        return 1;
-    default:
-        /* oops */
-        return -1;
-    }
-
-    /* looks like we got some content
-    *
-    * split off the header from the incoming stream
-    */
-
-    if (hctx->state == PROXY_STATE_RESPONSE_HEADER) {
-        http_resp *resp = http_response_init();
-
-        /* the response header is not fully received yet,
-        *
-        * extract the http-response header from the rb-cq
-        */
-        fprintf(stderr, "%s.%d: network-read\r\n", __FILE__, __LINE__);
-        chunkqueue_print(hctx->rb);
-
-        switch (http_response_parse_cq(hctx->rb, resp)) {
-        case PARSE_ERROR:
-            /* parsing failed */
-
-            con->http_status = 502; /* Bad Gateway */
-            return 1;
-        case PARSE_NEED_MORE:
-            return 0;
-        case PARSE_SUCCESS:
-            con->http_status = resp->status;
-
-            fprintf(stderr, "%s.%d: parsing done\r\n", __FILE__, __LINE__);
-            chunkqueue_print(hctx->rb);
-
-            con->file_started = 1;
-
-            hctx->state = PROXY_STATE_RESPONSE_CONTENT;
-            break;
-        }
-    }
-
-    /* FIXME: pass the response-header to the other plugins to
-    * setup the filter-queue
-    *
-    * - use next-queue instead of con->write_queue
-    */
-
-    next_queue = con->write_queue;
-
-    assert(hctx->state == PROXY_STATE_RESPONSE_CONTENT);
-
-    /* FIXME: if we have a content-length or chunked-encoding
-    * handle it.
-    *
-    * for now we wait for EOF on the socket */
-
-    /* copy the content to the next cq */
-    for (c = hctx->rb->first; c; c = c->next) {
-        http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
-
-        c->offset = c->mem->used - 1;
+		return 1;
+	default:
+		/* oops */
+		return -1;
 	}
 
-    chunkqueue_remove_finished_chunks(hctx->rb);
+	/* looks like we got some content
+	*
+	* split off the header from the incoming stream
+	*/
+
+	if (hctx->state == PROXY_STATE_RESPONSE_HEADER) {
+		size_t i;
+		int have_content_length = 0;
+
+		http_response_reset(p->resp);
+
+		/* the response header is not fully received yet,
+		*
+		* extract the http-response header from the rb-cq
+		*/
+		switch (http_response_parse_cq(hctx->rb, p->resp)) {
+		case PARSE_ERROR:
+			/* parsing failed */
+
+			con->http_status = 502; /* Bad Gateway */
+			return 1;
+		case PARSE_NEED_MORE:
+			return 0;
+		case PARSE_SUCCESS:
+			con->http_status = p->resp->status;
+
+			chunkqueue_remove_finished_chunks(hctx->rb);
+
+			/* copy the http-headers */
+			for (i = 0; i < p->resp->headers->used; i++) {
+				const char *ign[] = { "Status", "Connection", NULL };
+				size_t j;
+				data_string *ds;
+
+				data_string *header = (data_string *)p->resp->headers->data[i];
+
+				/* some headers are ignored by default */
+				for (j = 0; ign[j]; j++) {
+					if (0 == strcasecmp(ign[j], header->key->ptr)) break;
+				}
+				if (ign[j]) continue;
+
+				if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("Location"))) {
+					/* CGI/1.1 rev 03 - 7.2.1.2 */
+					if (con->http_status == 0) con->http_status = 302;
+				} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("Content-Length"))) {
+					have_content_length = 1;
+				}
+				
+				if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
+					ds = data_response_init();
+				}
+				buffer_copy_string_buffer(ds->key, header->key);
+				buffer_copy_string_buffer(ds->value, header->value);
+
+				array_insert_unique(con->response.headers, (data_unset *)ds);
+			}
+
+			con->file_started = 1;
+
+			if (con->request.http_version == HTTP_VERSION_1_1 &&
+			    !have_content_length) {
+				con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
+	   		}
+
+			hctx->state = PROXY_STATE_RESPONSE_CONTENT;
+			break;
+		}
+	}
+
+	/* FIXME: pass the response-header to the other plugins to
+	* setup the filter-queue
+	*
+	* - use next-queue instead of con->write_queue
+	*/
+
+	next_queue = con->write_queue;
+
+	assert(hctx->state == PROXY_STATE_RESPONSE_CONTENT);
+
+	/* FIXME: if we have a content-length or chunked-encoding
+	* handle it.
+	*
+	* for now we wait for EOF on the socket */
+
+	/* copy the content to the next cq */
+	for (c = hctx->rb->first; c; c = c->next) {
+		http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+
+		c->offset = c->mem->used - 1;
+	}
+
+	chunkqueue_remove_finished_chunks(hctx->rb);
+	joblist_append(srv, con);
 
 	return 0;
 }
@@ -684,7 +716,7 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 	int ret;
 
 	if (!host ||
-	    (!host->host->used || !host->port)) return -1;
+		(!host->host->used || !host->port)) return -1;
 
 	switch(hctx->state) {
 	case PROXY_STATE_INIT:
@@ -752,7 +784,6 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 			if (p->conf.debug) {
 				log_error_write(srv, __FILE__, __LINE__,  "s", "proxy - connect - delayed success");
 			}
-            fprintf(stderr, "%s.%d: connected fd = %d\r\n", __FILE__, __LINE__, hctx->fd);
 		}
 
 		proxy_set_state(srv, hctx, PROXY_STATE_PREPARE_WRITE);
@@ -769,11 +800,11 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 		chunkqueue_remove_finished_chunks(hctx->wb);
 
 		switch(ret) {
-        case NETWORK_STATUS_FATAL_ERROR:
+		case NETWORK_STATUS_FATAL_ERROR:
 			log_error_write(srv, __FILE__, __LINE__, "ssd", "write failed:", strerror(errno), errno);
 
 			return HANDLER_ERROR;
-        case NETWORK_STATUS_WAIT_FOR_EVENT:
+		case NETWORK_STATUS_WAIT_FOR_EVENT:
 
 			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
 
@@ -792,6 +823,7 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 		}
 
 		return HANDLER_WAIT_FOR_EVENT;
+	case PROXY_STATE_RESPONSE_CONTENT:
 	case PROXY_STATE_RESPONSE_HEADER:
 		/* waiting for a response */
 
@@ -903,8 +935,8 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 
 
 	if ((revents & FDEVENT_IN) &&
-        (hctx->state == PROXY_STATE_RESPONSE_HEADER ||
-         hctx->state == PROXY_STATE_RESPONSE_CONTENT)) {
+	    (hctx->state == PROXY_STATE_RESPONSE_HEADER ||
+	     hctx->state == PROXY_STATE_RESPONSE_CONTENT)) {
 
 		if (p->conf.debug) {
 			log_error_write(srv, __FILE__, __LINE__, "sd",
@@ -915,7 +947,11 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 		case 0:
 			break;
 		case 1:
+			log_error_write(srv, __FILE__, __LINE__, "sd",
+					"proxy: request done", hctx->fd);
 			hctx->host->usage--;
+
+			http_chunk_append_mem(srv, con, NULL, 0);
 
 			/* we are done */
 			proxy_connection_close(srv, hctx);
@@ -1026,7 +1062,6 @@ static handler_t mod_proxy_check_extension(server *srv, connection *con, void *p
 	}
 
 	s_len = fn->used - 1;
-
 
 	path_info_offset = 0;
 
