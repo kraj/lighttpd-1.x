@@ -144,10 +144,20 @@ URIHANDLER_FUNC(mod_indexfile_subrequest) {
 
 	mod_indexfile_patch_connection(srv, con, p);
 
+	/* is the physical-path really a dir ? */
+	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+		return HANDLER_GO_ON;
+	}
+
+	if (!S_ISDIR(sce->st.st_mode)) {
+		return HANDLER_GO_ON;
+	}
+
 	if (con->conf.log_request_handling) {
 		log_error_write(srv, __FILE__, __LINE__,  "s",  "-- handling the request as Indexfile");
 		log_error_write(srv, __FILE__, __LINE__,  "sb", "URI          :", con->uri.path);
 	}
+
 
 	/* indexfile */
 	for (k = 0; k < p->conf.indexfiles->used; k++) {
