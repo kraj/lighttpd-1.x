@@ -37,7 +37,7 @@
 #include "sys-files.h"
 
 typedef struct {
-	        PLUGIN_DATA;
+	PLUGIN_DATA;
 } plugin_data;
 
 static connection *connections_get_new_connection(server *srv) {
@@ -191,32 +191,32 @@ static void dump_packet(const unsigned char *data, size_t len) {
 static network_status_t connection_handle_read(server *srv, connection *con) {
 	off_t oldlen, newlen;
 
-    oldlen = chunkqueue_length(con->read_queue);
+	oldlen = chunkqueue_length(con->read_queue);
 
-    switch(network_read_chunkqueue(srv, con, con->read_queue)) {
-    case NETWORK_STATUS_SUCCESS:
-        break;
-    case NETWORK_STATUS_WAIT_FOR_EVENT:
-        con->is_readable = 0;
-        return NETWORK_STATUS_WAIT_FOR_EVENT;
-    case NETWORK_STATUS_INTERRUPTED:
-        con->is_readable = 1;
-        return NETWORK_STATUS_WAIT_FOR_EVENT;
-    case NETWORK_STATUS_CONNECTION_CLOSE:
-        /* pipelining */
-        con->is_readable = 0;
-        return NETWORK_STATUS_CONNECTION_CLOSE;
-    case NETWORK_STATUS_FATAL_ERROR:
-        con->is_readable = 0;
+	switch(network_read_chunkqueue(srv, con, con->read_queue)) {
+	case NETWORK_STATUS_SUCCESS:
+		break;
+	case NETWORK_STATUS_WAIT_FOR_EVENT:
+		con->is_readable = 0;
+		return NETWORK_STATUS_WAIT_FOR_EVENT;
+	case NETWORK_STATUS_INTERRUPTED:
+		con->is_readable = 1;
+		return NETWORK_STATUS_WAIT_FOR_EVENT;
+	case NETWORK_STATUS_CONNECTION_CLOSE:
+		/* pipelining */
+		con->is_readable = 0;
+		return NETWORK_STATUS_CONNECTION_CLOSE;
+	case NETWORK_STATUS_FATAL_ERROR:
+		con->is_readable = 0;
 
-        connection_set_state(srv, con, CON_STATE_ERROR);
-        return NETWORK_STATUS_FATAL_ERROR;
-    default:
-        SEGFAULT();
-        break;
-    }
+		connection_set_state(srv, con, CON_STATE_ERROR);
+		return NETWORK_STATUS_FATAL_ERROR;
+	default:
+		SEGFAULT();
+		break;
+	}
 
-    newlen = chunkqueue_length(con->read_queue);
+	newlen = chunkqueue_length(con->read_queue);
 
 	con->bytes_read += (newlen - oldlen);
 
@@ -420,7 +420,7 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 }
 
 static int connection_handle_write(server *srv, connection *con) {
-    switch(network_write_chunkqueue(srv, con, con->write_queue)) {
+	switch(network_write_chunkqueue(srv, con, con->write_queue)) {
 	case NETWORK_STATUS_SUCCESS:
 		if (con->file_finished) {
 			connection_set_state(srv, con, CON_STATE_RESPONSE_END);
@@ -748,13 +748,13 @@ int connection_handle_read_state(server *srv, connection *con)  {
 			 * if we still have content, handle it, if not leave here */
 
 			if (cq->first == cq->last &&
-                (NULL == cq->first ||
+		            (NULL == cq->first ||
 			    cq->first->mem->used == 0)) {
 
 				/* conn-closed, leave here */
 				connection_set_state(srv, con, CON_STATE_ERROR);
 
-                return 0;
+				return 0;
 			}
 		default:
 			break;
@@ -1141,10 +1141,10 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 
 	if (-1 == (cnt = accept(srv_socket->fd, (struct sockaddr *) &cnt_addr, &cnt_len))) {
 #ifdef _WIN32
-        errno = WSAGetLastError();
+		errno = WSAGetLastError();
 #endif
 		if ((errno != EAGAIN) &&
-            (errno != EWOULDBLOCK) &&
+		    (errno != EWOULDBLOCK) &&
 		    (errno != EINTR)) {
 			log_error_write(srv, __FILE__, __LINE__, "ssd", "accept failed:", strerror(errno), srv_socket->fd);
 		}
