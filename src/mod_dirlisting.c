@@ -28,7 +28,7 @@
 #include <sys/syslimits.h>
 #endif
 
-#ifdef HAVE_ATTR_ATTRIBUTES_H
+#ifdef HAVE_XATTR
 #include <attr/attributes.h>
 #endif
 
@@ -778,7 +778,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 			buffer_append_string_len(p->path, DIRLIST_ENT_NAME(tmp), tmp->namelen);
 
 			attrlen = sizeof(attrval) - 1;
-			if (attr_get(path, "Content-Type", attrval, &attrlen, 0) == 0) {
+			if (attr_get(p->path->ptr, "Content-Type", attrval, &attrlen, 0) == 0) {
 				attrval[attrlen] = '\0';
 				content_type = attrval;
 			}
