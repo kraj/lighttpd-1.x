@@ -56,6 +56,7 @@ int chunkqueue_prepend_buffer(chunkqueue *c, buffer *mem);
 buffer * chunkqueue_get_append_buffer(chunkqueue *c);
 buffer * chunkqueue_get_prepend_buffer(chunkqueue *c);
 chunk * chunkqueue_get_append_tempfile(chunkqueue *cq);
+void chunkqueue_remove_empty_last_chunk(chunkqueue *cq);
 
 int chunkqueue_remove_finished_chunks(chunkqueue *cq);
 
@@ -65,5 +66,7 @@ void chunkqueue_free(chunkqueue *c);
 void chunkqueue_reset(chunkqueue *c);
 
 int chunkqueue_is_empty(chunkqueue *c);
+
+void chunkqueue_print(chunkqueue *cq);
 
 #endif

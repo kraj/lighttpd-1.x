@@ -356,6 +356,7 @@ int chunkqueue_remove_finished_chunks(chunkqueue *cq) {
 
 		switch (c->type) {
 		case MEM_CHUNK:
+			if (c->mem->used == 0) is_finished = 1;
 			if (c->offset == (off_t)c->mem->used - 1) is_finished = 1;
 			break;
 		case FILE_CHUNK:
@@ -384,3 +385,50 @@ int chunkqueue_remove_finished_chunks(chunkqueue *cq) {
 
 	return 0;
 }
+
+void chunkqueue_print(chunkqueue *cq) {
+	chunk *c;
+
+	for (c = cq->first; c; c = c->next) {
+		fprintf(stderr, "(mem) %s", c->mem->ptr + c->offset);
+	}
+	fprintf(stderr, "\r\n");
+}
+
+
+/**
+ * remove the last chunk if it is empty
+ */
+
+void chunkqueue_remove_empty_last_chunk(chunkqueue *cq) {
+	chunk *c;
+	if (!cq->last) return;
+	if (!cq->first) return;
+
+	if (cq->first == cq->last) {
+		c = cq->first;
+
+		if (c->type != MEM_CHUNK) return;
+		if (c->mem->used == 0) {
+			chunk_free(c);
+			cq->first = cq->last = NULL;
+		}
+		return;
+	}
+
+	for (c = cq->first; c->next; c = c->next) {
+		if (c->type != MEM_CHUNK) continue;
+		if (c->mem->used != 0) continue;
+
+		if (c->next == cq->last) {
+			cq->last = c;
+
+			chunk_free(c->next);
+			c->next = NULL;
+
+			return;
+		}
+	}
+}
+
+
