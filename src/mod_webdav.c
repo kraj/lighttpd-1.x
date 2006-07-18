@@ -562,7 +562,6 @@ static int webdav_delete_file(server *srv, connection *con, plugin_data *p, phys
 
 			if (SQLITE_DONE != sqlite3_step(stmt)) {
 				/* */
-				WP();
 			}
 		}
 #endif
@@ -639,7 +638,6 @@ static int webdav_delete_dir(server *srv, connection *con, plugin_data *p, physi
 
 						if (SQLITE_DONE != sqlite3_step(stmt)) {
 							/* */
-							WP();
 						}
 					}
 #endif
@@ -723,7 +721,6 @@ static int webdav_copy_file(server *srv, connection *con, plugin_data *p, physic
 
 			if (SQLITE_DONE != sqlite3_step(stmt)) {
 				/* */
-				WP();
 			}
 		}
 	}
@@ -801,7 +798,6 @@ static int webdav_copy_dir(server *srv, connection *con, plugin_data *p, physica
 
 						if (SQLITE_DONE != sqlite3_step(stmt)) {
 							/* */
-							WP();
 						}
 					}
 #endif
@@ -1311,7 +1307,6 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 										  SQLITE_TRANSIENT);
 
 								if (SQLITE_DONE != sqlite3_step(stmt)) {
-									WP();
 								}
 							}
 						} else if (0 == xmlStrcmp(cmd->name, BAD_CAST "allprop")) {
