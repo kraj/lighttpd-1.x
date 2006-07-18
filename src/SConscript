@@ -15,7 +15,7 @@ common_src = Split("buffer.c log.c \
       fdevent_solaris_devpoll.c fdevent_freebsd_kqueue.c \
       data_config.c bitset.c \
       inet_ntop_cache.c crc32.c \
-      connections-glue.c \
+      connections-glue.c iosocket.c \
       configfile-glue.c \
       http-header-glue.c \
       splaytree.c network_writev.c \
@@ -60,7 +60,7 @@ http_resp_parser = env.Lemon('http_resp_parser.y');
 
 env.Alias('http_resp', env.Program('http_resp', 
     [ 'http_resp_parser.c', 'http_resp.c', 'buffer.c', 'array.c', 'chunk.c',
-      'keyvalue.c', 'data_string.c', 'http_resp_test.c'
+      'keyvalue.c', 'data_string.c', 'http_resp_test.c', 'log.c'
     ] ))
 
 ## the modules and how they are built
@@ -78,6 +78,7 @@ modules = {
 	'mod_rrdtool' : { 'src' : [ 'mod_rrdtool.c' ] },
 	'mod_usertrack' : { 'src' : [ 'mod_usertrack.c' ] },
 	'mod_proxy' : { 'src' : [ 'mod_proxy.c' ] },
+	'mod_proxy_core' : { 'src' : [ 'mod_proxy_core.c', 'mod_proxy_core_pool.c', 'mod_proxy_core_backend.c', 'mod_proxy_core_address.c', 'mod_proxy_core_backlog.c' ] },
 	'mod_userdir' : { 'src' : [ 'mod_userdir.c' ] },
 	'mod_secdownload' : { 'src' : [ 'mod_secure_download.c' ] },
 	'mod_accesslog' : { 'src' : [ 'mod_accesslog.c' ] },

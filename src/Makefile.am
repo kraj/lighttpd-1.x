@@ -46,7 +46,7 @@ common_src=buffer.c log.c \
       fdevent_solaris_devpoll.c fdevent_freebsd_kqueue.c \
       data_config.c bitset.c \
       inet_ntop_cache.c crc32.c \
-      connections-glue.c \
+      connections-glue.c iosocket.c \
       configfile-glue.c \
       http-header-glue.c \
       network_write.c network_linux_sendfile.c \
@@ -169,6 +169,13 @@ mod_proxy_la_SOURCES = mod_proxy.c
 mod_proxy_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
 mod_proxy_la_LIBADD = $(common_libadd)
 
+lib_LTLIBRARIES += mod_proxy_core.la
+mod_proxy_core_la_SOURCES = mod_proxy_core.c mod_proxy_core_pool.c \
+			    mod_proxy_core_backend.c mod_proxy_core_address.c mod_proxy_core_backlog.c
+mod_proxy_core_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
+mod_proxy_core_la_LIBADD = $(common_libadd)
+
+
 lib_LTLIBRARIES += mod_ssi.la
 mod_ssi_la_SOURCES = mod_ssi_exprparser.c mod_ssi_expr.c mod_ssi.c 
 mod_ssi_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
@@ -252,7 +259,11 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       configparser.h mod_ssi_exprparser.h \
       sys-mmap.h sys-socket.h mod_cml.h mod_cml_funcs.h \
       splaytree.h proc_open.h http_resp.h mod_sql_vhost_core.h \
-      sys-files.h sys-process.h sys-strings.h http_resp_parser.h
+      sys-files.h sys-process.h sys-strings.h http_resp_parser.h \
+      iosocket.h array-static.h \
+      mod_proxy_core_address.h mod_proxy_core_backend.h \
+      mod_proxy_core_backlog.h mod_proxy_core.h  \
+      mod_proxy_core_pool.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 
