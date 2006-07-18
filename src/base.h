@@ -205,7 +205,7 @@ typedef struct {
 	splay_tree *dirs; /* the nodes of the tree are fam_dir_entry */
 
 	FAMConnection *fam;
-	int    fam_fcce_ndx;
+	iosocket *sock;
 #endif
 } stat_cache;
 
@@ -317,8 +317,7 @@ typedef struct {
 				      * this is self-protection
 				      */
 
-	int fd;                      /* the FD for this connection */
-	int fde_ndx;                 /* index for the fdevent-handler */
+	iosocket *sock;
 	int ndx;                     /* reverse mapping to server->connection[ndx] */
 
 	/* fd states */
@@ -380,10 +379,6 @@ typedef struct {
 	int in_error_handler;
 
 	void *srv_socket;   /* reference to the server-socket (typecast to server_socket) */
-
-#ifdef USE_OPENSSL
-	SSL *ssl;
-#endif
 } connection;
 
 typedef struct {
@@ -436,9 +431,6 @@ typedef struct {
 	unsigned short port;
 	buffer *bindhost;
 
-	buffer *errorlog_file;
-	unsigned short errorlog_use_syslog;
-
 	unsigned short dont_daemonize;
 	buffer *changeroot;
 	buffer *username;
@@ -467,12 +459,14 @@ typedef struct {
 			STAT_CACHE_ENGINE_FAM
 	} stat_cache_engine;
 	unsigned short enable_cores;
+
+	buffer *errorlog_file;
+	unsigned short errorlog_use_syslog;
 } server_config;
 
 typedef struct {
 	sock_addr addr;
-	int       fd;
-	int       fde_ndx;
+	iosocket *sock;
 
 	buffer *ssl_pemfile;
 	buffer *ssl_ca_file;
@@ -495,11 +489,6 @@ typedef struct {
 
 typedef struct server {
 	server_socket_array srv_sockets;
-
-	/* the errorlog */
-	int errorlog_fd;
-	enum { ERRORLOG_STDERR, ERRORLOG_FILE, ERRORLOG_SYSLOG } errorlog_mode;
-	buffer *errorlog_buf;
 
 	fdevents *ev, *ev_ins;
 
@@ -584,11 +573,11 @@ typedef struct server {
 
 	fdevent_handler_t event_handler;
 
-	network_status_t (* network_backend_write)(struct server *srv, connection *con, int fd, chunkqueue *cq);
-	network_status_t (* network_backend_read)(struct server *srv, connection *con, int fd, chunkqueue *cq);
+	network_status_t (* network_backend_write)(struct server *srv, connection *con, iosocket *sock, chunkqueue *cq);
+	network_status_t (* network_backend_read)(struct server *srv, connection *con, iosocket *sock, chunkqueue *cq);
 #ifdef USE_OPENSSL
-	network_status_t (* network_ssl_backend_write)(struct server *srv, connection *con, SSL *ssl, chunkqueue *cq);
-	network_status_t (* network_ssl_backend_read)(struct server *srv, connection *con, SSL *ssl, chunkqueue *cq);
+	network_status_t (* network_ssl_backend_write)(struct server *srv, connection *con, iosocket *sock, chunkqueue *cq);
+	network_status_t (* network_ssl_backend_read)(struct server *srv, connection *con, iosocket *sock, chunkqueue *cq);
 #endif
 
 #ifdef HAVE_PWD_H
