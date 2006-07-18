@@ -21,6 +21,8 @@ my $t;
 ## 1. the real webserver
 ## 2. the proxy server
 
+SKIP: {
+  skip "disabled for now", 21;
 $tf_proxy->{PORT} = 2048;
 $tf_proxy->{CONFIGFILE} = 'proxy.conf';
 $tf_proxy->{LIGHTTPD_PIDFILE} = $tf_proxy->{SRCDIR}.'/tmp/lighttpd/lighttpd-proxy.pid';
@@ -170,4 +172,4 @@ ok($tf_proxy->handle_http($t) == 0, 'balance fair - failover to backend 2');
 ok($tf_backend2->stop_proc == 0, "Stopping lighttpd");
 
 ok($tf_proxy->stop_proc == 0, "Stopping lighttpd proxy");
-
+}
