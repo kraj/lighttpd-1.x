@@ -27,6 +27,7 @@
 #include <sys/resource.h>
 #endif
 
+
 /**
 * fill the chunkqueue will all the data that we can get
 *
@@ -38,6 +39,11 @@ NETWORK_BACKEND_READ(read) {
 	buffer *b;
 	off_t r;
 
+	/**
+	 * a EAGAIN is a successful read if we already read something to the chunkqueue
+	 */
+	int read_something = 0;
+
 	/* use a chunk-size of 8k */
 	do {
 		toread = 8192;
@@ -46,27 +52,29 @@ NETWORK_BACKEND_READ(read) {
 
 		buffer_prepare_copy(b, toread);
 
-		if (-1 == (r = read(fd, b->ptr, toread))) {
+		if (-1 == (r = read(sock->fd, b->ptr, toread))) {
 			switch (errno) {
 			case EAGAIN:
-				return NETWORK_STATUS_WAIT_FOR_EVENT;
+				/* remove the last chunk from the chunkqueue */
+				chunkqueue_remove_empty_last_chunk(cq);
+				return read_something ? NETWORK_STATUS_SUCCESS : NETWORK_STATUS_WAIT_FOR_EVENT;
 			default:
-				log_error_write(srv, __FILE__, __LINE__, "sds",
-					"unexpected end-of-file (perhaps the proxy process died):",
-					fd, strerror(errno));
+				ERROR("oops, read from fd=%d failed: %s (%d)", sock->fd, strerror(errno), errno );
+
 				return NETWORK_STATUS_FATAL_ERROR;
 			}
 		}
 
 		if (r == 0) {
-			return NETWORK_STATUS_CONNECTION_CLOSE;
+			chunkqueue_remove_empty_last_chunk(cq);
+			return read_something ? NETWORK_STATUS_SUCCESS : NETWORK_STATUS_CONNECTION_CLOSE;
 		}
 
-		/* this should be catched by the b > 0 above */
-		assert(r);
-		b->used += r + 1;
-		b->ptr[b->used - 1] = '\0';
-	} while (r == toread);
+		read_something = 1;
+
+		b->used = r;
+		b->ptr[b->used++] = '\0';
+	} while (r == toread); 
 
 	return NETWORK_STATUS_SUCCESS;
 }
@@ -92,8 +100,8 @@ NETWORK_BACKEND_WRITE(write) {
 			offset = c->mem->ptr + c->offset;
 			toSend = c->mem->used - 1 - c->offset;
 
-			if ((r = write(fd, offset, toSend)) < 0) {
-				log_error_write(srv, __FILE__, __LINE__, "ssd", "write failed: ", strerror(errno), fd);
+			if ((r = write(sock->fd, offset, toSend)) < 0) {
+				log_error_write(srv, __FILE__, __LINE__, "ssd", "write failed: ", strerror(errno), sock->fd);
 
 				return NETWORK_STATUS_FATAL_ERROR;
 			}
@@ -148,7 +156,7 @@ NETWORK_BACKEND_WRITE(write) {
 			}
 			close(ifd);
 
-			if ((r = write(fd, p + offset, toSend)) <= 0) {
+			if ((r = write(sock->fd, p + offset, toSend)) <= 0) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "write failed: ", strerror(errno));
 				munmap(p, sce->st.st_size);
 				return NETWORK_STATUS_FATAL_ERROR;
@@ -167,7 +175,7 @@ NETWORK_BACKEND_WRITE(write) {
 			}
 			close(ifd);
 
-			if (-1 == (r = send(fd, srv->tmp_buf->ptr, toSend, 0))) {
+			if (-1 == (r = send(sock->fd, srv->tmp_buf->ptr, toSend, 0))) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "write: ", strerror(errno));
 
 				return NETWORK_STATUS_FATAL_ERROR;

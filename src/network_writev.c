@@ -95,7 +95,7 @@ NETWORK_BACKEND_WRITE_CHUNK(writev_mem) {
 		}
 	}
 
-	if ((r = writev(fd, chunks, num_chunks)) < 0) {
+	if ((r = writev(sock->fd, chunks, num_chunks)) < 0) {
 		switch (errno) {
 		case EAGAIN:
 			return NETWORK_STATUS_WAIT_FOR_EVENT;
@@ -106,7 +106,7 @@ NETWORK_BACKEND_WRITE_CHUNK(writev_mem) {
 			return NETWORK_STATUS_CONNECTION_CLOSE;
 		default:
 			log_error_write(srv, __FILE__, __LINE__, "ssd",
-					"writev failed:", strerror(errno), fd);
+					"writev failed:", strerror(errno), sock->fd);
 
 			return NETWORK_STATUS_FATAL_ERROR;
 		}
@@ -144,7 +144,7 @@ NETWORK_BACKEND_WRITE(writev) {
 
 		switch(c->type) {
 		case MEM_CHUNK:
-			ret = network_write_chunkqueue_writev_mem(srv, con, fd, cq, c);
+			ret = network_write_chunkqueue_writev_mem(srv, con, sock, cq, c);
 
 			/* check which chunks are finished now */
 			for (tc = c; tc; tc = tc->next) {
@@ -305,7 +305,7 @@ NETWORK_BACKEND_WRITE(writev) {
 			start = c->file.mmap.start;
 #endif
 
-			if ((r = write(fd, start + (abs_offset - c->file.mmap.offset), toSend)) < 0) {
+			if ((r = write(sock->fd, start + (abs_offset - c->file.mmap.offset), toSend)) < 0) {
 				switch (errno) {
 				case EAGAIN:
 				case EINTR:
@@ -316,7 +316,7 @@ NETWORK_BACKEND_WRITE(writev) {
 					return NETWORK_STATUS_CONNECTION_CLOSE;
 				default:
 					log_error_write(srv, __FILE__, __LINE__, "ssd",
-							"write failed:", strerror(errno), fd);
+							"write failed:", strerror(errno), sock->fd);
 
 					return NETWORK_STATUS_FATAL_ERROR;
 				}

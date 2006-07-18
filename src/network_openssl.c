@@ -26,20 +26,20 @@
 # include <openssl/ssl.h>
 # include <openssl/err.h>
 
-NETWORK_BACKEND_READ_SSL(openssl) {
+NETWORK_BACKEND_READ(openssl) {
 	buffer *b;
 	off_t len;
 
 	b = chunkqueue_get_append_buffer(cq);
 	buffer_prepare_copy(b, 8192);
-	len = SSL_read(ssl, b->ptr, b->size - 1);
+	len = SSL_read(sock->ssl, b->ptr, b->size - 1);
 
 	log_error_write(srv, __FILE__, __LINE__, "so", "SSL:", len);
 
 	if (len < 0) {
 		int r, ssl_err;
 
-		switch ((r = SSL_get_error(con->ssl, len))) {
+		switch ((r = SSL_get_error(sock->ssl, len))) {
 		case SSL_ERROR_WANT_READ:
 			return NETWORK_STATUS_WAIT_FOR_EVENT;
 		case SSL_ERROR_SYSCALL:
@@ -96,7 +96,7 @@ NETWORK_BACKEND_READ_SSL(openssl) {
 }
 
 
-NETWORK_BACKEND_WRITE_SSL(openssl) {
+NETWORK_BACKEND_WRITE(openssl) {
 	int ssl_r;
 	chunk *c;
 	size_t chunks_written = 0;
@@ -125,7 +125,7 @@ NETWORK_BACKEND_WRITE_SSL(openssl) {
 	 * if keep-alive is disabled */
 
 	if (con->keep_alive == 0) {
-		SSL_set_shutdown(ssl, SSL_RECEIVED_SHUTDOWN);
+		SSL_set_shutdown(sock->ssl, SSL_RECEIVED_SHUTDOWN);
 	}
 
 	for(c = cq->first; c; c = c->next) {
@@ -157,10 +157,10 @@ NETWORK_BACKEND_WRITE_SSL(openssl) {
 			 * checking toSend and not calling SSL_write() is simpler
 			 */
 
-			if (toSend != 0 && (r = SSL_write(ssl, offset, toSend)) <= 0) {
+			if (toSend != 0 && (r = SSL_write(sock->ssl, offset, toSend)) <= 0) {
 				unsigned long err;
 
-				switch ((ssl_r = SSL_get_error(ssl, r))) {
+				switch ((ssl_r = SSL_get_error(sock->ssl, r))) {
 				case SSL_ERROR_WANT_WRITE:
 					break;
 				case SSL_ERROR_SYSCALL:
@@ -258,10 +258,10 @@ NETWORK_BACKEND_WRITE_SSL(openssl) {
 
 				close(ifd);
 
-				if ((r = SSL_write(ssl, s, toSend)) <= 0) {
+				if ((r = SSL_write(sock->ssl, s, toSend)) <= 0) {
 					unsigned long err;
 
-					switch ((ssl_r = SSL_get_error(ssl, r))) {
+					switch ((ssl_r = SSL_get_error(sock->ssl, r))) {
 					case SSL_ERROR_WANT_WRITE:
 						write_wait = 1;
 						break;
@@ -334,7 +334,7 @@ NETWORK_BACKEND_WRITE_SSL(openssl) {
 		chunks_written++;
 	}
 
-	return chunks_written;
+	return NETWORK_STATUS_SUCCESS;
 }
 #endif
 

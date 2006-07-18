@@ -36,7 +36,7 @@ NETWORK_BACKEND_WRITE(linuxsendfile) {
 
 		switch(c->type) {
 		case MEM_CHUNK:
-			ret = network_write_chunkqueue_writev_mem(srv, con, fd, cq, c);
+			ret = network_write_chunkqueue_writev_mem(srv, con, sock, cq, c);
 
 			/* check which chunks are finished now */
 			for (tc = c; tc; tc = tc->next) {
@@ -90,7 +90,7 @@ NETWORK_BACKEND_WRITE(linuxsendfile) {
 #endif
 			}
 
-			if (-1 == (r = sendfile(fd, c->file.fd, &offset, toSend))) {
+			if (-1 == (r = sendfile(sock->fd, c->file.fd, &offset, toSend))) {
 				switch (errno) {
 				case EAGAIN:
 				case EINTR:
@@ -98,11 +98,11 @@ NETWORK_BACKEND_WRITE(linuxsendfile) {
 					break;
 				case EPIPE:
 				case ECONNRESET:
-					return -2;
+					return NETWORK_STATUS_CONNECTION_CLOSE;
 				default:
 					log_error_write(srv, __FILE__, __LINE__, "ssd",
-							"sendfile failed:", strerror(errno), fd);
-					return -1;
+							"sendfile failed:", strerror(errno), sock->fd);
+					return NETWORK_STATUS_FATAL_ERROR;
 				}
 			}
 
@@ -114,15 +114,15 @@ NETWORK_BACKEND_WRITE(linuxsendfile) {
 
 				if (HANDLER_ERROR == stat_cache_get_entry(srv, con, c->file.name, &sce)) {
 					/* file is gone ? */
-					return -1;
+					return NETWORK_STATUS_FATAL_ERROR;
 				}
 
 				if (offset > sce->st.st_size) {
 					/* file shrinked, close the connection */
-					return -1;
+					return NETWORK_STATUS_FATAL_ERROR;
 				}
 
-				return -2;
+				return NETWORK_STATUS_CONNECTION_CLOSE;
 			}
 
 #ifdef HAVE_POSIX_FADVISE
@@ -161,13 +161,13 @@ NETWORK_BACKEND_WRITE(linuxsendfile) {
 
 			log_error_write(srv, __FILE__, __LINE__, "ds", c, "type not known");
 
-			return -1;
+			return NETWORK_STATUS_FATAL_ERROR;
 		}
 
 		if (!chunk_finished) {
 			/* not finished yet */
 
-			break;
+			return NETWORK_STATUS_WAIT_FOR_EVENT;
 		}
 	}
 

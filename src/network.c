@@ -38,7 +38,7 @@ handler_t network_server_handle_fdevent(void *s, void *context, int revents) {
 	if (revents != FDEVENT_IN) {
 		log_error_write(srv, __FILE__, __LINE__, "sdd",
 				"strange event for server socket",
-				srv_socket->fd,
+				srv_socket->sock->fd,
 				revents);
 		return HANDLER_ERROR;
 	}
@@ -94,7 +94,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 #endif
 
 	srv_socket = calloc(1, sizeof(*srv_socket));
-	srv_socket->fd = -1;
+	srv_socket->sock = iosocket_init();
 
 	srv_socket->srv_token = buffer_init();
 	buffer_copy_string_buffer(srv_socket->srv_token, host_token);
@@ -141,7 +141,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 
 		srv_socket->addr.plain.sa_family = AF_UNIX;
 
-		if (-1 == (srv_socket->fd = socket(srv_socket->addr.plain.sa_family, SOCK_STREAM, 0))) {
+		if (-1 == (srv_socket->sock->fd = socket(srv_socket->addr.plain.sa_family, SOCK_STREAM, 0))) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "socket failed:", strerror(errno));
 			return -1;
 		}
@@ -156,7 +156,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 	if (s->use_ipv6) {
 		srv_socket->addr.plain.sa_family = AF_INET6;
 
-		if (-1 == (srv_socket->fd = socket(srv_socket->addr.plain.sa_family, SOCK_STREAM, IPPROTO_TCP))) {
+		if (-1 == (srv_socket->sock->fd = socket(srv_socket->addr.plain.sa_family, SOCK_STREAM, IPPROTO_TCP))) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "socket failed:", strerror(errno));
 			return -1;
 		}
@@ -164,19 +164,19 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 	}
 #endif
 
-	if (srv_socket->fd == -1) {
+	if (srv_socket->sock->fd == -1) {
 		srv_socket->addr.plain.sa_family = AF_INET;
-		if (-1 == (srv_socket->fd = socket(srv_socket->addr.plain.sa_family, SOCK_STREAM, IPPROTO_TCP))) {
+		if (-1 == (srv_socket->sock->fd = socket(srv_socket->addr.plain.sa_family, SOCK_STREAM, IPPROTO_TCP))) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "socket failed:", strerror(errno));
 			return -1;
 		}
 	}
 
 	/* */
-	srv->cur_fds = srv_socket->fd;
+	srv->cur_fds = srv_socket->sock->fd;
 
 	val = 1;
-	if (setsockopt(srv_socket->fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)) < 0) {
+	if (setsockopt(srv_socket->sock->fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val)) < 0) {
 		log_error_write(srv, __FILE__, __LINE__, "ss", "socketsockopt failed:", strerror(errno));
 		return -1;
 	}
@@ -258,7 +258,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 #endif
 
 		/* check if the socket exists and try to connect to it. */
-		if (-1 != (fd = connect(srv_socket->fd, (struct sockaddr *) &(srv_socket->addr), addr_len))) {
+		if (-1 != (fd = connect(srv_socket->sock->fd, (struct sockaddr *) &(srv_socket->addr), addr_len))) {
 			close(fd);
 
 			log_error_write(srv, __FILE__, __LINE__, "ss",
@@ -292,7 +292,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 		return -1;
 	}
 
-	if (0 != bind(srv_socket->fd, (struct sockaddr *) &(srv_socket->addr), addr_len)) {
+	if (0 != bind(srv_socket->sock->fd, (struct sockaddr *) &(srv_socket->addr), addr_len)) {
 		switch(srv_socket->addr.plain.sa_family) {
 		case AF_UNIX:
 			log_error_write(srv, __FILE__, __LINE__, "sds",
@@ -308,7 +308,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 		return -1;
 	}
 
-	if (-1 == listen(srv_socket->fd, 128 * 8)) {
+	if (-1 == listen(srv_socket->sock->fd, 128 * 8)) {
 		log_error_write(srv, __FILE__, __LINE__, "ss", "listen failed: ", strerror(errno));
 		return -1;
 	}
@@ -386,7 +386,7 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 		 */
 		memset(&afa, 0, sizeof(afa));
 		strcpy(afa.af_name, "httpready");
-		if (setsockopt(srv_socket->fd, SOL_SOCKET, SO_ACCEPTFILTER, &afa, sizeof(afa)) < 0) {
+		if (setsockopt(srv_socket->sock->fd, SOL_SOCKET, SO_ACCEPTFILTER, &afa, sizeof(afa)) < 0) {
 			if (errno != ENOENT) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "can't set accept-filter 'httpready': ", strerror(errno));
 			}
@@ -395,7 +395,6 @@ int network_server_init(server *srv, buffer *host_token, specific_config *s) {
 	}
 
 	srv_socket->is_ssl = s->is_ssl;
-	srv_socket->fde_ndx = -1;
 
 	if (srv->srv_sockets.size == 0) {
 		srv->srv_sockets.size = 4;
@@ -417,14 +416,14 @@ int network_close(server *srv) {
 	for (i = 0; i < srv->srv_sockets.used; i++) {
 		server_socket *srv_socket = srv->srv_sockets.ptr[i];
 
-		if (srv_socket->fd != -1) {
+		if (srv_socket->sock->fd != -1) {
 			/* check if server fd are already registered */
-			if (srv_socket->fde_ndx != -1) {
-				fdevent_event_del(srv->ev, &(srv_socket->fde_ndx), srv_socket->fd);
-				fdevent_unregister(srv->ev, srv_socket->fd);
+			if (srv_socket->sock->fde_ndx != -1) {
+				fdevent_event_del(srv->ev, srv_socket->sock);
+				fdevent_unregister(srv->ev, srv_socket->sock);
 			}
 
-			close(srv_socket->fd);
+			closesocket(srv_socket->sock->fd);
 		}
 
 		if (srv_socket->is_ssl) {
@@ -432,6 +431,8 @@ int network_close(server *srv) {
 			SSL_CTX_free(srv_socket->ssl_ctx);
 #endif
 		}
+
+		iosocket_free(srv_socket->sock);
 
 		buffer_free(srv_socket->srv_token);
 
@@ -625,23 +626,23 @@ int network_register_fdevents(server *srv) {
 	/* register fdevents after reset */
 	for (i = 0; i < srv->srv_sockets.used; i++) {
 		server_socket *srv_socket = srv->srv_sockets.ptr[i];
-		fdevent_register(srv->ev, srv_socket->fd, network_server_handle_fdevent, srv_socket);
-		fdevent_event_add(srv->ev, &(srv_socket->fde_ndx), srv_socket->fd, FDEVENT_IN);
+		fdevent_register(srv->ev, srv_socket->sock, network_server_handle_fdevent, srv_socket);
+		fdevent_event_add(srv->ev, srv_socket->sock, FDEVENT_IN);
 	}
 	return 0;
 }
 
 network_status_t network_read_chunkqueue(server *srv, connection *con, chunkqueue *cq) {
-    server_socket *srv_socket = con->srv_socket;
+	server_socket *srv_socket = con->srv_socket;
 
    	if (srv_socket->is_ssl) {
 #ifdef USE_OPENSSL
-		return srv->network_ssl_backend_read(srv, con, con->ssl, cq);
+		return srv->network_ssl_backend_read(srv, con, con->sock, cq);
 #else
 		return NETWORK_STATUS_FATAL_ERROR;
 #endif
 	} else {
-		return srv->network_backend_read(srv, con, con->fd, cq);
+		return srv->network_backend_read(srv, con, con->sock, cq);
 	}
 }
 
@@ -671,16 +672,16 @@ network_status_t network_write_chunkqueue(server *srv, connection *con, chunkque
 	 */
 	if (cq->first && cq->first->next) {
 		corked = 1;
-		setsockopt(con->fd, IPPROTO_TCP, TCP_CORK, &corked, sizeof(corked));
+		setsockopt(con->sock->fd, IPPROTO_TCP, TCP_CORK, &corked, sizeof(corked));
 	}
 #endif
 
 	if (srv_socket->is_ssl) {
 #ifdef USE_OPENSSL
-		ret = srv->network_ssl_backend_write(srv, con, con->ssl, cq);
+		ret = srv->network_ssl_backend_write(srv, con, con->sock, cq);
 #endif
 	} else {
-		ret = srv->network_backend_write(srv, con, con->fd, cq);
+		ret = srv->network_backend_write(srv, con, con->sock, cq);
 	}
 
     switch (ret) {
@@ -696,7 +697,7 @@ network_status_t network_write_chunkqueue(server *srv, connection *con, chunkque
 #ifdef TCP_CORK
 	if (corked) {
 		corked = 0;
-		setsockopt(con->fd, IPPROTO_TCP, TCP_CORK, &corked, sizeof(corked));
+		setsockopt(con->sock->fd, IPPROTO_TCP, TCP_CORK, &corked, sizeof(corked));
 	}
 #endif
 

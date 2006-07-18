@@ -10,5 +10,6 @@ int network_init(server *srv);
 int network_close(server *srv);
 
 int network_register_fdevents(server *srv);
+handler_t network_server_handle_fdevent(void *s, void *context, int revents);
 
 #endif
