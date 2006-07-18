@@ -6,6 +6,7 @@
 
 #include "bitset.h"
 #include "buffer.h"
+#include "log.h"
 
 #define BITSET_BITS \
 	( CHAR_BIT * sizeof(size_t) )
