@@ -10,6 +10,7 @@
 #include "fdevent.h"
 #include "settings.h"
 #include "buffer.h"
+#include "log.h"
 
 #ifdef USE_POLL
 static void fdevent_poll_free(fdevents *ev) {
@@ -17,16 +18,16 @@ static void fdevent_poll_free(fdevents *ev) {
 	if (ev->unused.ptr) free(ev->unused.ptr);
 }
 
-static int fdevent_poll_event_del(fdevents *ev, int fde_ndx, int fd) {
-	if (fde_ndx < 0) return -1;
+static int fdevent_poll_event_del(fdevents *ev, iosocket *sock) {
+	if (sock->fde_ndx < 0) return -1;
 
-	if ((size_t)fde_ndx >= ev->used) {
-		fprintf(stderr, "%s.%d: del! out of range %d %zd\n", __FILE__, __LINE__, fde_ndx, ev->used);
+	if ((size_t)sock->fde_ndx >= ev->used) {
+		fprintf(stderr, "%s.%d: del! out of range %d %zd\n", __FILE__, __LINE__, sock->fde_ndx, ev->used);
 		SEGFAULT();
 	}
 
-	if (ev->pollfds[fde_ndx].fd == fd) {
-		size_t k = fde_ndx;
+	if (ev->pollfds[sock->fde_ndx].fd == sock->fd) {
+		size_t k = sock->fde_ndx;
 
 		ev->pollfds[k].fd = -1;
 		/* ev->pollfds[k].events = 0; */
@@ -45,7 +46,9 @@ static int fdevent_poll_event_del(fdevents *ev, int fde_ndx, int fd) {
 		SEGFAULT();
 	}
 
-	return -1;
+	sock->fde_ndx = -1;
+
+	return 0;
 }
 
 #if 0
@@ -61,26 +64,27 @@ static int fdevent_poll_event_compress(fdevents *ev) {
 }
 #endif
 
-static int fdevent_poll_event_add(fdevents *ev, int fde_ndx, int fd, int events) {
-	/* known index */
+static int fdevent_poll_event_add(fdevents *ev, iosocket *sock, int events) {
+	if (sock->fde_ndx != -1) {
+		/* this fd was already added, just change the requested events */
 
-	if (fde_ndx != -1) {
-		if (ev->pollfds[fde_ndx].fd == fd) {
-			ev->pollfds[fde_ndx].events = events;
+		if (ev->pollfds[sock->fde_ndx].fd == sock->fd) {
+			ev->pollfds[sock->fde_ndx].events = events;
 
-			return fde_ndx;
+			return sock->fde_ndx;
 		}
-		fprintf(stderr, "%s.%d: add: (%d, %d)\n", __FILE__, __LINE__, fde_ndx, ev->pollfds[fde_ndx].fd);
+		fprintf(stderr, "%s.%d: add: (%d, %d)\n", __FILE__, __LINE__, sock->fde_ndx, ev->pollfds[sock->fde_ndx].fd);
 		SEGFAULT();
 	}
 
 	if (ev->unused.used > 0) {
 		int k = ev->unused.ptr[--ev->unused.used];
 
-		ev->pollfds[k].fd = fd;
+		ev->pollfds[k].fd = sock->fd;
 		ev->pollfds[k].events = events;
 
-		return k;
+		sock->fde_ndx = k;
+
 	} else {
 		if (ev->size == 0) {
 			ev->size = 16;
@@ -90,11 +94,12 @@ static int fdevent_poll_event_add(fdevents *ev, int fde_ndx, int fd, int events)
 			ev->pollfds = realloc(ev->pollfds, sizeof(*ev->pollfds) * ev->size);
 		}
 
-		ev->pollfds[ev->used].fd = fd;
+		ev->pollfds[ev->used].fd = sock->fd;
 		ev->pollfds[ev->used].events = events;
 
-		return ev->used++;
+		sock->fde_ndx = ev->used++;
 	}
+	return 0;
 }
 
 static int fdevent_poll_poll(fdevents *ev, int timeout_ms) {
@@ -104,49 +109,21 @@ static int fdevent_poll_poll(fdevents *ev, int timeout_ms) {
 	return poll(ev->pollfds, ev->used, timeout_ms);
 }
 
-static int fdevent_poll_event_get_revent(fdevents *ev, size_t ndx) {
-	int r, poll_r;
-	if (ndx >= ev->used) {
-		fprintf(stderr, "%s.%d: dying because: event: %zd >= %zd\n", __FILE__, __LINE__, ndx, ev->used);
+static int fdevent_poll_get_revents(fdevents *ev, size_t event_count, fdevent_revents *revents) {
+	size_t ndx;
 
-		SEGFAULT();
+	for (ndx = 0; ndx < ev->used; ndx++) {
+		if (ev->pollfds[ndx].revents) {
+			if (ev->pollfds[ndx].revents & POLLNVAL) {
+				/* should never happen */
+				SEGFAULT();
+			}
 
-		return 0;
+			fdevent_revents_add(revents, ev->pollfds[ndx].fd, ev->pollfds[ndx].revents);
+		}
 	}
 
-	if (ev->pollfds[ndx].revents & POLLNVAL) {
-		/* should never happen */
-		SEGFAULT();
-	}
-
-	r = 0;
-	poll_r = ev->pollfds[ndx].revents;
-
-	/* map POLL* to FDEVEN_* */
-
-	if (poll_r & POLLIN) r |= FDEVENT_IN;
-	if (poll_r & POLLOUT) r |= FDEVENT_OUT;
-	if (poll_r & POLLERR) r |= FDEVENT_ERR;
-	if (poll_r & POLLHUP) r |= FDEVENT_HUP;
-	if (poll_r & POLLNVAL) r |= FDEVENT_NVAL;
-	if (poll_r & POLLPRI) r |= FDEVENT_PRI;
-
-	return ev->pollfds[ndx].revents;
-}
-
-static int fdevent_poll_event_get_fd(fdevents *ev, size_t ndx) {
-	return ev->pollfds[ndx].fd;
-}
-
-static int fdevent_poll_event_next_fdndx(fdevents *ev, int ndx) {
-	size_t i;
-
-	i = (ndx < 0) ? 0 : ndx + 1;
-	for (; i < ev->used; i++) {
-		if (ev->pollfds[i].revents) break;
-	}
-
-	return i;
+	return 0;
 }
 
 int fdevent_poll_init(fdevents *ev) {
@@ -160,15 +137,10 @@ int fdevent_poll_init(fdevents *ev) {
 	SET(event_del);
 	SET(event_add);
 
-	SET(event_next_fdndx);
-	SET(event_get_fd);
-	SET(event_get_revent);
+	SET(get_revents);
 
 	return 0;
 }
-
-
-
 
 #else
 int fdevent_poll_init(fdevents *ev) {

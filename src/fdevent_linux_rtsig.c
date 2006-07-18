@@ -14,6 +14,7 @@
 #include "settings.h"
 #include "buffer.h"
 #include "sys-process.h"
+#include "log.h"
 
 #ifdef USE_LINUX_SIGIO
 static void fdevent_linux_rtsig_free(fdevents *ev) {
@@ -24,20 +25,20 @@ static void fdevent_linux_rtsig_free(fdevents *ev) {
 }
 
 
-static int fdevent_linux_rtsig_event_del(fdevents *ev, int fde_ndx, int fd) {
-	if (fde_ndx < 0) return -1;
+static int fdevent_linux_rtsig_event_del(fdevents *ev, iosocket *sock) {
+	if (sock->fde_ndx < 0) return -1;
 
-	if ((size_t)fde_ndx >= ev->used) {
-		fprintf(stderr, "%s.%d: del! out of range %d %zu\n", __FILE__, __LINE__, fde_ndx, ev->used);
+	if ((size_t)sock->fde_ndx >= ev->used) {
+		TRACE("del! out of range %d %zu\n", sock->fde_ndx, ev->used);
 		SEGFAULT();
 	}
 
-	if (ev->pollfds[fde_ndx].fd == fd) {
-		size_t k = fde_ndx;
+	if (ev->pollfds[sock->fde_ndx].fd == sock->fd) {
+		size_t k = sock->fde_ndx;
 
 		ev->pollfds[k].fd = -1;
 
-		bitset_clear_bit(ev->sigbset, fd);
+		bitset_clear_bit(ev->sigbset, sock->fd);
 
 		if (ev->unused.size == 0) {
 			ev->unused.size = 16;
@@ -49,12 +50,13 @@ static int fdevent_linux_rtsig_event_del(fdevents *ev, int fde_ndx, int fd) {
 
 		ev->unused.ptr[ev->unused.used++] = k;
 	} else {
-		fprintf(stderr, "%s.%d: del! %d %d\n", __FILE__, __LINE__, ev->pollfds[fde_ndx].fd, fd);
+		fprintf(stderr, "%s.%d: del! %d %d\n", __FILE__, __LINE__, ev->pollfds[sock->fde_ndx].fd, sock->fd);
 
 		SEGFAULT();
 	}
+	sock->fde_ndx = -1;
 
-	return -1;
+	return 0;
 }
 
 #if 0
@@ -73,25 +75,25 @@ static int fdevent_linux_rtsig_event_compress(fdevents *ev) {
 }
 #endif
 
-static int fdevent_linux_rtsig_event_add(fdevents *ev, int fde_ndx, int fd, int events) {
+static int fdevent_linux_rtsig_event_add(fdevents *ev, iosocket *sock, int events) {
 	/* known index */
-	if (fde_ndx != -1) {
-		if (ev->pollfds[fde_ndx].fd == fd) {
-			ev->pollfds[fde_ndx].events = events;
+	if (sock->fde_ndx != -1) {
+		if (ev->pollfds[sock->fde_ndx].fd == sock->fd) {
+			ev->pollfds[sock->fde_ndx].events = events;
 
-			return fde_ndx;
+			return sock->fde_ndx;
 		}
-		fprintf(stderr, "%s.%d: add: (%d, %d)\n", __FILE__, __LINE__, fde_ndx, ev->pollfds[fde_ndx].fd);
+		fprintf(stderr, "%s.%d: add: (%d, %d)\n", __FILE__, __LINE__, sock->fde_ndx, ev->pollfds[sock->fde_ndx].fd);
 		SEGFAULT();
 	}
 
 	if (ev->unused.used > 0) {
 		int k = ev->unused.ptr[--ev->unused.used];
 
-		ev->pollfds[k].fd = fd;
+		ev->pollfds[k].fd = sock->fd;
 		ev->pollfds[k].events = events;
 
-		bitset_set_bit(ev->sigbset, fd);
+		bitset_set_bit(ev->sigbset, sock->fd);
 
 		return k;
 	} else {
@@ -103,10 +105,10 @@ static int fdevent_linux_rtsig_event_add(fdevents *ev, int fde_ndx, int fd, int 
 			ev->pollfds = realloc(ev->pollfds, sizeof(*ev->pollfds) * ev->size);
 		}
 
-		ev->pollfds[ev->used].fd = fd;
+		ev->pollfds[ev->used].fd = sock->fd;
 		ev->pollfds[ev->used].events = events;
 
-		bitset_set_bit(ev->sigbset, fd);
+		bitset_set_bit(ev->sigbset, sock->fd);
 
 		return ev->used++;
 	}
@@ -156,34 +158,22 @@ static int fdevent_linux_rtsig_poll(fdevents *ev, int timeout_ms) {
 	}
 }
 
-static int fdevent_linux_rtsig_event_get_revent(fdevents *ev, size_t ndx) {
+static int fdevent_linux_rtsig_get_revents(fdevents *ev, size_t event_count, fdevent_revents *revents) {
 	if (ev->in_sigio == 1) {
-#  if 0
-		if (ev->siginfo.si_band == POLLERR) {
-			fprintf(stderr, "event: %d %02lx %02x %s\n", ev->siginfo.si_fd, ev->siginfo.si_band, errno, strerror(errno));
-		}
-#  endif
-		if (ndx != 0) {
-			fprintf(stderr, "+\n");
-			return 0;
-		}
+		/* only one event */
 
-		return ev->siginfo.si_band & 0x3f;
+		fdevent_revents_add(revents, ev->siginfo.si_fd, ev->siginfo.si_band & 0x3f);
 	} else {
-		if (ndx >= ev->used) {
-			fprintf(stderr, "%s.%d: event: %zu %zu\n", __FILE__, __LINE__, ndx, ev->used);
-			return 0;
-		}
-		return ev->pollfds[ndx].revents;
-	}
-}
+		size_t ndx;
 
-static int fdevent_linux_rtsig_event_get_fd(fdevents *ev, size_t ndx) {
-	if (ev->in_sigio == 1) {
-		return ev->siginfo.si_fd;
-	} else {
-		return ev->pollfds[ndx].fd;
+		for (ndx = 0; ndx < ev->used; ndx++) {
+			if (ev->pollfds[ndx].revents) {
+				fdevent_revents_add(revents, ev->pollfds[ndx].fd, ev->pollfds[ndx].revents);
+			}
+		}
 	}
+
+	return 0;
 }
 
 static int fdevent_linux_rtsig_fcntl_set(fdevents *ev, int fd) {
@@ -199,22 +189,6 @@ static int fdevent_linux_rtsig_fcntl_set(fdevents *ev, int fd) {
 }
 
 
-static int fdevent_linux_rtsig_event_next_fdndx(fdevents *ev, int ndx) {
-	if (ev->in_sigio == 1) {
-		if (ndx < 0) return 0;
-		return -1;
-	} else {
-		size_t i;
-
-		i = (ndx < 0) ? 0 : ndx + 1;
-		for (; i < ev->used; i++) {
-			if (ev->pollfds[i].revents) break;
-		}
-
-		return i;
-	}
-}
-
 int fdevent_linux_rtsig_init(fdevents *ev) {
 	ev->type = FDEVENT_HANDLER_LINUX_RTSIG;
 #define SET(x) \
@@ -226,10 +200,8 @@ int fdevent_linux_rtsig_init(fdevents *ev) {
 	SET(event_del);
 	SET(event_add);
 
-	SET(event_next_fdndx);
 	SET(fcntl_set);
-	SET(event_get_fd);
-	SET(event_get_revent);
+	SET(get_revents);
 
 	ev->signum = SIGRTMIN + 1;
 

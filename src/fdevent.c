@@ -10,8 +10,62 @@
 
 #include "fdevent.h"
 #include "buffer.h"
+#include "log.h"
 
 #include "sys-socket.h"
+
+fdevent_revent *fdevent_revent_init(void) {
+	STRUCT_INIT(fdevent_revent, revent);
+
+	return revent;
+}
+
+void fdevent_revent_free(fdevent_revent *revent) {
+	if (!revent) return;
+
+	free(revent);
+}
+
+fdevent_revents *fdevent_revents_init(void) {
+	STRUCT_INIT(fdevent_revents, revents);
+
+	return revents;
+}
+
+void fdevent_revents_reset(fdevent_revents *revents) {
+	if (!revents) return;
+
+	revents->used = 0;
+}
+
+void fdevent_revents_add(fdevent_revents *revents, int fd, int events) {
+	fdevent_revent *revent;
+
+	if (revents->used == revents->size) {
+		/* resize the events-array */
+		revents->ptr = realloc(revents->ptr, (revents->size + 1) * sizeof(*(revents->ptr)));
+		revents->ptr[revents->size++] = fdevent_revent_init();
+	}
+
+	revent = revents->ptr[revents->used++];
+	revent->fd = fd;
+	revent->revents = events;
+}
+
+void fdevent_revents_free(fdevent_revents *revents) {
+	size_t i;
+	
+	if (!revents) return;
+
+	if (revents->size) {
+		for (i = 0; i < revents->size; i++) {
+			fdevent_revent_free(revents->ptr[i]);
+		}
+
+		free(revents->ptr);
+	}
+	free(revents);
+}
 
 fdevents *fdevent_init(size_t maxfds, fdevent_handler_t type) {
 	fdevents *ev;
@@ -98,6 +152,7 @@ fdnode *fdnode_init() {
 
 	fdn = calloc(1, sizeof(*fdn));
 	fdn->fd = -1;
+
 	return fdn;
 }
 
@@ -105,47 +160,39 @@ void fdnode_free(fdnode *fdn) {
 	free(fdn);
 }
 
-int fdevent_register(fdevents *ev, int fd, fdevent_handler handler, void *ctx) {
+int fdevent_register(fdevents *ev, iosocket *sock, fdevent_handler handler, void *ctx) {
 	fdnode *fdn;
 
 	fdn = fdnode_init();
 	fdn->handler = handler;
-	fdn->fd      = fd;
+	fdn->fd      = sock->fd;
 	fdn->ctx     = ctx;
 
-	ev->fdarray[fd] = fdn;
+	ev->fdarray[sock->fd] = fdn;
 
 	return 0;
 }
 
-int fdevent_unregister(fdevents *ev, int fd) {
+int fdevent_unregister(fdevents *ev, iosocket *sock) {
 	fdnode *fdn;
         if (!ev) return 0;
-	fdn = ev->fdarray[fd];
+	fdn = ev->fdarray[sock->fd];
 
 	fdnode_free(fdn);
 
-	ev->fdarray[fd] = NULL;
+	ev->fdarray[sock->fd] = NULL;
 
 	return 0;
 }
 
-int fdevent_event_del(fdevents *ev, int *fde_ndx, int fd) {
-	int fde = fde_ndx ? *fde_ndx : -1;
-
-	if (ev->event_del) fde = ev->event_del(ev, fde, fd);
-
-	if (fde_ndx) *fde_ndx = fde;
+int fdevent_event_del(fdevents *ev, iosocket *sock) {
+	if (ev->event_del) ev->event_del(ev, sock);
 
 	return 0;
 }
 
-int fdevent_event_add(fdevents *ev, int *fde_ndx, int fd, int events) {
-	int fde = fde_ndx ? *fde_ndx : -1;
-
-	if (ev->event_add) fde = ev->event_add(ev, fde, fd, events);
-
-	if (fde_ndx) *fde_ndx = fde;
+int fdevent_event_add(fdevents *ev, iosocket *sock, int events) {
+	if (ev->event_add) ev->event_add(ev, sock, events);
 
 	return 0;
 }
@@ -155,54 +202,41 @@ int fdevent_poll(fdevents *ev, int timeout_ms) {
 	return ev->poll(ev, timeout_ms);
 }
 
-int fdevent_event_get_revent(fdevents *ev, size_t ndx) {
-	if (ev->event_get_revent == NULL) SEGFAULT();
+int fdevent_get_revents(fdevents *ev, size_t event_count, fdevent_revents *revents) {
+	size_t i;
 
-	return ev->event_get_revent(ev, ndx);
+	if (ev->get_revents == NULL) SEGFAULT();
+
+	fdevent_revents_reset(revents);
+
+	ev->get_revents(ev, event_count, revents);
+
+	/* patch the event handlers */
+	for (i = 0; i < event_count; i++) {
+		fdevent_revent *r = revents->ptr[i];
+
+		r->handler = ev->fdarray[r->fd]->handler;
+		r->context = ev->fdarray[r->fd]->ctx;
+	}
+
+	return 0;
 }
 
-int fdevent_event_get_fd(fdevents *ev, size_t ndx) {
-	if (ev->event_get_fd == NULL) SEGFAULT();
-
-	return ev->event_get_fd(ev, ndx);
-}
-
-fdevent_handler fdevent_get_handler(fdevents *ev, int fd) {
-	if (ev->fdarray[fd] == NULL) SEGFAULT();
-	if (ev->fdarray[fd]->fd != fd) SEGFAULT();
-
-	return ev->fdarray[fd]->handler;
-}
-
-void * fdevent_get_context(fdevents *ev, int fd) {
-	if (ev->fdarray[fd] == NULL) SEGFAULT();
-	if (ev->fdarray[fd]->fd != fd) SEGFAULT();
-
-	return ev->fdarray[fd]->ctx;
-}
-
-int fdevent_fcntl_set(fdevents *ev, int fd) {
+int fdevent_fcntl_set(fdevents *ev, iosocket *sock) {
 #ifdef _WIN32
-    int i = 1;
+	int i = 1;
 #endif
 #ifdef FD_CLOEXEC
 	/* close fd on exec (cgi) */
-	fcntl(fd, F_SETFD, FD_CLOEXEC);
+	fcntl(sock->fd, F_SETFD, FD_CLOEXEC);
 #endif
-	if ((ev) && (ev->fcntl_set)) return ev->fcntl_set(ev, fd);
+	if ((ev) && (ev->fcntl_set)) return ev->fcntl_set(ev, sock->fd);
 #ifdef O_NONBLOCK
-	return fcntl(fd, F_SETFL, O_NONBLOCK | O_RDWR);
+	return fcntl(sock->fd, F_SETFL, O_NONBLOCK | O_RDWR);
 #elif defined _WIN32
-    return ioctlsocket(fd, FIONBIO, &i);
+	return ioctlsocket(sock->fd, FIONBIO, &i);
 #else
 	return 0;
 #endif
-}
-
-
-int fdevent_event_next_fdndx(fdevents *ev, int ndx) {
-	if (ev->event_next_fdndx) return ev->event_next_fdndx(ev, ndx);
-
-	return -1;
 }
 

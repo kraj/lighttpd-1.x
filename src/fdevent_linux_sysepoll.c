@@ -10,6 +10,7 @@
 #include "fdevent.h"
 #include "settings.h"
 #include "buffer.h"
+#include "log.h"
 
 #include "sys-files.h"
 
@@ -19,17 +20,17 @@ static void fdevent_linux_sysepoll_free(fdevents *ev) {
 	free(ev->epoll_events);
 }
 
-static int fdevent_linux_sysepoll_event_del(fdevents *ev, int fde_ndx, int fd) {
+static int fdevent_linux_sysepoll_event_del(fdevents *ev, iosocket *sock) {
 	struct epoll_event ep;
 
-	if (fde_ndx < 0) return -1;
+	if (sock->fde_ndx < 0) return -1;
 
 	memset(&ep, 0, sizeof(ep));
 
-	ep.data.fd = fd;
+	ep.data.fd = sock->fd;
 	ep.data.ptr = NULL;
 
-	if (0 != epoll_ctl(ev->epoll_fd, EPOLL_CTL_DEL, fd, &ep)) {
+	if (0 != epoll_ctl(ev->epoll_fd, EPOLL_CTL_DEL, sock->fd, &ep)) {
 		fprintf(stderr, "%s.%d: epoll_ctl failed: %s, dying\n", __FILE__, __LINE__, strerror(errno));
 
 		SEGFAULT();
@@ -37,15 +38,17 @@ static int fdevent_linux_sysepoll_event_del(fdevents *ev, int fde_ndx, int fd) {
 		return 0;
 	}
 
+	sock->fde_ndx = -1;
 
-	return -1;
+	return 0;
 }
 
-static int fdevent_linux_sysepoll_event_add(fdevents *ev, int fde_ndx, int fd, int events) {
+static int fdevent_linux_sysepoll_event_add(fdevents *ev, iosocket *sock, int events) {
 	struct epoll_event ep;
 	int add = 0;
 
-	if (fde_ndx == -1) add = 1;
+	/* a new fd */
+	if (sock->fde_ndx == -1) add = 1;
 
 	memset(&ep, 0, sizeof(ep));
 
@@ -65,9 +68,9 @@ static int fdevent_linux_sysepoll_event_add(fdevents *ev, int fde_ndx, int fd, i
 	ep.events |= EPOLLERR | EPOLLHUP /* | EPOLLET */;
 
 	ep.data.ptr = NULL;
-	ep.data.fd = fd;
+	ep.data.fd = sock->fd;
 
-	if (0 != epoll_ctl(ev->epoll_fd, add ? EPOLL_CTL_ADD : EPOLL_CTL_MOD, fd, &ep)) {
+	if (0 != epoll_ctl(ev->epoll_fd, add ? EPOLL_CTL_ADD : EPOLL_CTL_MOD, sock->fd, &ep)) {
 		fprintf(stderr, "%s.%d: epoll_ctl failed: %s, dying\n", __FILE__, __LINE__, strerror(errno));
 
 		SEGFAULT();
@@ -75,42 +78,32 @@ static int fdevent_linux_sysepoll_event_add(fdevents *ev, int fde_ndx, int fd, i
 		return 0;
 	}
 
-	return fd;
+	sock->fde_ndx = sock->fd;
+
+	return 0;
 }
 
 static int fdevent_linux_sysepoll_poll(fdevents *ev, int timeout_ms) {
 	return epoll_wait(ev->epoll_fd, ev->epoll_events, ev->maxfds, timeout_ms);
 }
 
-static int fdevent_linux_sysepoll_event_get_revent(fdevents *ev, size_t ndx) {
-	int events = 0, e;
+static int fdevent_linux_sysepoll_get_revents(fdevents *ev, size_t event_count, fdevent_revents *revents) {
+	size_t ndx;
 
-	e = ev->epoll_events[ndx].events;
-	if (e & EPOLLIN) events |= FDEVENT_IN;
-	if (e & EPOLLOUT) events |= FDEVENT_OUT;
-	if (e & EPOLLERR) events |= FDEVENT_ERR;
-	if (e & EPOLLHUP) events |= FDEVENT_HUP;
-	if (e & EPOLLPRI) events |= FDEVENT_PRI;
+	for (ndx = 0; ndx < event_count; ndx++) {
+		int events = 0, e;
 
-	return e;
-}
+		e = ev->epoll_events[ndx].events;
+		if (e & EPOLLIN) events |= FDEVENT_IN;
+		if (e & EPOLLOUT) events |= FDEVENT_OUT;
+		if (e & EPOLLERR) events |= FDEVENT_ERR;
+		if (e & EPOLLHUP) events |= FDEVENT_HUP;
+		if (e & EPOLLPRI) events |= FDEVENT_PRI;
 
-static int fdevent_linux_sysepoll_event_get_fd(fdevents *ev, size_t ndx) {
-# if 0
-	fprintf(stderr, "%s.%d: %d, %d\n", __FILE__, __LINE__, ndx, ev->epoll_events[ndx].data.fd);
-# endif
+		fdevent_revents_add(revents, ev->epoll_events[ndx].data.fd, e);
+	}
 
-	return ev->epoll_events[ndx].data.fd;
-}
-
-static int fdevent_linux_sysepoll_event_next_fdndx(fdevents *ev, int ndx) {
-	size_t i;
-
-	UNUSED(ev);
-
-	i = (ndx < 0) ? 0 : ndx + 1;
-
-	return i;
+	return 0;
 }
 
 int fdevent_linux_sysepoll_init(fdevents *ev) {
@@ -124,9 +117,7 @@ int fdevent_linux_sysepoll_init(fdevents *ev) {
 	SET(event_del);
 	SET(event_add);
 
-	SET(event_next_fdndx);
-	SET(event_get_fd);
-	SET(event_get_revent);
+	SET(get_revents);
 
 	if (-1 == (ev->epoll_fd = epoll_create(ev->maxfds))) {
 		fprintf(stderr, "%s.%d: epoll_create failed (%s), try to set server.event-handler = \"poll\" or \"select\"\n",

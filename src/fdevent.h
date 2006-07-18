@@ -7,6 +7,9 @@
 #include "settings.h"
 #include "bitset.h"
 
+#include "iosocket.h"
+#include "array-static.h"
+
 /* select event-system */
 
 #if defined(HAVE_EPOLL_CTL) && defined(HAVE_SYS_EPOLL_H)
@@ -98,12 +101,20 @@ typedef struct {
 	int revents;
 } fd_conn;
 
-typedef struct {
-	fd_conn *ptr;
+ARRAY_STATIC_DEF(fd_conn_buffer, fd_conn, );
 
-	size_t size;
-	size_t used;
-} fd_conn_buffer;
+/**
+ * revents
+ */
+typedef struct {
+	int fd;
+	int revents;
+
+	fdevent_handler handler;
+	void *context;
+} fdevent_revent;
+
+ARRAY_STATIC_DEF(fdevent_revents, fdevent_revent, );
 
 /**
  * array of unused fd's
@@ -111,9 +122,9 @@ typedef struct {
  */
 
 typedef struct _fdnode {
-	fdevent_handler handler;
-	void *ctx;
-	int fd;
+	fdevent_handler handler; /* who handles the events for this fd */
+	void *ctx;               /* opaque pointer which is passed as 3rd parameter to the handler */
+	int fd;                  /* fd */
 
 	struct _fdnode *prev, *next;
 } fdnode;
@@ -132,7 +143,7 @@ typedef struct {
 typedef struct fdevents {
 	fdevent_handler_t type;
 
-	fdnode **fdarray;
+	fdnode **fdarray; /* a list of fdnodes */
 	size_t maxfds;
 
 #ifdef USE_LINUX_SIGIO
@@ -180,12 +191,9 @@ typedef struct fdevents {
 	int (*reset)(struct fdevents *ev);
 	void (*free)(struct fdevents *ev);
 
-	int (*event_add)(struct fdevents *ev, int fde_ndx, int fd, int events);
-	int (*event_del)(struct fdevents *ev, int fde_ndx, int fd);
-	int (*event_get_revent)(struct fdevents *ev, size_t ndx);
-	int (*event_get_fd)(struct fdevents *ev, size_t ndx);
-
-	int (*event_next_fdndx)(struct fdevents *ev, int ndx);
+	int (*event_add)(struct fdevents *ev, iosocket *sock, int events);
+	int (*event_del)(struct fdevents *ev, iosocket *sock);
+	int (*get_revents)(struct fdevents *ev, size_t event_count, fdevent_revents *revents);
 
 	int (*poll)(struct fdevents *ev, int timeout_ms);
 
@@ -196,22 +204,44 @@ fdevents *fdevent_init(size_t maxfds, fdevent_handler_t type);
 int fdevent_reset(fdevents *ev);
 void fdevent_free(fdevents *ev);
 
-int fdevent_event_add(fdevents *ev, int *fde_ndx, int fd, int events);
-int fdevent_event_del(fdevents *ev, int *fde_ndx, int fd);
-int fdevent_event_get_revent(fdevents *ev, size_t ndx);
-int fdevent_event_get_fd(fdevents *ev, size_t ndx);
-fdevent_handler fdevent_get_handler(fdevents *ev, int fd);
-void * fdevent_get_context(fdevents *ev, int fd);
-
-int fdevent_event_next_fdndx(fdevents *ev, int ndx);
-
+/**
+ * call the plugin for the number of available events
+ */
 int fdevent_poll(fdevents *ev, int timeout_ms);
+/**
+ * get all available events
+ */
+int fdevent_get_revents(fdevents *ev, size_t event_count, fdevent_revents *revents);
 
-int fdevent_register(fdevents *ev, int fd, fdevent_handler handler, void *ctx);
-int fdevent_unregister(fdevents *ev, int fd);
+/**
+ * add or remove a fd to the handled-pool
+ */
+int fdevent_register(fdevents *ev, iosocket *sock, fdevent_handler handler, void *ctx);
+int fdevent_unregister(fdevents *ev, iosocket *sock);
 
-int fdevent_fcntl_set(fdevents *ev, int fd);
+/**
+ * add a event to a registered fd
+ */
+int fdevent_event_add(fdevents *ev, iosocket *sock, int events);
+int fdevent_event_del(fdevents *ev, iosocket *sock);
 
+/**
+ * set non-blocking
+ */
+int fdevent_fcntl_set(fdevents *ev, iosocket *sock);
+
+fdevent_revents *fdevent_revents_init(void);
+void fdevent_revents_reset(fdevent_revents *revents);
+void fdevent_revents_add(fdevent_revents *revents, int fd, int events);
+void fdevent_revents_free(fdevent_revents *revents);
+
+fdevent_revent *fdevent_revent_init(void);
+void fdevent_revent_free(fdevent_revent *revent);
+
+
+/**
+ * plugin init
+ */
 int fdevent_select_init(fdevents *ev);
 int fdevent_poll_init(fdevents *ev);
 int fdevent_linux_rtsig_init(fdevents *ev);
