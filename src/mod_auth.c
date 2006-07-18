@@ -236,12 +236,12 @@ static handler_t mod_auth_uri_handler(server *srv, connection *con, void *p_d) {
 			if ((auth_type_len == 5) &&
 			    (0 == strncmp(http_authorization, "Basic", auth_type_len))) {
 
-				if (0 == strcmp(method->value->ptr, "basic")) {
+				if (buffer_is_equal_string(method->value, CONST_STR_LEN("basic"))) {
 					auth_satisfied = http_auth_basic_check(srv, con, p, req, con->uri.path, auth_realm+1);
 				}
 			} else if ((auth_type_len == 6) &&
 				   (0 == strncmp(http_authorization, "Digest", auth_type_len))) {
-				if (0 == strcmp(method->value->ptr, "digest")) {
+				if (buffer_is_equal_string(method->value, CONST_STR_LEN("digest"))) {
 					if (-1 == (auth_satisfied = http_auth_digest_check(srv, con, p, req, con->uri.path, auth_realm+1))) {
 						con->http_status = 400;
 
@@ -265,13 +265,13 @@ static handler_t mod_auth_uri_handler(server *srv, connection *con, void *p_d) {
 
 		con->http_status = 401;
 
-		if (0 == strcmp(method->value->ptr, "basic")) {
+		if (buffer_is_equal_string(method->value, CONST_STR_LEN("basic"))) {
 			buffer_copy_string(p->tmp_buf, "Basic realm=\"");
 			buffer_append_string_buffer(p->tmp_buf, realm->value);
 			buffer_append_string(p->tmp_buf, "\"");
 
 			response_header_insert(srv, con, CONST_STR_LEN("WWW-Authenticate"), CONST_BUF_LEN(p->tmp_buf));
-		} else if (0 == strcmp(method->value->ptr, "digest")) {
+		} else if (buffer_is_equal_string(method->value, CONST_STR_LEN("digest"))) {
 			char hh[33];
 			http_auth_digest_generate_nonce(srv, p, srv->tmp_buf, hh);
 
@@ -371,14 +371,14 @@ SETDEFAULTS_FUNC(mod_auth_set_defaults) {
 			return HANDLER_ERROR;
 		}
 
-		if (s->auth_backend_conf->used) {
-			if (0 == strcmp(s->auth_backend_conf->ptr, "htpasswd")) {
+		if (!buffer_is_empty(s->auth_backend_conf)) {
+			if (buffer_is_equal_string(s->auth_backend_conf, CONST_STR_LEN("htpasswd"))) {
 				s->auth_backend = AUTH_BACKEND_HTPASSWD;
-			} else if (0 == strcmp(s->auth_backend_conf->ptr, "htdigest")) {
+			} else if (buffer_is_equal_string(s->auth_backend_conf, CONST_STR_LEN("htdigest"))) {
 				s->auth_backend = AUTH_BACKEND_HTDIGEST;
-			} else if (0 == strcmp(s->auth_backend_conf->ptr, "plain")) {
+			} else if (buffer_is_equal_string(s->auth_backend_conf, CONST_STR_LEN("plain"))) {
 				s->auth_backend = AUTH_BACKEND_PLAIN;
-			} else if (0 == strcmp(s->auth_backend_conf->ptr, "ldap")) {
+			} else if (buffer_is_equal_string(s->auth_backend_conf, CONST_STR_LEN("ldap"))) {
 				s->auth_backend = AUTH_BACKEND_LDAP;
 			} else {
 				log_error_write(srv, __FILE__, __LINE__, "sb", "auth.backend not supported:", s->auth_backend_conf);
@@ -395,7 +395,7 @@ SETDEFAULTS_FUNC(mod_auth_set_defaults) {
 		for (n = 0; n < da->value->used; n++) {
 			size_t m;
 			data_array *da_file = (data_array *)da->value->data[n];
-			const char *method, *realm, *require;
+			buffer *method, *realm, *require;
 
 			if (da->value->data[n]->type != TYPE_ARRAY) {
 				log_error_write(srv, __FILE__, __LINE__, "ss",
@@ -408,30 +408,33 @@ SETDEFAULTS_FUNC(mod_auth_set_defaults) {
 			method = realm = require = NULL;
 
 			for (m = 0; m < da_file->value->used; m++) {
-				if (da_file->value->data[m]->type == TYPE_STRING) {
-					if (0 == strcmp(da_file->value->data[m]->key->ptr, "method")) {
-						method = ((data_string *)(da_file->value->data[m]))->value->ptr;
-					} else if (0 == strcmp(da_file->value->data[m]->key->ptr, "realm")) {
-						realm = ((data_string *)(da_file->value->data[m]))->value->ptr;
-					} else if (0 == strcmp(da_file->value->data[m]->key->ptr, "require")) {
-						require = ((data_string *)(da_file->value->data[m]))->value->ptr;
-					} else {
-						log_error_write(srv, __FILE__, __LINE__, "ssbs",
+				data_string *ds_auth_req = (data_string *)da_file->value->data[m];
+
+				if (ds_auth_req->type != TYPE_STRING) {
+					log_error_write(srv, __FILE__, __LINE__, "ssbs",
+						"a string was expected for:",
+						"auth.require = ( \"...\" => ( ..., -> \"",
+						ds_auth_req->key,
+						"\" <- => \"...\" ) )");
+
+					return HANDLER_ERROR;
+				}
+
+				if (buffer_is_equal_string(ds_auth_req->key, CONST_STR_LEN("method"))) {
+					method = ds_auth_req->value;
+				} else if (buffer_is_equal_string(ds_auth_req->key, CONST_STR_LEN("realm"))) {
+					realm = ds_auth_req->value;
+				} else if (buffer_is_equal_string(ds_auth_req->key, CONST_STR_LEN("require"))) {
+					require = ds_auth_req->value;
+				} else {
+					log_error_write(srv, __FILE__, __LINE__, "ssbs",
 							"the field is unknown in:",
 							"auth.require = ( \"...\" => ( ..., -> \"",
 							da_file->value->data[m]->key,
 							"\" <- => \"...\" ) )");
 
-						return HANDLER_ERROR;
-					}
-				} else {
-					log_error_write(srv, __FILE__, __LINE__, "ssbs",
-						"a string was expected for:",
-						"auth.require = ( \"...\" => ( ..., -> \"",
-						da_file->value->data[m]->key,
-						"\" <- => \"...\" ) )");
-
 					return HANDLER_ERROR;
+
 				}
 			}
 
@@ -440,14 +443,13 @@ SETDEFAULTS_FUNC(mod_auth_set_defaults) {
 						"the require field is missing in:",
 						"auth.require = ( \"...\" => ( ..., \"method\" => \"...\" ) )");
 				return HANDLER_ERROR;
-			} else {
-				if (0 != strcmp(method, "basic") &&
-				    0 != strcmp(method, "digest")) {
-					log_error_write(srv, __FILE__, __LINE__, "ss",
-							"method has to be either \"basic\" or \"digest\" in",
-							"auth.require = ( \"...\" => ( ..., \"method\" => \"...\") )");
-					return HANDLER_ERROR;
-				}
+			} 
+			if (!buffer_is_equal_string(method, CONST_STR_LEN("basic")) &&
+			    !buffer_is_equal_string(method, CONST_STR_LEN("digest"))) {
+				log_error_write(srv, __FILE__, __LINE__, "ss",
+						"method has to be either \"basic\" or \"digest\" in",
+						"auth.require = ( \"...\" => ( ..., \"method\" => \"...\") )");
+				return HANDLER_ERROR;
 			}
 
 			if (realm == NULL) {
@@ -474,21 +476,21 @@ SETDEFAULTS_FUNC(mod_auth_set_defaults) {
 				ds = data_string_init();
 
 				buffer_copy_string(ds->key, "method");
-				buffer_copy_string(ds->value, method);
+				buffer_copy_string_buffer(ds->value, method);
 
 				array_insert_unique(a->value, (data_unset *)ds);
 
 				ds = data_string_init();
 
 				buffer_copy_string(ds->key, "realm");
-				buffer_copy_string(ds->value, realm);
+				buffer_copy_string_buffer(ds->value, realm);
 
 				array_insert_unique(a->value, (data_unset *)ds);
 
 				ds = data_string_init();
 
 				buffer_copy_string(ds->key, "require");
-				buffer_copy_string(ds->value, require);
+				buffer_copy_string_buffer(ds->value, require);
 
 				array_insert_unique(a->value, (data_unset *)ds);
 

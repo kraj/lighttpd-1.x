@@ -309,7 +309,7 @@ static int http_auth_match_rules(server *srv, mod_auth_plugin_data *p, const cha
 	require = (data_string *)array_get_element(req, "require");
 
 	/* if we get here, the user we got a authed user */
-	if (0 == strcmp(require->value->ptr, "valid-user")) {
+	if (buffer_is_equal_string(require->value, CONST_STR_LEN("valid-user"))) {
 		return 0;
 	}
 
@@ -436,7 +436,7 @@ static int http_auth_basic_password_compare(server *srv, mod_auth_plugin_data *p
 
 		CvtHex(HA1, a1);
 
-		if (0 == strcmp(password->ptr, a1)) {
+		if (buffer_is_equal_string(password, a1, strlen(a1))) {
 			return 0;
 		}
 	} else if (p->conf.auth_backend == AUTH_BACKEND_HTPASSWD) {
@@ -488,7 +488,7 @@ static int http_auth_basic_password_compare(server *srv, mod_auth_plugin_data *p
 
 		crypted = crypt(pw, salt);
 
-		if (0 == strcmp(password->ptr, crypted)) {
+		if (buffer_is_equal_string(password, crypted, strlen(crypted))) {
 			return 0;
 		} else {
 			fprintf(stderr, "%s.%d\n", __FILE__, __LINE__);
@@ -496,7 +496,7 @@ static int http_auth_basic_password_compare(server *srv, mod_auth_plugin_data *p
 
 #endif
 	} else if (p->conf.auth_backend == AUTH_BACKEND_PLAIN) {
-		if (0 == strcmp(password->ptr, pw)) {
+		if (buffer_is_equal_string(password, pw, strlen(pw))) {
 			return 0;
 		}
 	} else if (p->conf.auth_backend == AUTH_BACKEND_LDAP) {

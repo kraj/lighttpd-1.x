@@ -726,13 +726,13 @@ static int config_tokenizer(server *srv, tokenizer_t *t, int *token_id, buffer *
 				if (i && t->input[t->offset + i]) {
 					buffer_copy_string_len(token, t->input + t->offset, i);
 
-					if (strcmp(token->ptr, "include") == 0) {
+					if (buffer_is_equal_string(token, CONST_STR_LEN("include"))) {
 						tid = TK_INCLUDE;
-					} else if (strcmp(token->ptr, "include_shell") == 0) {
+					} else if (buffer_is_equal_string(token, CONST_STR_LEN("include_shell"))) {
 						tid = TK_INCLUDE_SHELL;
-					} else if (strcmp(token->ptr, "global") == 0) {
+					} else if (buffer_is_equal_string(token, CONST_STR_LEN("global"))) {
 						tid = TK_GLOBAL;
-					} else if (strcmp(token->ptr, "else") == 0) {
+					} else if (buffer_is_equal_string(token, CONST_STR_LEN("else"))) {
 						tid = TK_ELSE;
 					} else {
 						tid = TK_LKEY;
