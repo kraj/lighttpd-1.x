@@ -43,7 +43,7 @@ $t->{REQUEST}  = ( <<EOF
 GET /nph-status.pl HTTP/1.0
 EOF
  );
-$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200 } ];
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 502 } ];
 ok($tf->handle_http($t) == 0, 'NPH + perl, Bug #14');
 
 $t->{REQUEST} = ( <<EOF
