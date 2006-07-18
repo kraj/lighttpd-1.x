@@ -34,8 +34,10 @@ int inet_aton(const char *cp, struct in_addr *inp);
         (sizeof(*(su)) - sizeof((su)->sun_path) + strlen((su)->sun_path))
 #endif
 
+#define closesocket(x) close(x)
+
 #include <netdb.h>
-#endif
+#endif /* !_WIN32 */
 
 typedef union {
 #ifdef HAVE_IPV6

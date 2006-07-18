@@ -2,7 +2,7 @@
 
 #ifndef HAVE_INET_ATON
 /* win32 has inet_addr instead if inet_aton */
-#ifdef HAVE_INET_ADDR
+# ifdef HAVE_INET_ADDR
 int inet_aton(const char *cp, struct in_addr *inp) {
     struct in_addr a;
 
@@ -16,7 +16,9 @@ int inet_aton(const char *cp, struct in_addr *inp) {
 
     return 1;
 }
-#else
-#error no inet_aton emulation found
+# else
+#  error no inet_aton emulation found
+# endif
+
 #endif
-#endif
+
