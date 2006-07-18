@@ -298,19 +298,21 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 			s->protocol = di->value;
 		}
 
-		backend = proxy_backend_init();
+		if (p->backends_arr->used) {
+			backend = proxy_backend_init();
 
-		/* check if the backends have a valid host-name */
-		for (j = 0; j < p->backends_arr->used; j++) {
-			data_string *ds = (data_string *)p->backends_arr->data[j];
+			/* check if the backends have a valid host-name */
+			for (j = 0; j < p->backends_arr->used; j++) {
+				data_string *ds = (data_string *)p->backends_arr->data[j];
 
-			/* the values should be ips or hostnames */
-			if (0 != proxy_address_pool_add_string(backend->address_pool, ds->value)) {
-				return HANDLER_ERROR;
+				/* the values should be ips or hostnames */
+				if (0 != proxy_address_pool_add_string(backend->address_pool, ds->value)) {
+					return HANDLER_ERROR;
+				}
 			}
-		}
 
-		proxy_backends_add(s->backends, backend);
+			proxy_backends_add(s->backends, backend);
+		}
 
 		if (HANDLER_GO_ON != mod_proxy_core_config_parse_rewrites(s->request_rewrites, ca, CONFIG_PROXY_CORE_REWRITE_REQUEST)) {
 			return HANDLER_ERROR;
@@ -1403,6 +1405,8 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 	if (buffer_is_empty(con->uri.path)) return HANDLER_GO_ON;
 
 	mod_proxy_core_patch_connection(srv, con, p);
+
+	if (p->conf.backends->used == 0) return HANDLER_GO_ON;
 
 	/* 
 	 * 0. build session
