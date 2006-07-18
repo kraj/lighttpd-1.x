@@ -9,6 +9,7 @@
 #include "http_resp.h"
 #include "keyvalue.h"
 #include "array.h"
+#include "log.h"
 }
 
 %parse_failure {
@@ -20,6 +21,7 @@
 %type number { int }
 %type headers { array * }
 %type header { data_string * }
+%destructor reason { buffer_free($$); }
 %token_destructor { buffer_free($$); }
 
 /* just headers + Status: ... */
@@ -57,12 +59,11 @@ response_hdr ::= protocol(B) number(C) reason(D) CRLF headers(HDR) CRLF . {
     resp->status = C;
     resp->protocol = B;
     buffer_copy_string_buffer(resp->reason, D);
-    
+    buffer_free(D); 
+
     array_free(resp->headers);
     
     resp->headers = HDR;
-    
-    HDR = NULL;
 }
 
 protocol(A) ::= STRING(B). {
@@ -76,6 +77,7 @@ protocol(A) ::= STRING(B). {
         
         ctx->ok = 0;
     }
+    buffer_free(B);
 }
 
 number(A) ::= STRING(B). {
@@ -83,16 +85,16 @@ number(A) ::= STRING(B). {
     A = strtol(B->ptr, &err, 10);
     
     if (*err != '\0') {
-        buffer_copy_string(ctx->errmsg, "expected a number: ");
+        buffer_copy_string(ctx->errmsg, "expected a number, got: ");
         buffer_append_string_buffer(ctx->errmsg, B);
         
         ctx->ok = 0;
     }
+    buffer_free(B);
 }
 
 reason(A) ::= STRING(B). {
     A = B;
-    B = NULL;
 }
 
 reason(A) ::= reason(C) STRING(B). {
@@ -100,16 +102,14 @@ reason(A) ::= reason(C) STRING(B). {
     
     buffer_append_string(A, " ");
     buffer_append_string_buffer(A, B);
-    
-    C = NULL;
+
+    buffer_free(B); 
 }
 
 headers(HDRS) ::= headers(SRC) header(HDR). {
     HDRS = SRC;
     
     array_insert_unique(HDRS, (data_unset *)HDR);
-    
-    SRC = NULL;
 }
 
 headers(HDRS) ::= header(HDR). {
@@ -122,4 +122,6 @@ header(HDR) ::= STRING(A) COLON STRING(B) CRLF. {
     
     buffer_copy_string_buffer(HDR->key, A);
     buffer_copy_string_buffer(HDR->value, B);    
+    buffer_free(A);
+    buffer_free(B);
 }

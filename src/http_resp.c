@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <assert.h>
 
+#include "log.h"
 #include "http_resp.h"
 #include "http_resp_parser.h"
 
@@ -236,19 +237,21 @@ parse_status_t http_response_parse_cq(chunkqueue *cq, http_resp *resp) {
 	if (context.ok == 0) {
 		ret = PARSE_ERROR;
 
-		fprintf(stderr, "%s.%d: parsing failed at: ...%20s\r\n",
-			__FILE__, __LINE__, t.c->mem->ptr + t.offset);
+		if (!buffer_is_empty(context.errmsg)) {
+			TRACE("parsing failed: %s", BUF_STR(context.errmsg));
+		} else {
+			TRACE("%s", "parsing failed ...");
+		}
 	}
 
 	http_resp_parser(pParser, 0, token, &context);
-	http_resp_parserFree(pParser, free );
+	http_resp_parserFree(pParser, free);
 
 	if (context.ok == 0) {
 		/* we are missing the some tokens */
 
 		if (!buffer_is_empty(context.errmsg)) {
-			fprintf(stderr, "%s.%d: hmm, %20s\r\n",
-				__FILE__, __LINE__, context.errmsg->ptr);
+			TRACE("parsing failed: %s", BUF_STR(context.errmsg));
 		}
 
 		if (ret == PARSE_UNSET) {
