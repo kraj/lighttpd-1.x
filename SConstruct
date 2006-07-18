@@ -94,6 +94,7 @@ opts.AddOptions(
 	BoolOption('with_gzip', 'enable gzip compression', 'no'),
 	BoolOption('with_bzip2', 'enable bzip2 compression', 'no'),
 	BoolOption('with_lua', 'enable lua support for mod_cml', 'no'),
+	BoolOption('with_xattr', 'enable xattr support', 'no'),
 	BoolOption('with_uuid', 'enable LOCK support (requires uuid) for mod_webdav', 'no'),
 	BoolOption('with_ldap', 'enable ldap auth support', 'no'))
 
@@ -181,7 +182,7 @@ if 1:
 	checkFuncs(autoconf, Split('fork stat lstat strftime dup2 getcwd inet_ntoa inet_ntop memset mmap munmap strchr \
 			strdup strerror strstr strtol sendfile  getopt socket \
 			gethostbyname poll sigtimedwait epoll_ctl getrlimit chroot \
-			getuid select signal pathconf madvise prctl inet_aton \
+			getuid select signal pathconf madvise prctl inet_aton strptime \
 			writev sigaction sendfile64 send_file kqueue port_create localtime_r posix_fadvise'))
 
 	checkTypes(autoconf, Split('pid_t size_t off_t'))
@@ -217,6 +218,10 @@ if 1:
 		if autoconf.CheckLibWithHeader('bz2', 'bzlib.h', 'C'):
 			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_BZLIB_H', '-DHAVE_LIBBZ2' ], LIBBZ2 = 'bz2')
 
+	if env['with_xattr']:
+		if autoconf.CheckLibWithHeader('attr', 'attr/xattr.h', 'C'):
+			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_XATTR' ], LIBATTR = 'attr')
+
 	if env['with_memcache']:
 		if autoconf.CheckLibWithHeader('memcache', 'memcache.h', 'C'):
 			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_MEMCACHE_H', '-DHAVE_LIBMEMCACHE' ], LIBMEMCACHE = 'memcache')
@@ -228,6 +233,8 @@ if 1:
 	if env['with_lua']:
 		if autoconf.CheckLibWithHeader('lua', 'lua.h', 'C'):
 			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_LUA_H', '-DHAVE_LIBLUA' ], LIBLUA = 'lua', LIBLUALIB = 'lualib')
+		else:
+			print >> sys.stderr, "* error: --with_lua set but lua not found"
 	
 	if env['with_uuid']:
 		if autoconf.CheckLibWithHeader('uuid', 'uuid/uuid.h', 'C'):
