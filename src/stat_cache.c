@@ -99,6 +99,7 @@ stat_cache *stat_cache_init(void) {
 	fc->dir_name = buffer_init();
 #ifdef HAVE_FAM_H
 	fc->fam = calloc(1, sizeof(*fc->fam));
+	fc->sock = iosocket_init();
 #endif
 
 #ifdef DEBUG_STAT_CACHE
@@ -190,6 +191,7 @@ void stat_cache_free(stat_cache *sc) {
 
 	if (sc->fam) {
 		FAMClose(sc->fam);
+		iosocket_free(sc->sock);
 		free(sc->fam);
 	}
 #endif
@@ -286,10 +288,8 @@ handler_t stat_cache_handle_fdevent(void *_srv, void *_fce, int revent) {
 
 	if (revent & FDEVENT_HUP) {
 		/* fam closed the connection */
-		srv->stat_cache->fam_fcce_ndx = -1;
-
-		fdevent_event_del(srv->ev, &(sc->fam_fcce_ndx), FAMCONNECTION_GETFD(sc->fam));
-		fdevent_unregister(srv->ev, FAMCONNECTION_GETFD(sc->fam));
+		fdevent_event_del(srv->ev, sc->sock);
+		fdevent_unregister(srv->ev, sc->sock);
 
 		FAMClose(sc->fam);
 		free(sc->fam);
