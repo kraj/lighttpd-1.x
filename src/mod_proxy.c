@@ -113,8 +113,7 @@ typedef struct {
 	chunkqueue *wb;
 	chunkqueue *rb;
 
-	int fd; /* fd to the proxy process */
-	int fde_ndx; /* index into the fd-event buffer */
+	iosocket *fd; /* fd to the proxy process */
 
 	size_t path_info_offset; /* start of path_info in uri.path */
 
@@ -138,8 +137,7 @@ static handler_ctx * handler_ctx_init() {
 	hctx->wb = chunkqueue_init();
 	hctx->rb = chunkqueue_init();
 
-	hctx->fd = -1;
-	hctx->fde_ndx = -1;
+	hctx->fd = iosocket_init();
 
 	return hctx;
 }
@@ -147,6 +145,8 @@ static handler_ctx * handler_ctx_init() {
 static void handler_ctx_free(handler_ctx *hctx) {
 	chunkqueue_free(hctx->wb);
 	chunkqueue_free(hctx->rb);
+
+	iosocket_free(hctx->fd);
 
 	free(hctx);
 }
@@ -374,10 +374,10 @@ void proxy_connection_close(server *srv, handler_ctx *hctx) {
 	con  = hctx->remote_conn;
 
 	if (hctx->fd != -1) {
-		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
+		fdevent_event_del(srv->ev, hctx->fd);
 		fdevent_unregister(srv->ev, hctx->fd);
 
-		close(hctx->fd);
+		close(hctx->fd->fd);
 		srv->cur_fds--;
 	}
 
@@ -392,7 +392,7 @@ static int proxy_establish_connection(server *srv, handler_ctx *hctx) {
 
 	plugin_data *p    = hctx->plugin_data;
 	data_proxy *host= hctx->host;
-	int proxy_fd       = hctx->fd;
+	int proxy_fd       = hctx->fd->fd;
 
 	memset(&proxy_addr, 0, sizeof(proxy_addr));
 
@@ -496,8 +496,8 @@ static int proxy_create_env(server *srv, handler_ctx *hctx) {
 
 		if (buffer_is_empty(ds->value) || buffer_is_empty(ds->key)) continue;
 
-		if (!buffer_is_equal_string(ds->key, CONST_STR_LEN("Connection"))) continue;
-		if (!buffer_is_equal_string(ds->key, CONST_STR_LEN("Keep-Alive"))) continue;
+		if (buffer_is_equal_string(ds->key, CONST_STR_LEN("Connection"))) continue;
+		if (buffer_is_equal_string(ds->key, CONST_STR_LEN("Keep-Alive"))) continue;
 
 		buffer_append_string_buffer(b, ds->key);
 		BUFFER_APPEND_STRING_CONST(b, ": ");
@@ -574,29 +574,18 @@ static int proxy_set_state(server *srv, handler_ctx *hctx, proxy_connection_stat
 }
 
 
-static void chunkqueue_print(chunkqueue *cq) {
-	chunk *c;
-
-	for (c = cq->first; c; c = c->next) {
-		fprintf(stderr, "%s", c->mem->ptr + c->offset);
-	}
-	fprintf(stderr, "\r\n");
-}
-
 static int proxy_demux_response(server *srv, handler_ctx *hctx) {
 	plugin_data *p    = hctx->plugin_data;
 	connection *con   = hctx->remote_conn;
-	int proxy_fd       = hctx->fd;
 	chunkqueue *next_queue = NULL;
 	chunk *c = NULL;
 
-	switch(srv->network_backend_read(srv, con, proxy_fd, hctx->rb)) {
+	switch(srv->network_backend_read(srv, con, hctx->fd, hctx->rb)) {
 	case NETWORK_STATUS_SUCCESS:
 		/* we got content */
 		break;
 	case NETWORK_STATUS_WAIT_FOR_EVENT:
-		/* the ioctl will return WAIT_FOR_EVENT on a read */
-		if (0 == con->file_started) return -1;
+		return 0;
 	case NETWORK_STATUS_CONNECTION_CLOSE:
 		/* we are done, get out of here */
 		con->file_finished = 1;
@@ -720,11 +709,11 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 
 	switch(hctx->state) {
 	case PROXY_STATE_INIT:
-		if (-1 == (hctx->fd = socket(AF_INET, SOCK_STREAM, 0))) {
+		if (-1 == (hctx->fd->fd = socket(AF_INET, SOCK_STREAM, 0))) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "socket failed: ", strerror(errno));
 			return HANDLER_ERROR;
 		}
-		hctx->fde_ndx = -1;
+		hctx->fd->fde_ndx = -1;
 
 		srv->cur_fds++;
 
@@ -748,12 +737,12 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 
 				/* connection is in progress, wait for an event and call getsockopt() below */
 
-				fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+				fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
 
 				return HANDLER_WAIT_FOR_EVENT;
 			case -1:
 				/* if ECONNREFUSED choose another connection -> FIXME */
-				hctx->fde_ndx = -1;
+				hctx->fd->fde_ndx = -1;
 
 				return HANDLER_ERROR;
 			default:
@@ -765,10 +754,10 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 			socklen_t socket_error_len = sizeof(socket_error);
 
 			/* we don't need it anymore */
-			fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
+			fdevent_event_del(srv->ev, hctx->fd);
 
 			/* try to finish the connect() */
-			if (0 != getsockopt(hctx->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
+			if (0 != getsockopt(hctx->fd->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
 				log_error_write(srv, __FILE__, __LINE__, "ss",
 						"getsockopt failed:", strerror(errno));
 
@@ -806,7 +795,7 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 			return HANDLER_ERROR;
 		case NETWORK_STATUS_WAIT_FOR_EVENT:
 
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
 
 			return HANDLER_WAIT_FOR_EVENT;
 		}
@@ -814,10 +803,10 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 		if (hctx->wb->bytes_out == hctx->wb->bytes_in) {
 			proxy_set_state(srv, hctx, PROXY_STATE_RESPONSE_HEADER);
 
-			fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
+			fdevent_event_del(srv->ev, hctx->fd);
+			fdevent_event_add(srv->ev, hctx->fd, FDEVENT_IN);
 		} else {
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
 
 			return HANDLER_WAIT_FOR_EVENT;
 		}
@@ -892,7 +881,7 @@ SUBREQUEST_FUNC(mod_proxy_handle_subrequest) {
 		log_error_write(srv, __FILE__, __LINE__,  "sbdd", "proxy-server disabled:",
 				host->host,
 				host->port,
-				hctx->fd);
+				hctx->fd->fd);
 
 		/* disable this server */
 		host->is_disabled = 1;
@@ -948,7 +937,7 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 			break;
 		case 1:
 			log_error_write(srv, __FILE__, __LINE__, "sd",
-					"proxy: request done", hctx->fd);
+					"proxy: request done", hctx->fd->fd);
 			hctx->host->usage--;
 
 			http_chunk_append_mem(srv, con, NULL, 0);

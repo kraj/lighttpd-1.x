@@ -347,8 +347,7 @@ typedef struct {
 	chunkqueue *wb; /* write queue */
 
 	size_t    request_id;
-	int       fd;        /* fd to the fastcgi process */
-	int       fde_ndx;   /* index into the fd-event buffer */
+	iosocket *sock;
 
 	pid_t     pid;
 	int       got_proc;
@@ -451,13 +450,11 @@ static handler_ctx * handler_ctx_init() {
 	hctx = calloc(1, sizeof(*hctx));
 	assert(hctx);
 
-	hctx->fde_ndx = -1;
-
 	hctx->request_id = 0;
 	hctx->state = FCGI_STATE_INIT;
 	hctx->proc = NULL;
 
-	hctx->fd = -1;
+	hctx->sock = iosocket_init();
 
 	hctx->reconnects = 0;
 	hctx->send_content_body = 1;
@@ -478,6 +475,8 @@ static void handler_ctx_free(handler_ctx *hctx) {
 	chunkqueue_free(hctx->rb);
 	chunkqueue_free(hctx->http_rb);
 	chunkqueue_free(hctx->wb);
+
+	iosocket_free(hctx->sock);
 
 	free(hctx);
 }
@@ -1478,14 +1477,15 @@ void fcgi_connection_close(server *srv, handler_ctx *hctx) {
 	con  = hctx->remote_conn;
 
 	if (con->mode != p->id) {
-		WP();
 		return;
 	}
 
-	if (hctx->fd != -1) {
-		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-		fdevent_unregister(srv->ev, hctx->fd);
-		close(hctx->fd);
+	if (hctx->sock->fd != -1) {
+		fdevent_event_del(srv->ev, hctx->sock);
+		fdevent_unregister(srv->ev, hctx->sock);
+		closesocket(hctx->sock->fd);
+		hctx->sock->fd = -1;
+
 		srv->cur_fds--;
 	}
 
@@ -1542,12 +1542,12 @@ static int fcgi_reconnect(server *srv, handler_ctx *hctx) {
 	 *
 	 */
 
-	if (hctx->fd != -1) {
-		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-		fdevent_unregister(srv->ev, hctx->fd);
-		close(hctx->fd);
+	if (hctx->sock->fd != -1) {
+		fdevent_event_del(srv->ev, hctx->sock);
+		fdevent_unregister(srv->ev, hctx->sock);
+		close(hctx->sock->fd);
 		srv->cur_fds--;
-		hctx->fd = -1;
+		hctx->sock->fd = -1;
 	}
 
 	fcgi_requestid_del(srv, p, hctx->request_id);
@@ -1666,7 +1666,7 @@ static connection_result_t fcgi_establish_connection(server *srv, handler_ctx *h
 
 	fcgi_extension_host *host = hctx->host;
 	fcgi_proc *proc   = hctx->proc;
-	int fcgi_fd       = hctx->fd;
+	int fcgi_fd       = hctx->sock->fd;
 
 	memset(&fcgi_addr, 0, sizeof(fcgi_addr));
 
@@ -1885,7 +1885,7 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	/* get the server-side of the connection to the client */
 	our_addr_len = sizeof(our_addr);
 
-	if (-1 == getsockname(con->fd, &(our_addr.plain), &our_addr_len)) {
+	if (-1 == getsockname(con->sock->fd, &(our_addr.plain), &our_addr_len)) {
 		s = inet_ntop_cache_get_ip(srv, &(srv_sock->addr));
 	} else {
 		s = inet_ntop_cache_get_ip(srv, &(our_addr));
@@ -2289,19 +2289,24 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 	connection *con   = hctx->remote_conn;
 	fcgi_extension_host *host= hctx->host;
 	fcgi_proc *proc   = hctx->proc;
+	handler_t ret;
 
-	switch(srv->network_backend_read(srv, con, hctx->fd, hctx->rb)) {
+	/* in case we read nothing, check the return code
+	 * if we got something, be happy :)
+	 *
+	 * Ok, to be honest:
+	 * - it is fine to receive a EAGAIN on a second read() call
+	 * - it might be fine they we get a con-close on a second read() call */
+	switch(srv->network_backend_read(srv, con, hctx->sock, hctx->rb)) {
 	case NETWORK_STATUS_WAIT_FOR_EVENT:
-		/* we are only triggered when there is a event */
-		log_error_write(srv, __FILE__, __LINE__, "ssdsb",
-				"unexpected end-of-file (perhaps the fastcgi process died):",
-				"pid:", proc->pid,
-				"socket:", proc->connection_name);
+		/* a EAGAIN after we read exactly the chunk-size */
+
+		ERROR("%s", "oops, got a EAGAIN even if we just got call for the event, wired");
 		return -1;
 	case NETWORK_STATUS_SUCCESS:
 		break;
 	default:
-		log_error_write(srv, __FILE__, __LINE__, "s", "fastcgi-read failed");
+		ERROR("reading from fastcgi socket failed (fd=%d)", hctx->sock->fd);
 		return -1;
 	}
 
@@ -2354,6 +2359,7 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 				chunkqueue_remove_finished_chunks(hctx->http_rb);
 
 				con->http_status = p->resp->status;
+				hctx->send_content_body = 1;
 
 				/* handle the header fields */
 				if (host->mode == FCGI_AUTHORIZER) {
@@ -2620,7 +2626,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 		socklen_t socket_error_len = sizeof(socket_error);
 
 		/* try to finish the connect() */
-		if (0 != getsockopt(hctx->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
+		if (0 != getsockopt(hctx->sock->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
 			log_error_write(srv, __FILE__, __LINE__, "ss",
 					"getsockopt failed:", strerror(errno));
 
@@ -2674,7 +2680,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 
 		/* all childs are dead */
 		if (proc == NULL) {
-			hctx->fde_ndx = -1;
+			hctx->sock->fde_ndx = -1;
 
 			return HANDLER_ERROR;
 		}
@@ -2689,11 +2695,11 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 
 		ret = host->unixsocket->used ? AF_UNIX : AF_INET;
 
-		if (-1 == (hctx->fd = socket(ret, SOCK_STREAM, 0))) {
+		if (-1 == (hctx->sock->fd = socket(ret, SOCK_STREAM, 0))) {
 			if (errno == EMFILE ||
 			    errno == EINTR) {
 				log_error_write(srv, __FILE__, __LINE__, "sd",
-						"wait for fd at connection:", con->fd);
+						"wait for fd at connection:", con->sock->fd);
 
 				return HANDLER_WAIT_FOR_FD;
 			}
@@ -2702,13 +2708,13 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 					"socket failed:", strerror(errno), srv->cur_fds, srv->max_fds);
 			return HANDLER_ERROR;
 		}
-		hctx->fde_ndx = -1;
+		hctx->sock->fde_ndx = -1;
 
 		srv->cur_fds++;
 
-		fdevent_register(srv->ev, hctx->fd, fcgi_handle_fdevent, hctx);
+		fdevent_register(srv->ev, hctx->sock, fcgi_handle_fdevent, hctx);
 
-		if (-1 == fdevent_fcntl_set(srv->ev, hctx->fd)) {
+		if (-1 == fdevent_fcntl_set(srv->ev, hctx->sock)) {
 			log_error_write(srv, __FILE__, __LINE__, "ss",
 					"fcntl failed:", strerror(errno));
 
@@ -2723,7 +2729,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 		case CONNECTION_DELAYED:
 			/* connection is in progress, wait for an event and call getsockopt() below */
 
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 			fcgi_set_state(srv, hctx, FCGI_STATE_CONNECT_DELAYED);
 			return HANDLER_WAIT_FOR_EVENT;
@@ -2832,7 +2838,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 
 		/* fall through */
 	case FCGI_STATE_WRITE:
-		ret = srv->network_backend_write(srv, con, hctx->fd, hctx->wb);
+		ret = srv->network_backend_write(srv, con, hctx->sock, hctx->wb);
 
 		chunkqueue_remove_finished_chunks(hctx->wb);
 
@@ -2871,7 +2877,7 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 				return HANDLER_ERROR;
 			case EAGAIN:
 			case EINTR:
-				fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+				fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 				return HANDLER_WAIT_FOR_EVENT;
 			default:
@@ -2884,11 +2890,11 @@ static handler_t fcgi_write_request(server *srv, handler_ctx *hctx) {
 
 		if (hctx->wb->bytes_out == hctx->wb->bytes_in) {
 			/* we don't need the out event anymore */
-			fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
+			fdevent_event_del(srv->ev, hctx->sock);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_IN);
 			fcgi_set_state(srv, hctx, FCGI_STATE_READ);
 		} else {
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 			return HANDLER_WAIT_FOR_EVENT;
 		}
@@ -3481,15 +3487,15 @@ JOBLIST_FUNC(mod_fastcgi_handle_joblist) {
 
 	if (hctx == NULL) return HANDLER_GO_ON;
 
-	if (hctx->fd != -1) {
+	if (hctx->sock->fd != -1) {
 		switch (hctx->state) {
 		case FCGI_STATE_READ:
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_IN);
 
 			break;
 		case FCGI_STATE_CONNECT_DELAYED:
 		case FCGI_STATE_WRITE:
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 			break;
 		case FCGI_STATE_INIT:

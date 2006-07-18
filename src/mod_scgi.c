@@ -17,6 +17,7 @@
 #include "connections.h"
 #include "response.h"
 #include "joblist.h"
+#include "http_resp.h"
 
 #include "plugin.h"
 
@@ -272,7 +273,8 @@ typedef struct {
 	buffer *scgi_env;
 
 	buffer *path;
-	buffer *parse_response;
+
+	http_resp *resp;
 
 	plugin_config **config_storage;
 
@@ -280,16 +282,17 @@ typedef struct {
 } plugin_data;
 
 /* connection specific data */
-typedef enum { FCGI_STATE_INIT, FCGI_STATE_CONNECT, FCGI_STATE_PREPARE_WRITE,
-		FCGI_STATE_WRITE, FCGI_STATE_READ
+typedef enum {
+	SCGI_STATE_INIT,
+	SCGI_STATE_CONNECT,
+	SCGI_STATE_PREPARE_WRITE,
+	SCGI_STATE_WRITE,
+	SCGI_STATE_RESPONSE_HEADER,
+	SCGI_STATE_RESPONSE_CONTENT,
+	SCGI_STATE_ERROR
 } scgi_connection_state_t;
 
 typedef struct {
-	buffer  *response;
-	size_t   response_len;
-	int      response_type;
-	int      response_padding;
-
 	scgi_proc *proc;
 	scgi_extension_host *host;
 
@@ -298,16 +301,14 @@ typedef struct {
 
 	int      reconnects; /* number of reconnect attempts */
 
-	read_buffer *rb;
+	chunkqueue *rb;
 	chunkqueue *wb;
-
-	buffer   *response_header;
 
 	int       delayed;   /* flag to mark that the connect() is delayed */
 
 	size_t    request_id;
-	int       fd;        /* fd to the scgi process */
-	int       fde_ndx;   /* index into the fd-event buffer */
+	iosocket  *sock;        /* fd to the scgi process */
+
 	pid_t     pid;
 	int       got_proc;
 
@@ -331,37 +332,25 @@ static handler_ctx * handler_ctx_init() {
 	hctx = calloc(1, sizeof(*hctx));
 	assert(hctx);
 
-	hctx->fde_ndx = -1;
-
-	hctx->response = buffer_init();
-	hctx->response_header = buffer_init();
+	hctx->sock = iosocket_init();;
 
 	hctx->request_id = 0;
-	hctx->state = FCGI_STATE_INIT;
+	hctx->state = SCGI_STATE_INIT;
 	hctx->proc = NULL;
-
-	hctx->response_len = 0;
-	hctx->response_type = 0;
-	hctx->response_padding = 0;
-	hctx->fd = -1;
 
 	hctx->reconnects = 0;
 
 	hctx->wb = chunkqueue_init();
+	hctx->rb = chunkqueue_init();
 
 	return hctx;
 }
 
 static void handler_ctx_free(handler_ctx *hctx) {
-	buffer_free(hctx->response);
-	buffer_free(hctx->response_header);
-
 	chunkqueue_free(hctx->wb);
+	chunkqueue_free(hctx->rb);
 
-	if (hctx->rb) {
-		if (hctx->rb->ptr) free(hctx->rb->ptr);
-		free(hctx->rb);
-	}
+	iosocket_free(hctx->sock);
 
 	free(hctx);
 }
@@ -517,7 +506,7 @@ INIT_FUNC(mod_scgi_init) {
 	p->scgi_env = buffer_init();
 
 	p->path = buffer_init();
-	p->parse_response = buffer_init();
+	p->resp = http_response_init();
 
 	return p;
 }
@@ -530,7 +519,7 @@ FREE_FUNC(mod_scgi_free) {
 
 	buffer_free(p->scgi_env);
 	buffer_free(p->path);
-	buffer_free(p->parse_response);
+	http_response_free(p->resp);
 
 	if (p->config_storage) {
 		size_t i, j, n;
@@ -1156,14 +1145,14 @@ void scgi_connection_cleanup(server *srv, handler_ctx *hctx) {
 	con  = hctx->remote_conn;
 
 	if (con->mode != p->id) {
-		WP();
 		return;
 	}
 
-	if (hctx->fd != -1) {
-		fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-		fdevent_unregister(srv->ev, hctx->fd);
-		close(hctx->fd);
+	if (hctx->sock->fd != -1) {
+		fdevent_event_del(srv->ev, hctx->sock);
+		fdevent_unregister(srv->ev, hctx->sock);
+		closesocket(hctx->sock->fd);
+		hctx->sock->fd = -1;
 		srv->cur_fds--;
 	}
 
@@ -1177,7 +1166,7 @@ void scgi_connection_cleanup(server *srv, handler_ctx *hctx) {
 			if (p->conf.debug) {
 				log_error_write(srv, __FILE__, __LINE__, "sddb",
 						"release proc:",
-						hctx->fd,
+						hctx->sock->fd,
 						hctx->proc->pid, hctx->proc->socket);
 			}
 		}
@@ -1212,12 +1201,12 @@ static int scgi_reconnect(server *srv, handler_ctx *hctx) {
 	 *
 	 */
 
-	fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-	fdevent_unregister(srv->ev, hctx->fd);
-	close(hctx->fd);
+	fdevent_event_del(srv->ev, hctx->sock);
+	fdevent_unregister(srv->ev, hctx->sock);
+	closesocket(hctx->sock->fd);
 	srv->cur_fds--;
 
-	scgi_set_state(srv, hctx, FCGI_STATE_INIT);
+	scgi_set_state(srv, hctx, SCGI_STATE_INIT);
 
 	hctx->request_id = 0;
 	hctx->reconnects++;
@@ -1225,7 +1214,7 @@ static int scgi_reconnect(server *srv, handler_ctx *hctx) {
 	if (p->conf.debug) {
 		log_error_write(srv, __FILE__, __LINE__, "sddb",
 				"release proc:",
-				hctx->fd,
+				hctx->sock->fd,
 				hctx->proc->pid, hctx->proc->socket);
 	}
 
@@ -1282,7 +1271,7 @@ static int scgi_establish_connection(server *srv, handler_ctx *hctx) {
 
 	scgi_extension_host *host = hctx->host;
 	scgi_proc *proc   = hctx->proc;
-	int scgi_fd       = hctx->fd;
+	int scgi_fd       = hctx->sock->fd;
 
 	memset(&scgi_addr, 0, sizeof(scgi_addr));
 
@@ -1463,7 +1452,7 @@ static int scgi_create_env(server *srv, handler_ctx *hctx) {
 	/* get the server-side of the connection to the client */
 	our_addr_len = sizeof(our_addr);
 
-	if (-1 == getsockname(con->fd, &(our_addr.plain), &our_addr_len)) {
+	if (-1 == getsockname(con->sock->fd, &(our_addr.plain), &our_addr_len)) {
 		s = inet_ntop_cache_get_ip(srv, &(srv_sock->addr));
 	} else {
 		s = inet_ntop_cache_get_ip(srv, &(our_addr));
@@ -1640,245 +1629,122 @@ static int scgi_create_env(server *srv, handler_ctx *hctx) {
 	return 0;
 }
 
-static int scgi_response_parse(server *srv, connection *con, plugin_data *p, buffer *in, int eol) {
-	char *ns;
-	const char *s;
-	int line = 0;
-
-	UNUSED(srv);
-
-	buffer_copy_string_buffer(p->parse_response, in);
-
-	for (s = p->parse_response->ptr;
-	     NULL != (ns = (eol == EOL_RN ? strstr(s, "\r\n") : strchr(s, '\n')));
-	     s = ns + (eol == EOL_RN ? 2 : 1), line++) {
-		const char *key, *value;
-		int key_len;
-		data_string *ds;
-
-		ns[0] = '\0';
-
-		if (line == 0 &&
-		    0 == strncmp(s, "HTTP/1.", 7)) {
-			/* non-parsed header ... we parse them anyway */
-
-			if ((s[7] == '1' ||
-			     s[7] == '0') &&
-			    s[8] == ' ') {
-				int status;
-				/* after the space should be a status code for us */
-
-				status = strtol(s+9, NULL, 10);
-
-				if (con->http_status >= 100 &&
-				    con->http_status < 1000) {
-					/* we expected 3 digits and didn't got them */
-					con->parsed_response |= HTTP_STATUS;
-					con->http_status = status;
-				}
-			}
-		} else {
-
-			key = s;
-			if (NULL == (value = strchr(s, ':'))) {
-				/* we expect: "<key>: <value>\r\n" */
-				continue;
-			}
-
-			key_len = value - key;
-			value += 1;
-
-			/* skip LWS */
-			while (*value == ' ' || *value == '\t') value++;
-
-			if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
-				ds = data_response_init();
-			}
-			buffer_copy_string_len(ds->key, key, key_len);
-			buffer_copy_string(ds->value, value);
-
-			array_insert_unique(con->response.headers, (data_unset *)ds);
-
-			switch(key_len) {
-			case 4:
-				if (0 == strncasecmp(key, "Date", key_len)) {
-					con->parsed_response |= HTTP_DATE;
-				}
-				break;
-			case 6:
-				if (0 == strncasecmp(key, "Status", key_len)) {
-					con->http_status = strtol(value, NULL, 10);
-					con->parsed_response |= HTTP_STATUS;
-				}
-				break;
-			case 8:
-				if (0 == strncasecmp(key, "Location", key_len)) {
-					con->parsed_response |= HTTP_LOCATION;
-				}
-				break;
-			case 10:
-				if (0 == strncasecmp(key, "Connection", key_len)) {
-					con->response.keep_alive = (0 == strcasecmp(value, "Keep-Alive")) ? 1 : 0;
-					con->parsed_response |= HTTP_CONNECTION;
-				}
-				break;
-			case 14:
-				if (0 == strncasecmp(key, "Content-Length", key_len)) {
-					con->response.content_length = strtol(value, NULL, 10);
-					con->parsed_response |= HTTP_CONTENT_LENGTH;
-				}
-				break;
-			default:
-				break;
-			}
-		}
-	}
-
-	/* CGI/1.1 rev 03 - 7.2.1.2 */
-	if ((con->parsed_response & HTTP_LOCATION) &&
-	    !(con->parsed_response & HTTP_STATUS)) {
-		con->http_status = 302;
-	}
-
-	return 0;
-}
-
-
 static int scgi_demux_response(server *srv, handler_ctx *hctx) {
 	plugin_data *p    = hctx->plugin_data;
 	connection  *con  = hctx->remote_conn;
+	chunk *c;
 
-	while(1) {
-		int n;
+	switch(srv->network_backend_read(srv, con, hctx->sock, hctx->rb)) {
+	case NETWORK_STATUS_SUCCESS:
+		/* we got content */
+		break;
+	case NETWORK_STATUS_WAIT_FOR_EVENT:
+		/* the ioctl will return WAIT_FOR_EVENT on a read */
+		if (0 == con->file_started) return -1;
+	case NETWORK_STATUS_CONNECTION_CLOSE:
+		/* we are done, get out of here */
+		con->file_finished = 1;
 
-		buffer_prepare_copy(hctx->response, 1024);
-		if (-1 == (n = read(hctx->fd, hctx->response->ptr, hctx->response->size - 1))) {
-			if (errno == EAGAIN || errno == EINTR) {
-				/* would block, wait for signal */
-				return 0;
-			}
-			/* error */
-			log_error_write(srv, __FILE__, __LINE__, "sdd", strerror(errno), con->fd, hctx->fd);
-			return -1;
-		}
+		/* close the chunk-queue with a empty chunk */
 
-		if (n == 0) {
-			/* read finished */
-
-			con->file_finished = 1;
-
-			/* send final chunk */
-			http_chunk_append_mem(srv, con, NULL, 0);
-			joblist_append(srv, con);
-
-			return 1;
-		}
-
-		hctx->response->ptr[n] = '\0';
-		hctx->response->used = n+1;
-
-		/* split header from body */
-
-		if (con->file_started == 0) {
-			char *c;
-			int in_header = 0;
-			int header_end = 0;
-			int cp, eol = EOL_UNSET;
-			size_t used = 0;
-
-			buffer_append_string_buffer(hctx->response_header, hctx->response);
-
-			/* nph (non-parsed headers) */
-			if (0 == strncmp(hctx->response_header->ptr, "HTTP/1.", 7)) in_header = 1;
-
-			/* search for the \r\n\r\n or \n\n in the string */
-			for (c = hctx->response_header->ptr, cp = 0, used = hctx->response_header->used - 1; used; c++, cp++, used--) {
-				if (*c == ':') in_header = 1;
-				else if (*c == '\n') {
-					if (in_header == 0) {
-						/* got a response without a response header */
-
-						c = NULL;
-						header_end = 1;
-						break;
-					}
-
-					if (eol == EOL_UNSET) eol = EOL_N;
-
-					if (*(c+1) == '\n') {
-						header_end = 1;
-						break;
-					}
-
-				} else if (used > 1 && *c == '\r' && *(c+1) == '\n') {
-					if (in_header == 0) {
-						/* got a response without a response header */
-
-						c = NULL;
-						header_end = 1;
-						break;
-					}
-
-					if (eol == EOL_UNSET) eol = EOL_RN;
-
-					if (used > 3 &&
-					    *(c+2) == '\r' &&
-					    *(c+3) == '\n') {
-						header_end = 1;
-						break;
-					}
-
-					/* skip the \n */
-					c++;
-					cp++;
-					used--;
-				}
-			}
-
-			if (header_end) {
-				if (c == NULL) {
-					/* no header, but a body */
-
-					if (con->request.http_version == HTTP_VERSION_1_1) {
-						con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
-					}
-
-					http_chunk_append_mem(srv, con, hctx->response_header->ptr, hctx->response_header->used);
-					joblist_append(srv, con);
-				} else {
-					size_t hlen = c - hctx->response_header->ptr + (eol == EOL_RN ? 4 : 2);
-					size_t blen = hctx->response_header->used - hlen - 1;
-
-					/* a small hack: terminate after at the second \r */
-					hctx->response_header->used = hlen + 1 - (eol == EOL_RN ? 2 : 1);
-					hctx->response_header->ptr[hlen - (eol == EOL_RN ? 2 : 1)] = '\0';
-
-					/* parse the response header */
-					scgi_response_parse(srv, con, p, hctx->response_header, eol);
-
-					/* enable chunked-transfer-encoding */
-					if (con->request.http_version == HTTP_VERSION_1_1 &&
-					    !(con->parsed_response & HTTP_CONTENT_LENGTH)) {
-						con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
-					}
-
-					if ((hctx->response->used != hlen) && blen > 0) {
-						http_chunk_append_mem(srv, con, c + (eol == EOL_RN ? 4: 2), blen + 1);
-						joblist_append(srv, con);
-					}
-				}
-
-				con->file_started = 1;
-			}
-		} else {
-			http_chunk_append_mem(srv, con, hctx->response->ptr, hctx->response->used);
-			joblist_append(srv, con);
-		}
-
-#if 0
-		log_error_write(srv, __FILE__, __LINE__, "ddss", con->fd, hctx->fd, connection_get_state(con->state), b->ptr);
-#endif
+		return 1;
+	default:
+		/* oops */
+		return -1;
 	}
+
+	/* looks like we got some content
+	*
+	* split off the header from the incoming stream
+	*/
+
+	if (hctx->state == SCGI_STATE_RESPONSE_HEADER) {
+		size_t i;
+		int have_content_length = 0;
+
+		http_response_reset(p->resp);
+
+		/* the response header is not fully received yet,
+		*
+		* extract the http-response header from the rb-cq
+		*/
+		switch (http_response_parse_cq(hctx->rb, p->resp)) {
+		case PARSE_ERROR:
+			/* parsing failed */
+
+			con->http_status = 502; /* Bad Gateway */
+			return 1;
+		case PARSE_NEED_MORE:
+			return 0;
+		case PARSE_SUCCESS:
+			con->http_status = p->resp->status;
+
+			chunkqueue_remove_finished_chunks(hctx->rb);
+
+			/* copy the http-headers */
+			for (i = 0; i < p->resp->headers->used; i++) {
+				const char *ign[] = { "Status", "Connection", NULL };
+				size_t j;
+				data_string *ds;
+
+				data_string *header = (data_string *)p->resp->headers->data[i];
+
+				/* some headers are ignored by default */
+				for (j = 0; ign[j]; j++) {
+					if (0 == strcasecmp(ign[j], header->key->ptr)) break;
+				}
+				if (ign[j]) continue;
+
+				if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("Location"))) {
+					/* CGI/1.1 rev 03 - 7.2.1.2 */
+					if (con->http_status == 0) con->http_status = 302;
+				} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("Content-Length"))) {
+					have_content_length = 1;
+				}
+				
+				if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
+					ds = data_response_init();
+				}
+				buffer_copy_string_buffer(ds->key, header->key);
+				buffer_copy_string_buffer(ds->value, header->value);
+
+				array_insert_unique(con->response.headers, (data_unset *)ds);
+			}
+
+			con->file_started = 1;
+
+			if (con->request.http_version == HTTP_VERSION_1_1 &&
+			    !have_content_length) {
+				con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
+	   		}
+
+			hctx->state = SCGI_STATE_RESPONSE_CONTENT;
+			break;
+		}
+	}
+
+	/* FIXME: pass the response-header to the other plugins to
+	* setup the filter-queue
+	*
+	* - use next-queue instead of con->write_queue
+	*/
+
+	assert(hctx->state == SCGI_STATE_RESPONSE_CONTENT);
+
+	/* FIXME: if we have a content-length or chunked-encoding
+	* handle it.
+	*
+	* for now we wait for EOF on the socket */
+
+	/* copy the content to the next cq */
+	for (c = hctx->rb->first; c; c = c->next) {
+		http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+
+		c->offset = c->mem->used - 1;
+	}
+
+	chunkqueue_remove_finished_chunks(hctx->rb);
+	joblist_append(srv, con);
 
 	return 0;
 }
@@ -2136,14 +2002,14 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 
 
 	switch(hctx->state) {
-	case FCGI_STATE_INIT:
+	case SCGI_STATE_INIT:
 		ret = host->unixsocket->used ? AF_UNIX : AF_INET;
 
-		if (-1 == (hctx->fd = socket(ret, SOCK_STREAM, 0))) {
+		if (-1 == (hctx->sock->fd = socket(ret, SOCK_STREAM, 0))) {
 			if (errno == EMFILE ||
 			    errno == EINTR) {
 				log_error_write(srv, __FILE__, __LINE__, "sd",
-						"wait for fd at connection:", con->fd);
+						"wait for fd at connection:", con->sock->fd);
 
 				return HANDLER_WAIT_FOR_FD;
 			}
@@ -2152,13 +2018,13 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 					"socket failed:", strerror(errno), srv->cur_fds, srv->max_fds);
 			return HANDLER_ERROR;
 		}
-		hctx->fde_ndx = -1;
+		hctx->sock->fde_ndx = -1;
 
 		srv->cur_fds++;
 
-		fdevent_register(srv->ev, hctx->fd, scgi_handle_fdevent, hctx);
+		fdevent_register(srv->ev, hctx->sock, scgi_handle_fdevent, hctx);
 
-		if (-1 == fdevent_fcntl_set(srv->ev, hctx->fd)) {
+		if (-1 == fdevent_fcntl_set(srv->ev, hctx->sock)) {
 			log_error_write(srv, __FILE__, __LINE__, "ss",
 					"fcntl failed: ", strerror(errno));
 
@@ -2166,15 +2032,15 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 		}
 
 		/* fall through */
-	case FCGI_STATE_CONNECT:
-		if (hctx->state == FCGI_STATE_INIT) {
+	case SCGI_STATE_CONNECT:
+		if (hctx->state == SCGI_STATE_INIT) {
 			for (hctx->proc = hctx->host->first;
 			     hctx->proc && hctx->proc->state != PROC_STATE_RUNNING;
 			     hctx->proc = hctx->proc->next);
 
 			/* all childs are dead */
 			if (hctx->proc == NULL) {
-				hctx->fde_ndx = -1;
+				hctx->sock->fde_ndx = -1;
 
 				return HANDLER_ERROR;
 			}
@@ -2185,16 +2051,16 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 
 			switch (scgi_establish_connection(srv, hctx)) {
 			case 1:
-				scgi_set_state(srv, hctx, FCGI_STATE_CONNECT);
+				scgi_set_state(srv, hctx, SCGI_STATE_CONNECT);
 
 				/* connection is in progress, wait for an event and call getsockopt() below */
 
-				fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+				fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 				return HANDLER_WAIT_FOR_EVENT;
 			case -1:
 				/* if ECONNREFUSED choose another connection -> FIXME */
-				hctx->fde_ndx = -1;
+				hctx->sock->fde_ndx = -1;
 
 				return HANDLER_ERROR;
 			default:
@@ -2208,7 +2074,7 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 			socklen_t socket_error_len = sizeof(socket_error);
 
 			/* try to finish the connect() */
-			if (0 != getsockopt(hctx->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
+			if (0 != getsockopt(hctx->sock->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
 				log_error_write(srv, __FILE__, __LINE__, "ss",
 						"getsockopt failed:", strerror(errno));
 
@@ -2236,7 +2102,7 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 		if (p->conf.debug) {
 			log_error_write(srv, __FILE__, __LINE__, "sddbdd",
 					"got proc:",
-					hctx->fd,
+					hctx->sock->fd,
 					hctx->proc->pid,
 					hctx->proc->socket,
 					hctx->proc->port,
@@ -2246,16 +2112,16 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 		/* move the proc-list entry down the list */
 		scgi_proclist_sort_up(srv, hctx->host, hctx->proc);
 
-		scgi_set_state(srv, hctx, FCGI_STATE_PREPARE_WRITE);
+		scgi_set_state(srv, hctx, SCGI_STATE_PREPARE_WRITE);
 		/* fall through */
-	case FCGI_STATE_PREPARE_WRITE:
+	case SCGI_STATE_PREPARE_WRITE:
 		scgi_create_env(srv, hctx);
 
-		scgi_set_state(srv, hctx, FCGI_STATE_WRITE);
+		scgi_set_state(srv, hctx, SCGI_STATE_WRITE);
 
 		/* fall through */
-	case FCGI_STATE_WRITE:
-		ret = srv->network_backend_write(srv, con, hctx->fd, hctx->wb);
+	case SCGI_STATE_WRITE:
+		ret = srv->network_backend_write(srv, con, hctx->sock, hctx->wb);
 
 		chunkqueue_remove_finished_chunks(hctx->wb);
 
@@ -2301,7 +2167,7 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 
 				return HANDLER_ERROR;
 			} else {
-				fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+				fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 				return HANDLER_WAIT_FOR_EVENT;
 			}
@@ -2309,17 +2175,17 @@ static handler_t scgi_write_request(server *srv, handler_ctx *hctx) {
 
 		if (hctx->wb->bytes_out == hctx->wb->bytes_in) {
 			/* we don't need the out event anymore */
-			fdevent_event_del(srv->ev, &(hctx->fde_ndx), hctx->fd);
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
-			scgi_set_state(srv, hctx, FCGI_STATE_READ);
+			fdevent_event_del(srv->ev, hctx->sock);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_IN);
+			scgi_set_state(srv, hctx, SCGI_STATE_RESPONSE_HEADER);
 		} else {
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 			return HANDLER_WAIT_FOR_EVENT;
 		}
 
 		break;
-	case FCGI_STATE_READ:
+	case SCGI_STATE_RESPONSE_HEADER:
 		/* waiting for a response */
 		break;
 	default:
@@ -2364,8 +2230,8 @@ SUBREQUEST_FUNC(mod_scgi_handle_subrequest) {
 			host->active_procs--;
 		}
 
-		if (hctx->state == FCGI_STATE_INIT ||
-		    hctx->state == FCGI_STATE_CONNECT) {
+		if (hctx->state == SCGI_STATE_INIT ||
+		    hctx->state == SCGI_STATE_CONNECT) {
 			/* connect() or getsockopt() failed,
 			 * restart the request-handling
 			 */
@@ -2442,8 +2308,8 @@ static handler_t scgi_connection_close(server *srv, handler_ctx *hctx) {
 
 	log_error_write(srv, __FILE__, __LINE__, "ssdsd",
 			"emergency exit: scgi:",
-			"connection-fd:", con->fd,
-			"fcgi-fd:", hctx->fd);
+			"connection-fd:", con->sock->fd,
+			"fcgi-fd:", hctx->sock->fd);
 
 
 
@@ -2463,7 +2329,8 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 	scgi_extension_host *host= hctx->host;
 
 	if ((revents & FDEVENT_IN) &&
-	    hctx->state == FCGI_STATE_READ) {
+	    (hctx->state == SCGI_STATE_RESPONSE_HEADER ||
+	     hctx->state == SCGI_STATE_RESPONSE_CONTENT)) {
 		switch (scgi_demux_response(srv, hctx)) {
 		case 0:
 			break;
@@ -2530,16 +2397,16 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 					log_error_write(srv, __FILE__, __LINE__, "sdsdsd",
 						"response not sent, request not sent, reconnection.",
-						"connection-fd:", con->fd,
-						"fcgi-fd:", hctx->fd);
+						"connection-fd:", con->sock->fd,
+						"fcgi-fd:", hctx->sock->fd);
 
 					return HANDLER_WAIT_FOR_FD;
 				}
 
 				log_error_write(srv, __FILE__, __LINE__, "sosdsd",
 						"response not sent, request sent:", hctx->wb->bytes_out,
-						"connection-fd:", con->fd,
-						"fcgi-fd:", hctx->fd);
+						"connection-fd:", con->sock->fd,
+						"fcgi-fd:", hctx->sock->fd);
 
 				scgi_connection_cleanup(srv, hctx);
 
@@ -2553,8 +2420,8 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 				log_error_write(srv, __FILE__, __LINE__, "ssdsd",
 						"response already sent out, termination connection",
-						"connection-fd:", con->fd,
-						"fcgi-fd:", hctx->fd);
+						"connection-fd:", con->sock->fd,
+						"fcgi-fd:", hctx->sock->fd);
 
 				connection_set_state(srv, con, CON_STATE_ERROR);
 			}
@@ -2568,8 +2435,8 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 	}
 
 	if (revents & FDEVENT_OUT) {
-		if (hctx->state == FCGI_STATE_CONNECT ||
-		    hctx->state == FCGI_STATE_WRITE) {
+		if (hctx->state == SCGI_STATE_CONNECT ||
+		    hctx->state == SCGI_STATE_WRITE) {
 			/* we are allowed to send something out
 			 *
 			 * 1. in a unfinished connect() call
@@ -2585,7 +2452,7 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 	/* perhaps this issue is already handled */
 	if (revents & FDEVENT_HUP) {
-		if (hctx->state == FCGI_STATE_CONNECT) {
+		if (hctx->state == SCGI_STATE_CONNECT) {
 			/* getoptsock will catch this one (right ?)
 			 *
 			 * if we are in connect we might get a EINPROGRESS
@@ -2596,7 +2463,8 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 			 *
 			 */
 			return mod_scgi_handle_subrequest(srv, con, p);
-		} else if (hctx->state == FCGI_STATE_READ &&
+		} else if ((hctx->state == SCGI_STATE_RESPONSE_HEADER ||
+			    hctx->state == SCGI_STATE_RESPONSE_CONTENT ) &&
 			   hctx->proc->port == 0) {
 			/* FIXME:
 			 *
@@ -2844,18 +2712,19 @@ JOBLIST_FUNC(mod_scgi_handle_joblist) {
 
 	if (hctx == NULL) return HANDLER_GO_ON;
 
-	if (hctx->fd != -1) {
+	if (hctx->sock->fd != -1) {
 		switch (hctx->state) {
-		case FCGI_STATE_READ:
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_IN);
+		case SCGI_STATE_RESPONSE_HEADER:
+		case SCGI_STATE_RESPONSE_CONTENT:
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_IN);
 
 			break;
-		case FCGI_STATE_CONNECT:
-		case FCGI_STATE_WRITE:
-			fdevent_event_add(srv->ev, &(hctx->fde_ndx), hctx->fd, FDEVENT_OUT);
+		case SCGI_STATE_CONNECT:
+		case SCGI_STATE_WRITE:
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 			break;
-		case FCGI_STATE_INIT:
+		case SCGI_STATE_INIT:
 			/* at reconnect */
 			break;
 		default:
