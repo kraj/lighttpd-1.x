@@ -368,6 +368,7 @@ static handler_t cgi_connection_close(server *srv, connection *con, plugin_data 
 
 	/* is this a good idea ? */
 	cgi_session_free(sess);
+	sess = NULL;
 
 	/* if waitpid hasn't been called by response.c yet, do it here */
 	if (pid) {
@@ -643,8 +644,6 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 		cgi_env_add(&env, CONST_STR_LEN("GATEWAY_INTERFACE"), CONST_STR_LEN("CGI/1.1"));
 
 		s = get_http_version_name(con->request.http_version);
-
-		TRACE("http-version: %s (%d)", s, con->request.http_version);
 
 		cgi_env_add(&env, CONST_STR_LEN("SERVER_PROTOCOL"), s, strlen(s));
 
@@ -935,6 +934,8 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 		sess->remote_con = con;
 		sess->pid = pid;
 
+		assert(sess->sock);
+
 		sess->sock->fd = from_cgi_fds[0];
 		sess->sock->type = IOSOCKET_TYPE_PIPE;
 
@@ -996,8 +997,6 @@ URIHANDLER_FUNC(cgi_is_handled) {
 	buffer *fn = con->physical.path;
 
 	if (fn->used == 0) return HANDLER_GO_ON;
-
-	TRACE("http-version: (%d)", con->request.http_version);
 
 	mod_cgi_patch_connection(srv, con, p);
 
@@ -1127,6 +1126,7 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 		fdevent_unregister(srv->ev, sess->sock);
 
 		cgi_session_free(sess);
+		sess = NULL;
 
 		con->plugin_ctx[p->id] = NULL;
 
@@ -1150,6 +1150,7 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 		fdevent_unregister(srv->ev, sess->sock);
 
 		cgi_session_free(sess);
+		sess = NULL;
 
 		con->plugin_ctx[p->id] = NULL;
 		return HANDLER_FINISHED;
