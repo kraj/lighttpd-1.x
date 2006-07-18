@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <ctype.h>
 
 #include "buffer.h"
 #include "array.h"
@@ -19,6 +20,10 @@
 #include "mod_proxy_core_pool.h"	
 #include "mod_proxy_core_backend.h"
 #include "mod_proxy_core_backlog.h"
+#include "mod_proxy_core_rewrites.h"
+
+#define CONFIG_PROXY_CORE_REWRITE_REQUEST "proxy-core.rewrite-request"
+#define CONFIG_PROXY_CORE_REWRITE_RESPONSE "proxy-core.rewrite-response"
 
 typedef enum {
 	PROXY_PROTOCOL_UNSET,
@@ -32,6 +37,9 @@ typedef struct {
 	proxy_backends *backends;
 
 	proxy_backlog *backlog;
+
+	proxy_rewrites *request_rewrites;
+	proxy_rewrites *response_rewrites;
 
 	int debug;
 
@@ -51,6 +59,8 @@ typedef struct {
 	array *backends_arr;
 	buffer *protocol_buf;
 	buffer *balance_buf;
+
+	buffer *replace_buf;
 
 	plugin_config **config_storage;
 
@@ -91,6 +101,7 @@ INIT_FUNC(mod_proxy_core_init) {
 
 	p->balance_buf = buffer_init();
 	p->protocol_buf = buffer_init();
+	p->replace_buf = buffer_init();
 	p->backends_arr = array_init();
 
 	p->resp = http_response_init();
@@ -125,6 +136,7 @@ FREE_FUNC(mod_proxy_core_free) {
 
 	buffer_free(p->balance_buf);
 	buffer_free(p->protocol_buf);
+	buffer_free(p->replace_buf);
 	
 	http_response_free(p->resp);
 
@@ -132,6 +144,87 @@ FREE_FUNC(mod_proxy_core_free) {
 
 	return HANDLER_GO_ON;
 }
+
+static handler_t mod_proxy_core_config_parse_rewrites(proxy_rewrites *dest, array *src, const char *config_key) {
+	data_unset *du;
+	size_t j;
+
+	if (NULL != (du = array_get_element(src, config_key))) {
+		data_array *keys = (data_array *)du;
+
+		if (keys->type != TYPE_ARRAY) {
+			ERROR("%s = <...>", 
+				config_key);
+
+			return HANDLER_ERROR;
+		}
+
+		/*
+		 * proxy-core.rewrite-request = (
+		 *   "_uri" => ( ... ) 
+		 * )
+		 */
+
+		for (j = 0; j < keys->value->used; j++) {
+			size_t k;
+			data_array *headers = (data_array *)keys->value->data[j];
+
+			/* keys->key should be "_uri" and the value a array of rewrite */
+			if (headers->type != TYPE_ARRAY) {
+				ERROR("%s = ( %s => <...> ) has to a array", 
+					config_key,
+					BUF_STR(headers->key));
+
+				return HANDLER_ERROR;
+			}
+
+			TRACE("%s: header-field: %s", config_key, BUF_STR(headers->key));
+
+			if (headers->value->used > 1) {
+				ERROR("%s = ( %s => <...> ) has to a array with only one element", 
+					config_key,
+					BUF_STR(headers->key));
+
+				return HANDLER_ERROR;
+
+			}
+
+			for (k = 0; k < headers->value->used; k++) {
+				data_string *rewrites = (data_string *)headers->value->data[k];
+				proxy_rewrite *rw;
+
+				/* keys->key should be "_uri" and the value a array of rewrite */
+				if (rewrites->type != TYPE_STRING) {
+					ERROR("%s = ( \"%s\" => ( \"%s\" => <value> ) ) has to a string", 
+						config_key,
+						BUF_STR(headers->key),
+						BUF_STR(rewrites->key));
+
+					return HANDLER_ERROR;
+				}
+			
+				TRACE("%s: rewrites-field: %s -> %s", 
+						config_key, 
+						BUF_STR(headers->key), 
+						BUF_STR(rewrites->key));
+
+				rw = proxy_rewrite_init();
+
+				if (0 != proxy_rewrite_set_regex(rw, rewrites->key)) {
+					return HANDLER_ERROR;
+				}
+				buffer_copy_string_buffer(rw->replace, rewrites->value);
+				buffer_copy_string_buffer(rw->match, rewrites->key);
+				buffer_copy_string_buffer(rw->header, headers->key);
+
+				proxy_rewrites_add(dest, rw);
+			}
+		}
+	}
+
+	return HANDLER_GO_ON;
+}
+
 
 SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 	plugin_data *p = p_d;
@@ -142,6 +235,8 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		{ "proxy-core.debug",          NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },       /* 1 */
 		{ "proxy-core.balancer",       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 2 */
 		{ "proxy-core.protocol",       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 3 */
+		{ CONFIG_PROXY_CORE_REWRITE_REQUEST, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION }, /* 4 */
+		{ CONFIG_PROXY_CORE_REWRITE_RESPONSE, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION },/* 5 */
 		{ NULL,                        NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
 	};
 
@@ -162,6 +257,8 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		s->protocol  = PROXY_PROTOCOL_UNSET;
 		s->backends  = proxy_backends_init();
 		s->backlog   = proxy_backlog_init();
+		s->response_rewrites   = proxy_rewrites_init();
+		s->request_rewrites   = proxy_rewrites_init();
 
 		cv[0].destination = p->backends_arr;
 		cv[1].destination = &(s->debug);
@@ -214,6 +311,14 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		}
 
 		proxy_backends_add(s->backends, backend);
+
+		if (HANDLER_GO_ON != mod_proxy_core_config_parse_rewrites(s->request_rewrites, ca, CONFIG_PROXY_CORE_REWRITE_REQUEST)) {
+			return HANDLER_ERROR;
+		}
+		
+		if (HANDLER_GO_ON != mod_proxy_core_config_parse_rewrites(s->response_rewrites, ca, CONFIG_PROXY_CORE_REWRITE_RESPONSE)) {
+			return HANDLER_ERROR;
+		}
 	}
 
 	return HANDLER_GO_ON;
@@ -472,8 +577,6 @@ int proxy_http_stream_decoder(server *srv, proxy_session *sess, chunkqueue *raw,
 	} else {
 		/* no chunked encoding, ok, perhaps a content-length ? */
 
-		TRACE("content-lenght: %d", sess->content_length);
-
 		chunkqueue_remove_finished_chunks(raw);
 		for (c = raw->first; c; c = c->next) {
 			buffer *b;
@@ -609,23 +712,107 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 	return HANDLER_GO_ON;
 }
 
+int pcre_replace(pcre *match, buffer *replace, buffer *match_buf, buffer *result) {
+	const char *pattern = replace->ptr;
+	size_t pattern_len = replace->used - 1;
+
+# define N 10
+	int ovec[N * 3];
+	int n;
+
+	if ((n = pcre_exec(match, NULL, match_buf->ptr, match_buf->used - 1, 0, 0, ovec, 3 * N)) < 0) {
+		if (n != PCRE_ERROR_NOMATCH) {
+			return n;
+		}
+	} else {
+		const char **list;
+		size_t start, end;
+		size_t k;
+
+		/* it matched */
+		pcre_get_substring_list(match_buf->ptr, ovec, n, &list);
+
+		/* search for $[0-9] */
+
+		buffer_reset(result);
+
+		start = 0; end = pattern_len;
+		for (k = 0; k < pattern_len; k++) {
+			if ((pattern[k] == '$') &&
+			    isdigit((unsigned char)pattern[k + 1])) {
+				/* got one */
+
+				size_t num = pattern[k + 1] - '0';
+
+				end = k;
+
+				buffer_append_string_len(result, pattern + start, end - start);
+
+				/* n is always > 0 */
+				if (num < (size_t)n) {
+					buffer_append_string(result, list[num]);
+				}
+
+				k++;
+				start = k + 1;
+			}
+		}
+
+		buffer_append_string_len(result, pattern + start, pattern_len - start);
+
+		pcre_free(list);
+	}
+
+	return n;
+}
+
 /**
  * generate a HTTP/1.1 proxy request from the set of request-headers
  *
  * TODO: this is HTTP-proxy specific and will be moved moved into a separate backed
  *
  */
-int proxy_get_request_chunk(server *srv, connection *con, proxy_session *sess, chunkqueue *cq) {
+int proxy_get_request_chunk(server *srv, connection *con, plugin_data *p, proxy_session *sess, chunkqueue *cq) {
 	buffer *b;
 	size_t i;
-
+	
 	b = chunkqueue_get_append_buffer(cq);
 
 	/* request line */
 	buffer_copy_string(b, get_http_method_name(con->request.http_method));
 	BUFFER_APPEND_STRING_CONST(b, " ");
 
-	buffer_append_string_buffer(b, con->request.uri);
+	/* check if we want to rewrite the uri */
+
+	for (i = 0; i < p->conf.request_rewrites->used; i++) {
+		proxy_rewrite *rw = p->conf.request_rewrites->ptr[i];
+
+		if (buffer_is_equal_string(rw->header, CONST_STR_LEN("_uri"))) {
+			int ret;
+
+			if ((ret = pcre_replace(rw->regex, rw->replace, con->request.uri, p->replace_buf)) < 0) {
+				switch (ret) {
+				case PCRE_ERROR_NOMATCH:
+					/* hmm, ok. no problem */
+					buffer_append_string_buffer(b, con->request.uri);
+					break;
+				default:
+					TRACE("oops, pcre_replace failed with: %d", ret);
+					break;
+				}
+			} else {
+				buffer_append_string_buffer(b, p->replace_buf);
+			}
+
+			break;
+		}
+	}
+
+	if (i == p->conf.request_rewrites->used) {
+		/* not found */
+		buffer_append_string_buffer(b, con->request.uri);
+	}
+
 	BUFFER_APPEND_STRING_CONST(b, " HTTP/1.1\r\n");
 
 	for (i = 0; i < sess->request_headers->used; i++) {
@@ -640,12 +827,17 @@ int proxy_get_request_chunk(server *srv, connection *con, proxy_session *sess, c
 	}
 
 	BUFFER_APPEND_STRING_CONST(b, "\r\n");
-
+	
 	return 0;
 }
 
 void proxy_set_header(array *hdrs, const char *key, size_t key_len, const char *value, size_t val_len) {
 	data_string *ds_dst;
+
+	if (NULL != (ds_dst = (data_string *)array_get_element(hdrs, key))) {
+		buffer_copy_string_len(ds_dst->value, value, val_len);
+		return;
+	}
 
 	if (NULL == (ds_dst = (data_string *)array_get_unused_element(hdrs, TYPE_STRING))) {
 		ds_dst = data_string_init();
@@ -673,7 +865,7 @@ void proxy_append_header(array *hdrs, const char *key, size_t key_len, const cha
  * build the request-header array and call the backend specific request formater
  * to fill the chunkqueue
  */
-int proxy_get_request_header(server *srv, connection *con, proxy_session *sess) {
+int proxy_get_request_header(server *srv, connection *con, plugin_data *p, proxy_session *sess) {
 	/* request line */
 	const char *remote_ip;
 	size_t i;
@@ -696,6 +888,7 @@ int proxy_get_request_header(server *srv, connection *con, proxy_session *sess) 
 	/* request header */
 	for (i = 0; i < con->request.headers->used; i++) {
 		data_string *ds;
+		size_t k;
 
 		ds = (data_string *)con->request.headers->data[i];
 
@@ -704,10 +897,36 @@ int proxy_get_request_header(server *srv, connection *con, proxy_session *sess) 
 		if (buffer_is_equal_string(ds->key, CONST_STR_LEN("Connection"))) continue;
 		if (buffer_is_equal_string(ds->key, CONST_STR_LEN("Keep-Alive"))) continue;
 
-		proxy_set_header(sess->request_headers, CONST_BUF_LEN(ds->key), CONST_BUF_LEN(ds->value));
+		for (k = 0; k < p->conf.request_rewrites->used; k++) {
+			proxy_rewrite *rw = p->conf.request_rewrites->ptr[k];
+
+			if (buffer_is_equal(rw->header, ds->key)) {
+				int ret;
+
+				if ((ret = pcre_replace(rw->regex, rw->replace, ds->value, p->replace_buf)) < 0) {
+					switch (ret) {
+					case PCRE_ERROR_NOMATCH:
+						/* hmm, ok. no problem */
+						proxy_set_header(sess->request_headers, CONST_BUF_LEN(ds->key), CONST_BUF_LEN(ds->value));
+						break;
+					default:
+						TRACE("oops, pcre_replace failed with: %d", ret);
+						break;
+					}
+				} else {
+					proxy_set_header(sess->request_headers, CONST_BUF_LEN(ds->key), CONST_BUF_LEN(p->replace_buf));
+				}
+
+				break;
+			}
+		}
+
+		if (k == p->conf.request_rewrites->used) {
+			proxy_set_header(sess->request_headers, CONST_BUF_LEN(ds->key), CONST_BUF_LEN(ds->value));
+		}
 	}
 
-	proxy_get_request_chunk(srv, con, sess, sess->send_raw);
+	proxy_get_request_chunk(srv, con, p, sess, sess->send_raw);
 
 	return 0;
 }
@@ -741,7 +960,7 @@ parse_status_t proxy_parse_response_header(server *srv, connection *con, plugin_
 		/* copy the http-headers */
 		for (i = 0; i < p->resp->headers->used; i++) {
 			const char *ign[] = { "Status", "Connection", NULL };
-			size_t j;
+			size_t j, k;
 			data_string *ds;
 
 			data_string *header = (data_string *)p->resp->headers->data[i];
@@ -774,8 +993,37 @@ parse_status_t proxy_parse_response_header(server *srv, connection *con, plugin_
 			if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
 				ds = data_response_init();
 			}
+
+
 			buffer_copy_string_buffer(ds->key, header->key);
-			buffer_copy_string_buffer(ds->value, header->value);
+
+			for (k = 0; k < p->conf.response_rewrites->used; k++) {
+				proxy_rewrite *rw = p->conf.response_rewrites->ptr[k];
+
+				if (buffer_is_equal(rw->header, header->key)) {
+					int ret;
+	
+					if ((ret = pcre_replace(rw->regex, rw->replace, header->value, p->replace_buf)) < 0) {
+						switch (ret) {
+						case PCRE_ERROR_NOMATCH:
+							/* hmm, ok. no problem */
+							buffer_append_string_buffer(ds->value, header->value);
+							break;
+						default:
+							TRACE("oops, pcre_replace failed with: %d", ret);
+							break;
+						}
+					} else {
+						buffer_append_string_buffer(ds->value, p->replace_buf);
+					}
+
+					break;
+				}
+			}
+
+			if (k == p->conf.response_rewrites->used) {
+				buffer_copy_string_buffer(ds->value, header->value);
+			}
 
 			array_insert_unique(con->response.headers, (data_unset *)ds);
 		}
@@ -880,7 +1128,7 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 
 	if (sess->state == PROXY_STATE_CONNECTED) {
 		/* build the header */
-		proxy_get_request_header(srv, con, sess);
+		proxy_get_request_header(srv, con, p, sess);
 
 		sess->state = PROXY_STATE_WRITE_REQUEST_HEADER;
 	}
@@ -991,7 +1239,7 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 	return HANDLER_GO_ON;
 }
 
-proxy_backend *proxy_get_backend(server *srv, connection *con, plugin_data *p, buffer *uri) {
+proxy_backend *proxy_get_backend(server *srv, connection *con, plugin_data *p) {
 	size_t i;
 
 	for (i = 0; i < p->conf.backends->used; i++) {
@@ -1110,6 +1358,8 @@ static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_
 	PATCH_OPTION(backends);
 	PATCH_OPTION(backlog);
 	PATCH_OPTION(protocol);
+	PATCH_OPTION(request_rewrites);
+	PATCH_OPTION(response_rewrites);
 
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -1123,15 +1373,19 @@ static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_
 		for (j = 0; j < dc->value->used; j++) {
 			data_unset *du = dc->value->data[j];
 
-			if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy.backends"))) {
+			if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy-core.backends"))) {
 				PATCH_OPTION(backends);
 				PATCH_OPTION(backlog);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy.debug"))) {
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy-core.debug"))) {
 				PATCH_OPTION(debug);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy.balancer"))) {
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy-core.balancer"))) {
 				PATCH_OPTION(balancer);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy.protocol"))) {
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy-core.protocol"))) {
 				PATCH_OPTION(protocol);
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_REWRITE_REQUEST))) {
+				PATCH_OPTION(request_rewrites);
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_REWRITE_RESPONSE))) {
+				PATCH_OPTION(response_rewrites);
 			}
 		}
 	}
@@ -1204,7 +1458,7 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 	while (1) {
 		if (sess->proxy_con == NULL) {
 			proxy_address *address = NULL;
-			if (NULL == (sess->proxy_backend = proxy_get_backend(srv, con, p, con->uri.path))) {
+			if (NULL == (sess->proxy_backend = proxy_get_backend(srv, con, p))) {
 				/* no connection pool for this location */
 				SEGFAULT();
 			}
