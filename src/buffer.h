@@ -17,7 +17,6 @@ typedef struct {
 	size_t size;
 } buffer;
 
-
 typedef void (*buffer_ptr_free_t)(void *p);
 
 typedef struct {
@@ -134,6 +133,7 @@ BUFFER_CTYPE_FUNC(xdigit)
 BUFFER_CTYPE_FUNC(alpha)
 BUFFER_CTYPE_FUNC(alnum)
 
+#define BUF_STR(x) x->ptr
 #define BUFFER_APPEND_STRING_CONST(x, y) \
 	buffer_append_string_len(x, y, sizeof(y) - 1)
 
@@ -141,9 +141,9 @@ BUFFER_CTYPE_FUNC(alnum)
 	buffer_copy_string_len(x, y, sizeof(y) - 1)
 
 #define CONST_STR_LEN(x) x, x ? sizeof(x) - 1 : 0
-#define CONST_BUF_LEN(x) x->ptr, x->used ? x->used - 1 : 0
+#define CONST_BUF_LEN(x) BUF_STR(x), x->used ? x->used - 1 : 0
 
-#define SEGFAULT() do { fprintf(stderr, "%s.%d: aborted\n", __FILE__, __LINE__); abort(); } while(0)
+	
 #define UNUSED(x) ( (void)(x) )
 
 #endif

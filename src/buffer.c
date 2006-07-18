@@ -586,7 +586,7 @@ int buffer_is_equal(buffer *a, buffer *b) {
 	if (a->used != b->used) return 0;
 	if (a->used == 0) return 1;
 
-	return (0 == strcmp(a->ptr, b->ptr));
+	return (0 == strncmp(a->ptr, b->ptr, a->used - 1));
 }
 
 int buffer_is_equal_string(buffer *a, const char *s, size_t b_len) {
@@ -805,10 +805,9 @@ int buffer_append_string_encoded(buffer *b, const char *s, size_t s_len, buffer_
 	const char *map = NULL;
 
 	if (!s || !b) return -1;
+	if (b->used == 0) return -1;
 
-	if (b->ptr[b->used - 1] != '\0') {
-		SEGFAULT();
-	}
+	if (b->ptr[b->used - 1] != '\0') return -1;
 
 	if (s_len == 0) return 0;
 
