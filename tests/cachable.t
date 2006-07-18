@@ -33,7 +33,7 @@ GET / HTTP/1.0
 If-Modified-Since: Sun, 01 Jan 1970 00:00:01 GMT; foo
 EOF
  );
-$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200 } ];
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200, '+Last-Modified' => ''} ];
 ok($tf->handle_http($t) == 0, 'Conditional GET - old If-Modified-Since, comment');
 
 my $now = $t->{date};
@@ -59,7 +59,7 @@ GET / HTTP/1.0
 If-None-Match: foo
 EOF
  );
-$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200 } ];
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 200, '+ETag' => ''} ];
 ok($tf->handle_http($t) == 0, 'Conditional GET - old If-None-Match');
 
 my $etag = $t->{etag};
