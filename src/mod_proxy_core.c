@@ -479,6 +479,8 @@ void chunkqueue_skip(chunkqueue *cq, off_t skip) {
 int proxy_http_stream_decoder(server *srv, proxy_session *sess, chunkqueue *raw, chunkqueue *decoded) {
 	chunk *c;
 
+	if (raw->first == NULL) return 0;
+
 	if (sess->is_chunked) {
 		do {
 			/* the start should always be a chunk-length */
@@ -489,6 +491,8 @@ int proxy_http_stream_decoder(server *srv, proxy_session *sess, chunkqueue *raw,
 			off_t we_have = 0, we_need = 0;
 
 			c = raw->first;
+
+			if (c->mem->used == 0) return 0;
 
 			chunk_len = strtol(BUF_STR(c->mem) + c->offset, &err, 16);
 			if (!(*err == ' ' || *err == '\r' || *err == ';')) {
