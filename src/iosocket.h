@@ -1,6 +1,18 @@
 #ifndef _IOSOCKET_H_
 #define _IOSOCKET_H_
 
+/**
+ * make sure we know about OPENSSL all the time
+ *
+ * if we don't include config.h here we run into different sizes 
+ * for the iosocket-struct depending on config.h include before 
+ * iosocket.h or not
+ */
+
+#ifdef HAVE_CONFIG_H
+# include "config.h"
+#endif
+
 #if defined HAVE_LIBSSL && defined HAVE_OPENSSL_SSL_H
 # define USE_OPENSSL
 # include <openssl/ssl.h>
