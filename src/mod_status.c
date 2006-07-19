@@ -13,6 +13,7 @@
 #include "response.h"
 #include "connections.h"
 #include "log.h"
+#include "status_counter.h"
 
 #include "plugin.h"
 
@@ -584,7 +585,7 @@ static handler_t mod_status_handle_server_statistics(server *srv, connection *co
 	plugin_data *p = p_d;
 	buffer *b, *m = p->module_list;
 	size_t i;
-	array *st = srv->status;
+	array *st = status_counter_get_array();
 
 	if (0 == st->used) {
 		/* we have nothing to send */

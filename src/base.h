@@ -556,21 +556,6 @@ typedef struct server {
 
 	stat_cache  *stat_cache;
 
-	/**
-	 * The status array can carry all the status information you want
-	 * the key to the array is <module-prefix>.<name>
-	 * and the values are counters
-	 *
-	 * example:
-	 *   fastcgi.backends        = 10
-	 *   fastcgi.active-backends = 6
-	 *   fastcgi.backend.<key>.load = 24
-	 *   fastcgi.backend.<key>....
-	 *
-	 *   fastcgi.backend.<key>.disconnects = ...
-	 */
-	array *status;
-
 	fdevent_handler_t event_handler;
 
 	network_status_t (* network_backend_write)(struct server *srv, connection *con, iosocket *sock, chunkqueue *cq);

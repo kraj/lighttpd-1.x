@@ -47,7 +47,7 @@ common_src=buffer.c log.c \
       data_config.c bitset.c \
       inet_ntop_cache.c crc32.c \
       connections-glue.c iosocket.c \
-      configfile-glue.c \
+      configfile-glue.c status_counter.c \
       http-header-glue.c \
       network_write.c network_linux_sendfile.c \
       network_freebsd_sendfile.c network_writev.c \
@@ -264,7 +264,8 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       iosocket.h array-static.h \
       mod_proxy_core_address.h mod_proxy_core_backend.h \
       mod_proxy_core_backlog.h mod_proxy_core.h  \
-      mod_proxy_core_pool.h mod_proxy_core_rewrites.h
+      mod_proxy_core_pool.h mod_proxy_core_rewrites.h \
+      status_counter.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 

@@ -27,6 +27,7 @@
 #include "plugin.h"
 #include "joblist.h"
 #include "network_backends.h"
+#include "status_counter.h"
 #ifdef _WIN32
 /* use local getopt implementation */
 # undef HAVE_GETOPT_H
@@ -167,7 +168,6 @@ static server *server_init(void) {
 
 	CLEAN(config_context);
 	CLEAN(config_touched);
-	CLEAN(status);
 #undef CLEAN
 
 	for (i = 0; i < FILE_CACHE_MAX; i++) {
@@ -261,7 +261,6 @@ static void server_free(server *srv) {
 
 	CLEAN(config_context);
 	CLEAN(config_touched);
-	CLEAN(status);
 	CLEAN(srvconf.upload_tempdirs);
 #undef CLEAN
 
@@ -826,10 +825,11 @@ int main (int argc, char **argv, char **envp) {
 #endif
 
 	log_init();
+	status_counter_init();
 
 	/* for nice %b handling in strfime() */
 	setlocale(LC_TIME, "C");
-
+	
 	if (NULL == (srv = server_init())) {
 		fprintf(stderr, "did this really happen?\n");
 		return -1;
@@ -1385,6 +1385,8 @@ int main (int argc, char **argv, char **envp) {
 	}
 
 	lighty_mainloop(srv);
+
+	status_counter_free();
 
 	if (0 == graceful_restart &&
 	    srv->srvconf.pid_file->used &&
