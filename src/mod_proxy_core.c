@@ -22,6 +22,10 @@
 #include "mod_proxy_core_backlog.h"
 #include "mod_proxy_core_rewrites.h"
 
+#define CONFIG_PROXY_CORE_BALANCER "proxy-core.balancer"
+#define CONFIG_PROXY_CORE_PROTOCOL "proxy-core.protocol"
+#define CONFIG_PROXY_CORE_DEBUG "proxy-core.debug"
+#define CONFIG_PROXY_CORE_BACKENDS "proxy-core.backends"
 #define CONFIG_PROXY_CORE_REWRITE_REQUEST "proxy-core.rewrite-request"
 #define CONFIG_PROXY_CORE_REWRITE_RESPONSE "proxy-core.rewrite-response"
 
@@ -90,8 +94,8 @@ INIT_FUNC(mod_proxy_core_init) {
 
 	p->possible_balancers = array_init();
 	array_insert_int(p->possible_balancers, "fair", PROXY_BALANCE_FAIR);
-	array_insert_int(p->possible_balancers, "hash", PROXY_BALANCE_RR);
-	array_insert_int(p->possible_balancers, "round-robin", PROXY_BALANCE_HASH);
+	array_insert_int(p->possible_balancers, "hash", PROXY_BALANCE_HASH);
+	array_insert_int(p->possible_balancers, "round-robin", PROXY_BALANCE_RR);
 
 	p->possible_protocols = array_init();
 	array_insert_int(p->possible_protocols, "http", PROXY_PROTOCOL_HTTP);
@@ -224,10 +228,10 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 	size_t i, j;
 
 	config_values_t cv[] = {
-		{ "proxy-core.backends",       NULL, T_CONFIG_ARRAY, T_CONFIG_SCOPE_CONNECTION },       /* 0 */
-		{ "proxy-core.debug",          NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },       /* 1 */
-		{ "proxy-core.balancer",       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 2 */
-		{ "proxy-core.protocol",       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 3 */
+		{ CONFIG_PROXY_CORE_BACKENDS,       NULL, T_CONFIG_ARRAY, T_CONFIG_SCOPE_CONNECTION },       /* 0 */
+		{ CONFIG_PROXY_CORE_DEBUG,          NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },       /* 1 */
+		{ CONFIG_PROXY_CORE_BALANCER,       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 2 */
+		{ CONFIG_PROXY_CORE_PROTOCOL,       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 3 */
 		{ CONFIG_PROXY_CORE_REWRITE_REQUEST, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION }, /* 4 */
 		{ CONFIG_PROXY_CORE_REWRITE_RESPONSE, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION },/* 5 */
 		{ NULL,                        NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
@@ -1276,13 +1280,13 @@ proxy_address *proxy_backend_balance(server *srv, connection *con, proxy_backend
 			cur_max = generate_crc32c(CONST_BUF_LEN(con->uri.path)) +
 				generate_crc32c(CONST_BUF_LEN(cur_address->name)) + /* we can cache this */
 				generate_crc32c(CONST_BUF_LEN(con->uri.authority));
-
+#if 0
 			TRACE("hash-election: %s - %s - %s: %ld", 
 					con->uri.path->ptr,
 					cur_address->name->ptr,
 					con->uri.authority->ptr,
 					cur_max);
-
+#endif
 			if (address == NULL || (cur_max > last_max)) {
 				last_max = cur_max;
 
@@ -1372,14 +1376,14 @@ static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_
 		for (j = 0; j < dc->value->used; j++) {
 			data_unset *du = dc->value->data[j];
 
-			if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy-core.backends"))) {
+			if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_BACKENDS))) {
 				PATCH_OPTION(backends);
 				PATCH_OPTION(backlog);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy-core.debug"))) {
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_DEBUG))) {
 				PATCH_OPTION(debug);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy-core.balancer"))) {
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_BALANCER))) {
 				PATCH_OPTION(balancer);
-			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN("proxy-core.protocol"))) {
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_PROTOCOL))) {
 				PATCH_OPTION(protocol);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_REWRITE_REQUEST))) {
 				PATCH_OPTION(request_rewrites);
@@ -1432,6 +1436,7 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 		 * and didn't got a successful connection yet, sending timeout */
 		if (srv->cur_ts - con->request_start > 10) {
 			con->http_status = 504; /* gateway timeout */
+			con->file_finished = 1;
 
 			if (sess->proxy_con) {
 				/* if we are waiting for a proxy-connection right now, close it */
@@ -1463,6 +1468,8 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 				/* no connection pool for this location */
 				SEGFAULT();
 			}
+
+			sess->proxy_backend->balancer = p->conf.balancer;
 
 			/**
 			 * ask the balancer for the next address and
