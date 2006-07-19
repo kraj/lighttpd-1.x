@@ -113,7 +113,7 @@ typedef struct {
 	chunkqueue *wb;
 	chunkqueue *rb;
 
-	iosocket *fd; /* fd to the proxy process */
+	iosocket *sock; /* fd to the proxy process */
 
 	size_t path_info_offset; /* start of path_info in uri.path */
 
@@ -137,7 +137,7 @@ static handler_ctx * handler_ctx_init() {
 	hctx->wb = chunkqueue_init();
 	hctx->rb = chunkqueue_init();
 
-	hctx->fd = iosocket_init();
+	hctx->sock = iosocket_init();
 
 	return hctx;
 }
@@ -146,7 +146,7 @@ static void handler_ctx_free(handler_ctx *hctx) {
 	chunkqueue_free(hctx->wb);
 	chunkqueue_free(hctx->rb);
 
-	iosocket_free(hctx->fd);
+	iosocket_free(hctx->sock);
 
 	free(hctx);
 }
@@ -373,11 +373,11 @@ void proxy_connection_close(server *srv, handler_ctx *hctx) {
 	p    = hctx->plugin_data;
 	con  = hctx->remote_conn;
 
-	if (hctx->fd != -1) {
-		fdevent_event_del(srv->ev, hctx->fd);
-		fdevent_unregister(srv->ev, hctx->fd);
+	if (hctx->sock->fd != -1) {
+		fdevent_event_del(srv->ev, hctx->sock);
+		fdevent_unregister(srv->ev, hctx->sock);
 
-		close(hctx->fd->fd);
+		close(hctx->sock->fd);
 		srv->cur_fds--;
 	}
 
@@ -392,7 +392,7 @@ static int proxy_establish_connection(server *srv, handler_ctx *hctx) {
 
 	plugin_data *p    = hctx->plugin_data;
 	data_proxy *host= hctx->host;
-	int proxy_fd       = hctx->fd->fd;
+	int proxy_fd       = hctx->sock->fd;
 
 	memset(&proxy_addr, 0, sizeof(proxy_addr));
 
@@ -580,7 +580,7 @@ static int proxy_demux_response(server *srv, handler_ctx *hctx) {
 	chunkqueue *next_queue = NULL;
 	chunk *c = NULL;
 
-	switch(srv->network_backend_read(srv, con, hctx->fd, hctx->rb)) {
+	switch(srv->network_backend_read(srv, con, hctx->sock, hctx->rb)) {
 	case NETWORK_STATUS_SUCCESS:
 		/* we got content */
 		break;
@@ -709,17 +709,17 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 
 	switch(hctx->state) {
 	case PROXY_STATE_INIT:
-		if (-1 == (hctx->fd->fd = socket(AF_INET, SOCK_STREAM, 0))) {
+		if (-1 == (hctx->sock->fd = socket(AF_INET, SOCK_STREAM, 0))) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "socket failed: ", strerror(errno));
 			return HANDLER_ERROR;
 		}
-		hctx->fd->fde_ndx = -1;
+		hctx->sock->fde_ndx = -1;
 
 		srv->cur_fds++;
 
-		fdevent_register(srv->ev, hctx->fd, proxy_handle_fdevent, hctx);
+		fdevent_register(srv->ev, hctx->sock, proxy_handle_fdevent, hctx);
 
-		if (-1 == fdevent_fcntl_set(srv->ev, hctx->fd)) {
+		if (-1 == fdevent_fcntl_set(srv->ev, hctx->sock)) {
 			log_error_write(srv, __FILE__, __LINE__, "ss", "fcntl failed: ", strerror(errno));
 
 			return HANDLER_ERROR;
@@ -737,12 +737,12 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 
 				/* connection is in progress, wait for an event and call getsockopt() below */
 
-				fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
+				fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 				return HANDLER_WAIT_FOR_EVENT;
 			case -1:
 				/* if ECONNREFUSED choose another connection -> FIXME */
-				hctx->fd->fde_ndx = -1;
+				hctx->sock->fde_ndx = -1;
 
 				return HANDLER_ERROR;
 			default:
@@ -754,10 +754,10 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 			socklen_t socket_error_len = sizeof(socket_error);
 
 			/* we don't need it anymore */
-			fdevent_event_del(srv->ev, hctx->fd);
+			fdevent_event_del(srv->ev, hctx->sock);
 
 			/* try to finish the connect() */
-			if (0 != getsockopt(hctx->fd->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
+			if (0 != getsockopt(hctx->sock->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
 				log_error_write(srv, __FILE__, __LINE__, "ss",
 						"getsockopt failed:", strerror(errno));
 
@@ -784,7 +784,7 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 
 		/* fall through */
 	case PROXY_STATE_WRITE:;
-		ret = srv->network_backend_write(srv, con, hctx->fd, hctx->wb);
+		ret = srv->network_backend_write(srv, con, hctx->sock, hctx->wb);
 
 		chunkqueue_remove_finished_chunks(hctx->wb);
 
@@ -795,7 +795,7 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 			return HANDLER_ERROR;
 		case NETWORK_STATUS_WAIT_FOR_EVENT:
 
-			fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 			return HANDLER_WAIT_FOR_EVENT;
 		}
@@ -803,10 +803,10 @@ static handler_t proxy_write_request(server *srv, handler_ctx *hctx) {
 		if (hctx->wb->bytes_out == hctx->wb->bytes_in) {
 			proxy_set_state(srv, hctx, PROXY_STATE_RESPONSE_HEADER);
 
-			fdevent_event_del(srv->ev, hctx->fd);
-			fdevent_event_add(srv->ev, hctx->fd, FDEVENT_IN);
+			fdevent_event_del(srv->ev, hctx->sock);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_IN);
 		} else {
-			fdevent_event_add(srv->ev, hctx->fd, FDEVENT_OUT);
+			fdevent_event_add(srv->ev, hctx->sock, FDEVENT_OUT);
 
 			return HANDLER_WAIT_FOR_EVENT;
 		}
@@ -881,7 +881,7 @@ SUBREQUEST_FUNC(mod_proxy_handle_subrequest) {
 		log_error_write(srv, __FILE__, __LINE__,  "sbdd", "proxy-server disabled:",
 				host->host,
 				host->port,
-				hctx->fd->fd);
+				hctx->sock->fd);
 
 		/* disable this server */
 		host->is_disabled = 1;
@@ -937,7 +937,7 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 			break;
 		case 1:
 			log_error_write(srv, __FILE__, __LINE__, "sd",
-					"proxy: request done", hctx->fd->fd);
+					"proxy: request done", hctx->sock->fd);
 			hctx->host->usage--;
 
 			http_chunk_append_mem(srv, con, NULL, 0);
