@@ -49,6 +49,8 @@ SERVER_FUNC(mod_sql_vhost_core_cleanup) {
 			buffer_free(s->pass);
 			buffer_free(s->sock);
 			buffer_free(s->backend);
+			buffer_free(s->hostname);
+			buffer_free(s->select_vhost);
 
 			free(s);
 		}

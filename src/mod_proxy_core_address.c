@@ -35,7 +35,9 @@ proxy_address_pool *proxy_address_pool_init(void) {
 void proxy_address_pool_free(proxy_address_pool *address_pool) {
 	if (!address_pool) return;
 
-	FOREACH(address_pool, element, proxy_address_free(element))
+	FOREACH(address_pool, element, proxy_address_free(element));
+
+	if (address_pool->ptr) free(address_pool->ptr);
 
 	free(address_pool);
 }
@@ -140,6 +142,9 @@ int  proxy_address_pool_add_string(proxy_address_pool *address_pool, buffer *nam
 
 		return -1;
 	}
+
+	buffer_free(hostname);
+	buffer_free(port);
 
 	for (cur = res; cur; cur = cur->ai_next) {
 		proxy_address *a = proxy_address_init();

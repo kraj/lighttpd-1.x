@@ -145,6 +145,7 @@ SERVER_FUNC(mod_mysql_vhost_set_defaults) {
 		} else {
 			buffer_copy_string_buffer(s->mysql_pre, sel);
 		}
+		buffer_free(sel);
 
 		/* required:
 		 * - username
@@ -169,6 +170,8 @@ SERVER_FUNC(mod_mysql_vhost_set_defaults) {
 				return HANDLER_ERROR;
 			}
 #define FOO(x) (s->core->x->used ? s->core->x->ptr : NULL)
+
+			s->mysql->free_me = 1;
 
 			if (!mysql_real_connect(s->mysql, FOO(hostname), FOO(user), FOO(pass),
 						FOO(db), s->core->port, FOO(sock), 0)) {
