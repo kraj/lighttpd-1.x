@@ -178,8 +178,6 @@ static handler_t mod_proxy_core_config_parse_rewrites(proxy_rewrites *dest, arra
 				return HANDLER_ERROR;
 			}
 
-			TRACE("%s: header-field: %s", config_key, BUF_STR(headers->key));
-
 			if (headers->value->used > 1) {
 				ERROR("%s = ( %s => <...> ) has to a array with only one element", 
 					config_key,
@@ -203,11 +201,6 @@ static handler_t mod_proxy_core_config_parse_rewrites(proxy_rewrites *dest, arra
 					return HANDLER_ERROR;
 				}
 			
-				TRACE("%s: rewrites-field: %s -> %s", 
-						config_key, 
-						BUF_STR(headers->key), 
-						BUF_STR(rewrites->key));
-
 				rw = proxy_rewrite_init();
 
 				if (0 != proxy_rewrite_set_regex(rw, rewrites->key)) {
@@ -858,7 +851,7 @@ void proxy_append_header(array *hdrs, const char *key, size_t key_len, const cha
 	}
 
 	buffer_copy_string_len(ds_dst->key, key, key_len);
-	buffer_append_string_len(ds_dst->value, value, val_len);
+	buffer_copy_string_len(ds_dst->value, value, val_len);
 	array_insert_unique(hdrs, (data_unset *)ds_dst);
 }
 
