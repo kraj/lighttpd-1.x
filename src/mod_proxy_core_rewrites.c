@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 
 #include "mod_proxy_core_rewrites.h"
 #include "log.h"
@@ -57,8 +58,65 @@ void proxy_rewrites_add(proxy_rewrites *rewrites, proxy_rewrite *rewrite) {
 void proxy_rewrites_free(proxy_rewrites *rewrites) {
 	if (!rewrites) return;
 
+	FOREACH(rewrites, rewrite, proxy_rewrite_free(rewrite))
+
+	if (rewrites->ptr) free(rewrites->ptr);
+
 	free(rewrites);
 }
 
+int pcre_replace(pcre *match, buffer *replace, buffer *match_buf, buffer *result) {
+	const char *pattern = replace->ptr;
+	size_t pattern_len = replace->used - 1;
+
+# define N 10
+	int ovec[N * 3];
+	int n;
+
+	if ((n = pcre_exec(match, NULL, match_buf->ptr, match_buf->used - 1, 0, 0, ovec, 3 * N)) < 0) {
+		if (n != PCRE_ERROR_NOMATCH) {
+			return n;
+		}
+	} else {
+		const char **list;
+		size_t start, end;
+		size_t k;
+
+		/* it matched */
+		pcre_get_substring_list(match_buf->ptr, ovec, n, &list);
+
+		/* search for $[0-9] */
+
+		buffer_reset(result);
+
+		start = 0; end = pattern_len;
+		for (k = 0; k < pattern_len; k++) {
+			if ((pattern[k] == '$') &&
+			    isdigit((unsigned char)pattern[k + 1])) {
+				/* got one */
+
+				size_t num = pattern[k + 1] - '0';
+
+				end = k;
+
+				buffer_append_string_len(result, pattern + start, end - start);
+
+				/* n is always > 0 */
+				if (num < (size_t)n) {
+					buffer_append_string(result, list[num]);
+				}
+
+				k++;
+				start = k + 1;
+			}
+		}
+
+		buffer_append_string_len(result, pattern + start, pattern_len - start);
+
+		pcre_free(list);
+	}
+
+	return n;
+}
 
 

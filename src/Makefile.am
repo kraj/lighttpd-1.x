@@ -172,7 +172,8 @@ mod_proxy_la_LIBADD = $(common_libadd)
 lib_LTLIBRARIES += mod_proxy_core.la
 mod_proxy_core_la_SOURCES = mod_proxy_core.c mod_proxy_core_pool.c \
 			    mod_proxy_core_backend.c mod_proxy_core_address.c \
-			    mod_proxy_core_backlog.c mod_proxy_core_rewrites.c
+			    mod_proxy_core_backlog.c mod_proxy_core_rewrites.c \
+			    mod_proxy_backend_http.c
 mod_proxy_core_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
 mod_proxy_core_la_LIBADD = $(common_libadd) $(PCRE_LIB)
 
@@ -265,7 +266,7 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       mod_proxy_core_address.h mod_proxy_core_backend.h \
       mod_proxy_core_backlog.h mod_proxy_core.h  \
       mod_proxy_core_pool.h mod_proxy_core_rewrites.h \
-      status_counter.h
+      status_counter.h mod_proxy_backend_http.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 

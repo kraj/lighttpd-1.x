@@ -24,5 +24,7 @@ proxy_rewrites *proxy_rewrites_init(void);
 void proxy_rewrites_add(proxy_rewrites *rewrites, proxy_rewrite *rewrite);
 void proxy_rewrites_free(proxy_rewrites *rewrites);
 
+int pcre_replace(pcre *match, buffer *replace, buffer *match_buf, buffer *result);
+
 #endif
 

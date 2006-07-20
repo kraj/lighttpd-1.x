@@ -2,17 +2,87 @@
 #define _MOD_PROXY_CORE_H_
 
 #include "buffer.h"
-#include "base.h"
+#include "plugin.h"
+#include "http_resp.h"
+#include "array.h"
 
-#define PROXY_BACKEND_CONNECT_PARAMS \
-	(server *srv, connection *con, void *p_d)
+#include "mod_proxy_core_pool.h"	
+#include "mod_proxy_core_backend.h"
+#include "mod_proxy_core_backlog.h"
+#include "mod_proxy_core_rewrites.h"
 
-#define PROXY_BACKEND_CONNECT_RETVAL handler_t
+typedef struct {
+	proxy_backends *backends;
 
-#define PROXY_BACKEND_CONNECT(name) \
-	PROXY_BACKEND_CONNECT_RETVAL name PROXY_BACKEND_CONNECT_PARAMS
+	proxy_backlog *backlog;
 
-#define PROXY_BACKEND_CONNECT_PTR(name) \
-	PROXY_BACKEND_CONNECT_RETVAL (* name)PROXY_BACKEND_CONNECT_PARAMS
+	proxy_rewrites *request_rewrites;
+	proxy_rewrites *response_rewrites;
+
+	int debug;
+
+	proxy_balance_t balancer;
+	proxy_protocol_t protocol;
+} plugin_config;
+
+typedef struct {
+	PLUGIN_DATA;
+
+	http_resp *resp;
+
+	array *possible_balancers;
+	array *possible_protocols;
+
+	/* for parsing only */
+	array *backends_arr;
+	buffer *protocol_buf;
+	buffer *balance_buf;
+
+	buffer *replace_buf;
+
+	plugin_config **config_storage;
+
+	plugin_config conf;
+} plugin_data;
+
+
+typedef enum {
+	PROXY_STATE_UNSET,
+	PROXY_STATE_CONNECTING,
+	PROXY_STATE_CONNECTED,
+	PROXY_STATE_WRITE_REQUEST_HEADER,
+	PROXY_STATE_WRITE_REQUEST_BODY,
+	PROXY_STATE_READ_RESPONSE_HEADER,
+	PROXY_STATE_READ_RESPONSE_BODY
+} proxy_state_t;
+
+typedef struct {
+	proxy_connection *proxy_con;
+	proxy_backend *proxy_backend;
+
+	connection *remote_con;
+
+	array *request_headers;
+
+	int is_chunked;
+	
+	/**
+	 * chunkqueues
+	 * - the encoded_rb is the raw network stuff
+	 * - the rb is filtered through the stream decoder
+	 *
+	 * - wb is the normal bytes stream
+	 * - encoded_wb is encoded for the network by the stream encoder
+	 */
+	chunkqueue *recv;
+	chunkqueue *recv_raw;
+	chunkqueue *send_raw;
+	chunkqueue *send;
+	
+	off_t bytes_read;
+	off_t content_length;
+
+	proxy_state_t state;
+} proxy_session;
 
 #endif
