@@ -179,7 +179,8 @@ else:
 		bin_linkflags += [ '-Wl,--export-dynamic' ]
 
 instbin = env.Program(bin_targets, src, LINKFLAGS = bin_linkflags, LIBS= [ env['LIBS'], common_lib, env['LIBDL'] ])
-env.Depends(instbin, configparser[1])
+env.Depends("#build/configfile.o", configparser)
+env.Depends("configfile.c", configparser)
 
 spawn_fcgi = env.Program("spawn-fcgi", "spawn-fcgi.c")
 
