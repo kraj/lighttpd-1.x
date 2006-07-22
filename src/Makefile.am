@@ -266,7 +266,8 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       mod_proxy_core_address.h mod_proxy_core_backend.h \
       mod_proxy_core_backlog.h mod_proxy_core.h  \
       mod_proxy_core_pool.h mod_proxy_core_rewrites.h \
-      status_counter.h mod_proxy_backend_http.h
+      status_counter.h mod_proxy_backend_http.h \
+      mod_proxy_backend_fastcgi.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 
