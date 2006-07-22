@@ -23,6 +23,7 @@
 #include "plugin.h"
 
 #include "inet_ntop_cache.h"
+#include "configfile.h"
 
 #ifdef USE_OPENSSL
 # include <openssl/ssl.h>
@@ -452,6 +453,7 @@ connection *connection_init(server *srv) {
 	CLEAN(request.request_line);
 	CLEAN(request.request);
 	CLEAN(request.pathinfo);
+	CLEAN(request.http_host);
 
 	CLEAN(request.orig_uri);
 
@@ -517,6 +519,7 @@ void connections_free(server *srv) {
 		CLEAN(request.request_line);
 		CLEAN(request.request);
 		CLEAN(request.pathinfo);
+		CLEAN(request.http_host);
 
 		CLEAN(request.orig_uri);
 
@@ -587,6 +590,7 @@ int connection_reset(server *srv, connection *con) {
 	CLEAN(request.request_line);
 	CLEAN(request.pathinfo);
 	CLEAN(request.request);
+	CLEAN(request.http_host);
 
 	CLEAN(request.orig_uri);
 
@@ -617,7 +621,6 @@ int connection_reset(server *srv, connection *con) {
 #define CLEAN(x) \
 		con->request.x = NULL;
 
-	CLEAN(http_host);
 	CLEAN(http_range);
 	CLEAN(http_content_type);
 #undef CLEAN
@@ -644,14 +647,7 @@ int connection_reset(server *srv, connection *con) {
 		con->plugin_ctx[pd->id] = NULL;
 	}
 
-#if COND_RESULT_UNSET
-	for (i = srv->config_context->used - 1; i >= 0; i --) {
-		con->cond_cache[i].result = COND_RESULT_UNSET;
-		con->cond_cache[i].patterncount = 0;
-	}
-#else
-	memset(con->cond_cache, 0, sizeof(cond_cache_t) * srv->config_context->used);
-#endif
+	config_cond_cache_reset(srv, con);
 
 	con->header_len = 0;
 	con->in_error_handler = 0;
