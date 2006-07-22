@@ -26,6 +26,7 @@
 #define CONFIG_PROXY_CORE_BACKENDS "proxy-core.backends"
 #define CONFIG_PROXY_CORE_REWRITE_REQUEST "proxy-core.rewrite-request"
 #define CONFIG_PROXY_CORE_REWRITE_RESPONSE "proxy-core.rewrite-response"
+#define CONFIG_PROXY_CORE_ALLOW_X_SENDFILE "proxy-core.allow-x-sendfile"
 
 int array_insert_int(array *a, const char *key, int val) {
 	data_integer *di;
@@ -190,8 +191,9 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		{ CONFIG_PROXY_CORE_DEBUG,          NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },       /* 1 */
 		{ CONFIG_PROXY_CORE_BALANCER,       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 2 */
 		{ CONFIG_PROXY_CORE_PROTOCOL,       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 3 */
-		{ CONFIG_PROXY_CORE_REWRITE_REQUEST, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION }, /* 4 */
-		{ CONFIG_PROXY_CORE_REWRITE_RESPONSE, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION },/* 5 */
+		{ CONFIG_PROXY_CORE_REWRITE_REQUEST, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION },      /* 4 */
+		{ CONFIG_PROXY_CORE_REWRITE_RESPONSE, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION },     /* 5 */
+		{ CONFIG_PROXY_CORE_ALLOW_X_SENDFILE, NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },     /* 6 */
 		{ NULL,                        NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
 	};
 
@@ -217,8 +219,9 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 
 		cv[0].destination = p->backends_arr;
 		cv[1].destination = &(s->debug);
-		cv[2].destination = p->balance_buf; /* parse into a constant */
-		cv[3].destination = p->protocol_buf; /* parse into a constant */
+		cv[2].destination = p->balance_buf;         /* parse into a constant */
+		cv[3].destination = p->protocol_buf;        /* parse into a constant */
+		cv[6].destination = &(s->allow_x_sendfile);
 
 		buffer_reset(p->balance_buf);
 
@@ -296,6 +299,7 @@ proxy_session *proxy_session_init(void) {
 	sess->send = chunkqueue_init();
 
 	sess->is_chunked = 0;
+	sess->send_response_content = 1;
 
 	return sess;
 }
@@ -346,9 +350,6 @@ int proxy_stream_encoder(server *srv, proxy_session *sess, chunkqueue *decoded, 
 	/* there is nothing that we have to send out anymore */
 	if (decoded->bytes_in == decoded->bytes_out) return 0;
 
-	ERROR("decoded-stream: %p", decoded);
-	ERROR("decoded-stream: (first) %p", decoded->first);
-
 	for (offset = 0, req_c = decoded->first; offset != decoded->bytes_in; req_c = req_c->next) {
 		buffer *b;
 		off_t weWant = decoded->bytes_in - offset;
@@ -357,8 +358,6 @@ int proxy_stream_encoder(server *srv, proxy_session *sess, chunkqueue *decoded, 
 		/* we announce toWrite octects
 		 * now take all the request_content chunk that we need to fill this request
 		 */
-		ERROR("cur chunk: %p", req_c);
-		ERROR("cur chunk-type: %d", req_c->type);
 
 		switch (req_c->type) {
 		case FILE_CHUNK:
@@ -562,11 +561,15 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 				}
 				chunkqueue_remove_finished_chunks(sess->recv_raw);
 
+
 				/* copy the content to the next cq */
 				for (c = sess->recv->first; c; c = c->next) {
 					if (c->mem->used == 0) continue;
 
-					http_chunk_append_mem(srv, sess->remote_con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+					if (sess->send_response_content) {
+						/* X-Sendfile ignores the content-body */
+						http_chunk_append_mem(srv, sess->remote_con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+					}
 	
 					c->offset = c->mem->used - 1;
 
@@ -883,6 +886,15 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 				return HANDLER_ERROR;
 			}
 			
+			if (sess->send_static_file) {
+				/* now it becomes tricky
+				 * 
+				 * mod_staticfile should handle this file for us
+				 * con->mode = DIRECT is taking us out of the loop */
+
+				return HANDLER_COMEBACK;
+			}
+
 			con->file_started = 1;
 
 			sess->state = PROXY_STATE_READ_RESPONSE_BODY;
@@ -1058,6 +1070,7 @@ static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_
 	PATCH_OPTION(protocol);
 	PATCH_OPTION(request_rewrites);
 	PATCH_OPTION(response_rewrites);
+	PATCH_OPTION(allow_x_sendfile);
 
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -1084,6 +1097,8 @@ static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_
 				PATCH_OPTION(request_rewrites);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_REWRITE_RESPONSE))) {
 				PATCH_OPTION(response_rewrites);
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_ALLOW_X_SENDFILE))) {
+				PATCH_OPTION(allow_x_sendfile);
 			}
 		}
 	}
@@ -1123,6 +1138,12 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 		con->mode = p->id;
 
 		sess->remote_con = con;
+	} 
+
+	if (sess->send_static_file) {
+		/* we already handled this request and sent it to the static file handling */
+
+		return HANDLER_GO_ON;
 	}
 
 	switch (sess->state) {
@@ -1244,6 +1265,13 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 			proxy_connection_free(sess->proxy_con);
 
 			sess->proxy_con = NULL;
+
+			if (sess->send_static_file) {
+				con->mode = DIRECT;
+				con->http_status = 0;
+
+				return HANDLER_COMEBACK;
+			}
 			/* restart the connection to the backend */
 			TRACE("%s", "write failed, restarting request");
 			break;
@@ -1276,7 +1304,7 @@ CONNECTION_FUNC(mod_proxy_connection_reset) {
 	plugin_data *p = p_d;
 	proxy_session *sess = con->plugin_ctx[p->id]; 
 
-	if (con->mode != p->id) return HANDLER_GO_ON;
+	if (!sess) return HANDLER_GO_ON;
 
 	if (sess->proxy_con) {
 		switch (sess->proxy_con->state) {

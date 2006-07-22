@@ -19,7 +19,8 @@ typedef struct {
 	proxy_rewrites *request_rewrites;
 	proxy_rewrites *response_rewrites;
 
-	int debug;
+	unsigned short allow_x_sendfile;
+	unsigned short debug;
 
 	proxy_balance_t balancer;
 	proxy_protocol_t protocol;
@@ -64,7 +65,9 @@ typedef struct {
 
 	array *request_headers;
 
-	int is_chunked;
+	int is_chunked;            /** is the incoming content chunked (for HTTP) */
+	int send_response_content; /** 0 if we have to ignore the content-body */
+	int send_static_file;      /** 1 if we do a internal redirect to the ->mode = DIRECT */
 	
 	/**
 	 * chunkqueues

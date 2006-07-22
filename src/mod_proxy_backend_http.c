@@ -267,6 +267,19 @@ parse_status_t proxy_http_parse_response_header(server *srv, connection *con, pl
 				if (sess->content_length < 0) {
 					return PARSE_ERROR;
 				}
+			} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("X-Sendfile")) ||
+				   0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("X-LIGHTTPD-Sendfile"))) {
+				if (p->conf.allow_x_sendfile) {
+					sess->send_response_content = 0;
+					sess->send_static_file = 1;
+
+					buffer_copy_string_buffer(con->physical.path, header->value);
+
+					/* as we want to support ETag and friends we set the physical path for the file
+					 * and hope mod_staticfile catches up */
+				}
+
+				continue;
 			} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("Transfer-Encoding"))) {
 				if (strstr(header->value->ptr, "chunked")) {
 					sess->is_chunked = 1;
