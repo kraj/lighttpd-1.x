@@ -1,8 +1,11 @@
 #include <stdlib.h>
+#include <string.h>
 
 #include "mod_proxy_core.h"
+#include "configfile.h"
 #include "buffer.h"
 #include "log.h"
+#include "sys-strings.h"
 
 void chunkqueue_skip(chunkqueue *cq, off_t skip) {
 	chunk *c;

@@ -31,6 +31,7 @@
 #include "stream.h"
 
 #include "sys-strings.h"
+#include "sys-files.h"
 
 #ifdef USE_OPENSSL
 # include <openssl/md5.h>

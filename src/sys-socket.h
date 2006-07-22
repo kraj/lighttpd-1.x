@@ -1,6 +1,10 @@
 #ifndef WIN32_SOCKET_H
 #define WIN32_SOCKET_H
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
 #ifdef _WIN32
 
 #include <winsock2.h>
@@ -22,6 +26,7 @@ int inet_aton(const char *cp, struct in_addr *inp);
 #undef HAVE_INET_ATON
 
 #else
+#include <sys/types.h> /* required by netinet/tcp.h on FreeBSD */
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <netinet/in.h>
@@ -40,7 +45,10 @@ int inet_aton(const char *cp, struct in_addr *inp);
 #endif /* !_WIN32 */
 
 #ifdef HAVE_INET_NTOP
-# define HAVE_IPV6
+/* only define it if it isn't defined yet */
+#ifndef HAVE_IPV6
+#define HAVE_IPV6
+#endif
 #endif
 
 typedef union {
