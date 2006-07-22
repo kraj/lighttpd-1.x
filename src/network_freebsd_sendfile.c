@@ -36,12 +36,13 @@ NETWORK_BACKEND_WRITE(freebsdsendfile) {
 	size_t chunks_written = 0;
 
 	for(c = cq->first; c; c = c->next, chunks_written++) {
+		chunk *tc;
 		int chunk_finished = 0;
 		network_status_t ret;
 
 		switch(c->type) {
 		case MEM_CHUNK:
-			ret = network_write_chunkqueue_writev_mem(srv, con, fd, cq, &c);
+			ret = network_write_chunkqueue_writev_mem(srv, con, sock, cq, c);
 
 			/* check which chunks are finished now */
 			for (tc = c; tc; tc = tc->next) {
@@ -95,7 +96,7 @@ NETWORK_BACKEND_WRITE(freebsdsendfile) {
 			r = 0;
 
 			/* FreeBSD sendfile() */
-			if (-1 == sendfile(ifd, fd, offset, toSend, NULL, &r, 0)) {
+			if (-1 == sendfile(ifd, sock->fd, offset, toSend, NULL, &r, 0)) {
 				switch(errno) {
 				case EAGAIN:
 					break;
