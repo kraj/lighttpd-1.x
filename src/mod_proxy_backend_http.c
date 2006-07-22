@@ -271,12 +271,39 @@ parse_status_t proxy_http_parse_response_header(server *srv, connection *con, pl
 				   0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("X-LIGHTTPD-Sendfile"))) {
 				if (p->conf.allow_x_sendfile) {
 					sess->send_response_content = 0;
-					sess->send_static_file = 1;
+					sess->do_internal_redirect = 1;
+					
+					/* don't try to rewrite this request through mod_proxy_core again */
+					sess->internal_redirect_count = MAX_INTERNAL_REDIRECTS; 
 
 					buffer_copy_string_buffer(con->physical.path, header->value);
 
 					/* as we want to support ETag and friends we set the physical path for the file
 					 * and hope mod_staticfile catches up */
+				}
+
+				continue;
+			} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("X-Rewrite-URI"))) { 
+				if (p->conf.allow_x_rewrite) {
+					sess->send_response_content = 0;
+					sess->do_internal_redirect = 1;
+
+					buffer_copy_string_buffer(con->request.uri, header->value);
+					buffer_reset(con->physical.path);
+
+					config_cond_cache_reset(srv, con);
+				}
+
+				continue;
+			} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("X-Rewrite-Host"))) { 
+				if (p->conf.allow_x_rewrite) {
+					sess->send_response_content = 0;
+					sess->do_internal_redirect = 1;
+
+					buffer_copy_string_buffer(con->request.http_host, header->value);
+					buffer_reset(con->physical.path);
+
+					config_cond_cache_reset(srv, con);
 				}
 
 				continue;

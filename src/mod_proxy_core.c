@@ -15,6 +15,7 @@
 #include "inet_ntop_cache.h"
 #include "http_chunk.h"
 #include "crc32.h"
+#include "configfile.h"
 
 #include "mod_proxy_core.h"
 #include "mod_proxy_backend_http.h"
@@ -27,6 +28,7 @@
 #define CONFIG_PROXY_CORE_REWRITE_REQUEST "proxy-core.rewrite-request"
 #define CONFIG_PROXY_CORE_REWRITE_RESPONSE "proxy-core.rewrite-response"
 #define CONFIG_PROXY_CORE_ALLOW_X_SENDFILE "proxy-core.allow-x-sendfile"
+#define CONFIG_PROXY_CORE_ALLOW_X_REWRITE "proxy-core.allow-x-rewrite"
 
 int array_insert_int(array *a, const char *key, int val) {
 	data_integer *di;
@@ -193,7 +195,8 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		{ CONFIG_PROXY_CORE_PROTOCOL,       NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },      /* 3 */
 		{ CONFIG_PROXY_CORE_REWRITE_REQUEST, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION },      /* 4 */
 		{ CONFIG_PROXY_CORE_REWRITE_RESPONSE, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION },     /* 5 */
-		{ CONFIG_PROXY_CORE_ALLOW_X_SENDFILE, NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },     /* 6 */
+		{ CONFIG_PROXY_CORE_ALLOW_X_SENDFILE, NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },   /* 6 */
+		{ CONFIG_PROXY_CORE_ALLOW_X_REWRITE, NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },    /* 7 */
 		{ NULL,                        NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
 	};
 
@@ -222,6 +225,7 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		cv[2].destination = p->balance_buf;         /* parse into a constant */
 		cv[3].destination = p->protocol_buf;        /* parse into a constant */
 		cv[6].destination = &(s->allow_x_sendfile);
+		cv[7].destination = &(s->allow_x_rewrite);
 
 		buffer_reset(p->balance_buf);
 
@@ -886,7 +890,7 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 				return HANDLER_ERROR;
 			}
 			
-			if (sess->send_static_file) {
+			if (sess->do_internal_redirect) {
 				/* now it becomes tricky
 				 * 
 				 * mod_staticfile should handle this file for us
@@ -1071,6 +1075,7 @@ static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_
 	PATCH_OPTION(request_rewrites);
 	PATCH_OPTION(response_rewrites);
 	PATCH_OPTION(allow_x_sendfile);
+	PATCH_OPTION(allow_x_rewrite);
 
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -1099,6 +1104,8 @@ static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_
 				PATCH_OPTION(response_rewrites);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_ALLOW_X_SENDFILE))) {
 				PATCH_OPTION(allow_x_sendfile);
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_PROXY_CORE_ALLOW_X_REWRITE))) {
+				PATCH_OPTION(allow_x_rewrite);
 			}
 		}
 	}
@@ -1140,10 +1147,12 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 		sess->remote_con = con;
 	} 
 
-	if (sess->send_static_file) {
-		/* we already handled this request and sent it to the static file handling */
+	if (sess->do_internal_redirect) {
+	       if (sess->internal_redirect_count > MAX_INTERNAL_REDIRECTS) {
+			/* we already handled this request and sent it to the static file handling */
 
-		return HANDLER_GO_ON;
+			return HANDLER_GO_ON;
+		}
 	}
 
 	switch (sess->state) {
@@ -1266,7 +1275,7 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 
 			sess->proxy_con = NULL;
 
-			if (sess->send_static_file) {
+			if (sess->do_internal_redirect) {
 				con->mode = DIRECT;
 				con->http_status = 0;
 

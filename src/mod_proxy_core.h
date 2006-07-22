@@ -11,6 +11,8 @@
 #include "mod_proxy_core_backlog.h"
 #include "mod_proxy_core_rewrites.h"
 
+#define MAX_INTERNAL_REDIRECTS 8
+
 typedef struct {
 	proxy_backends *backends;
 
@@ -20,6 +22,7 @@ typedef struct {
 	proxy_rewrites *response_rewrites;
 
 	unsigned short allow_x_sendfile;
+	unsigned short allow_x_rewrite;
 	unsigned short debug;
 
 	proxy_balance_t balancer;
@@ -67,7 +70,8 @@ typedef struct {
 
 	int is_chunked;            /** is the incoming content chunked (for HTTP) */
 	int send_response_content; /** 0 if we have to ignore the content-body */
-	int send_static_file;      /** 1 if we do a internal redirect to the ->mode = DIRECT */
+	int do_internal_redirect;  /** 1 if we do a internal redirect to the ->mode = DIRECT */
+	int internal_redirect_count;  /** protection against infinite loops */
 	
 	/**
 	 * chunkqueues
