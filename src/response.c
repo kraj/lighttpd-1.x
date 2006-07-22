@@ -263,6 +263,7 @@ handler_t http_response_prepare(server *srv, connection *con) {
 		 */
 
 		config_patch_connection(srv, con, COMP_HTTP_URL); /* HTTPurl */
+		config_patch_connection(srv, con, COMP_HTTP_QUERYSTRING); /* HTTPqs */
 
 		/* do we have to downgrade to 1.0 ? */
 		if (!con->conf.allow_http11) {
