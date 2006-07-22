@@ -36,7 +36,8 @@ static int request_check_hostname(server *srv, connection *con, buffer *host) {
 	 */
 
 	/* no Host: */
-	if (!host || host->used == 0) return 0;
+	if (buffer_is_empty(host)) return 0;
+	if (host->used < 1) return 0;
 
 	host_len = host->used - 1;
 
@@ -874,8 +875,8 @@ int http_request_parse(server *srv, connection *con) {
 								array_insert_unique(con->request.headers, (data_unset *)ds);
 								return 0;
 							} else if (cmp > 0 && 0 == (cmp = buffer_caseless_compare(CONST_BUF_LEN(ds->key), CONST_STR_LEN("Host")))) {
-								if (!con->request.http_host) {
-									con->request.http_host = ds->value;
+								if (buffer_is_empty(con->request.http_host)) {
+									buffer_copy_string_buffer(con->request.http_host, ds->value);
 								} else {
 									con->http_status = 400;
 									con->keep_alive = 0;
@@ -1006,8 +1007,7 @@ int http_request_parse(server *srv, connection *con) {
 		}
 
 		/* RFC 2616, 14.23 */
-		if (con->request.http_host == NULL ||
-		    buffer_is_empty(con->request.http_host)) {
+		if (buffer_is_empty(con->request.http_host)) {
 			con->http_status = 400;
 			con->response.keep_alive = 0;
 			con->keep_alive = 0;
@@ -1032,9 +1032,7 @@ int http_request_parse(server *srv, connection *con) {
 	}
 
 	/* check hostname field if it is set */
-	if (NULL != con->request.http_host &&
-	    0 != request_check_hostname(srv, con, con->request.http_host)) {
-
+	if (0 != request_check_hostname(srv, con, con->request.http_host)) {
 		if (srv->srvconf.log_request_header_on_error) {
 			log_error_write(srv, __FILE__, __LINE__, "s",
 					"Invalid Hostname -> 400");

@@ -134,7 +134,7 @@ typedef struct {
 	buffer *request_line;
 
 	/* strings to the header */
-	buffer *http_host; /* not alloced */
+	buffer *http_host;
 	const char   *http_range;
 	const char   *http_content_type;
 	const char   *http_if_modified_since;
