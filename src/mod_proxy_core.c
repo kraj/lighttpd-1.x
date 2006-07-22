@@ -328,6 +328,78 @@ int proxy_stream_decoder(server *srv, proxy_session *sess, chunkqueue *raw, chun
 		return -1;
 	}
 }
+/**
+ * encode the content for the protocol
+ *
+ * @param decoded chunkqueue with the content to (no encoding)
+ * @param raw chunkqueue for the encoded, protocol specific data
+ */
+int proxy_stream_encoder(server *srv, proxy_session *sess, chunkqueue *decoded, chunkqueue *raw) {
+	chunk *req_c;
+	off_t offset;
+
+	if (sess->proxy_backend->protocol != PROXY_PROTOCOL_HTTP) {
+		ERROR("protocol %d is not supported yet", sess->proxy_backend->protocol);
+		return -1;
+	}
+
+	/* there is nothing that we have to send out anymore */
+	if (decoded->bytes_in == decoded->bytes_out) return 0;
+
+	ERROR("decoded-stream: %p", decoded);
+	ERROR("decoded-stream: (first) %p", decoded->first);
+
+	for (offset = 0, req_c = decoded->first; offset != decoded->bytes_in; req_c = req_c->next) {
+		buffer *b;
+		off_t weWant = decoded->bytes_in - offset;
+		off_t weHave = 0;
+
+		/* we announce toWrite octects
+		 * now take all the request_content chunk that we need to fill this request
+		 */
+		ERROR("cur chunk: %p", req_c);
+		ERROR("cur chunk-type: %d", req_c->type);
+
+		switch (req_c->type) {
+		case FILE_CHUNK:
+			weHave = req_c->file.length - req_c->offset;
+
+			if (weHave > weWant) weHave = weWant;
+
+			chunkqueue_append_file(raw, req_c->file.name, req_c->offset, weHave);
+
+			req_c->offset += weHave;
+			decoded->bytes_out += weHave;
+
+			raw->bytes_in += weHave;
+
+			break;
+		case MEM_CHUNK:
+			/* append to the buffer */
+			weHave = req_c->mem->used - 1 - req_c->offset;
+
+			if (weHave > weWant) weHave = weWant;
+
+			b = chunkqueue_get_append_buffer(raw);
+			buffer_append_memory(b, req_c->mem->ptr + req_c->offset, weHave);
+			b->used++; /* add virtual \0 */
+
+			req_c->offset += weHave;
+			decoded->bytes_out += weHave;
+
+			raw->bytes_in += weHave;
+
+			break;
+		default:
+			break;
+		}
+
+		offset += weHave;
+	}
+
+	return 0;
+}
+
 
 int proxy_get_request_chunk(server *srv, connection *con, plugin_data *p, proxy_session *sess, chunkqueue *cq) {
 	switch (sess->proxy_backend->protocol) {
@@ -759,9 +831,33 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 		}
 		/* fall through */
 	case PROXY_STATE_WRITE_REQUEST_BODY:
-		fdevent_event_del(srv->ev, sess->proxy_con->sock);
-		sess->state = PROXY_STATE_READ_RESPONSE_HEADER;
+		/* do we have a content-body to send up to the backend ? */
 
+		fdevent_event_del(srv->ev, sess->proxy_con->sock);
+		if (con->request.content_length) {
+			proxy_stream_encoder(srv, sess, con->request_content_queue, sess->send_raw);
+
+			switch (srv->network_backend_write(srv, con, sess->proxy_con->sock, sess->send_raw)) {
+			case NETWORK_STATUS_SUCCESS:
+				sess->state = PROXY_STATE_READ_RESPONSE_HEADER;
+				break;
+			case NETWORK_STATUS_WAIT_FOR_EVENT:
+				fdevent_event_add(srv->ev, sess->proxy_con->sock, FDEVENT_OUT);
+
+				return HANDLER_WAIT_FOR_EVENT;
+			case NETWORK_STATUS_CONNECTION_CLOSE:
+				/* the connection got close while sending the request content up 
+				 * to the backend, for now handle this as error */
+
+				return HANDLER_ERROR;
+			default:
+				return HANDLER_ERROR;
+			}
+		} else {
+			sess->state = PROXY_STATE_READ_RESPONSE_HEADER;
+		}
+
+		/* fall through */
 	case PROXY_STATE_READ_RESPONSE_HEADER:
 		fdevent_event_del(srv->ev, sess->proxy_con->sock);
 
