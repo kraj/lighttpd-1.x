@@ -29,70 +29,70 @@
 NETWORK_BACKEND_READ(openssl) {
 	buffer *b;
 	off_t len;
+	int read_something = 0;
 
-	b = chunkqueue_get_append_buffer(cq);
-	buffer_prepare_copy(b, 8192);
-	len = SSL_read(sock->ssl, b->ptr, b->size - 1);
+	do {
+		b = chunkqueue_get_append_buffer(cq);
+		buffer_prepare_copy(b, 8192);
+		len = SSL_read(sock->ssl, b->ptr, b->size - 1);
 
-	log_error_write(srv, __FILE__, __LINE__, "so", "SSL:", len);
+		if (len < 0) {
+			int r, ssl_err;
+	
+			switch ((r = SSL_get_error(sock->ssl, len))) {
+			case SSL_ERROR_WANT_READ:
+				chunkqueue_remove_empty_last_chunk(cq);
+				return read_something ? NETWORK_STATUS_SUCCESS : NETWORK_STATUS_WAIT_FOR_EVENT;
+			case SSL_ERROR_SYSCALL:
+				/**
+				 * man SSL_get_error()
+				 *
+				 * SSL_ERROR_SYSCALL
+				 *   Some I/O error occurred.  The OpenSSL error queue may contain more
+				 *   information on the error.  If the error queue is empty (i.e.
+				 *   ERR_get_error() returns 0), ret can be used to find out more about
+				 *   the error: If ret == 0, an EOF was observed that violates the
+				 *   protocol.  If ret == -1, the underlying BIO reported an I/O error
+				 *   (for socket I/O on Unix systems, consult errno for details).
+				 *
+				 */
+				while((ssl_err = ERR_get_error())) {
+					/* get all errors from the error-queue */
+					ERROR("ssl-errors: %s", ERR_error_string(ssl_err, NULL));
+				}
 
-	if (len < 0) {
-		int r, ssl_err;
+				switch(errno) {
+				default:
+					ERROR("last-errno: (%d) %s", errno, strerror(errno));
+					break;
+				}
 
-		switch ((r = SSL_get_error(sock->ssl, len))) {
-		case SSL_ERROR_WANT_READ:
-			return NETWORK_STATUS_WAIT_FOR_EVENT;
-		case SSL_ERROR_SYSCALL:
-			/**
-			 * man SSL_get_error()
-			 *
-			 * SSL_ERROR_SYSCALL
-			 *   Some I/O error occurred.  The OpenSSL error queue may contain more
-			 *   information on the error.  If the error queue is empty (i.e.
-			 *   ERR_get_error() returns 0), ret can be used to find out more about
-			 *   the error: If ret == 0, an EOF was observed that violates the
-			 *   protocol.  If ret == -1, the underlying BIO reported an I/O error
-			 *   (for socket I/O on Unix systems, consult errno for details).
-			 *
-			 */
-			while((ssl_err = ERR_get_error())) {
-				/* get all errors from the error-queue */
-				log_error_write(srv, __FILE__, __LINE__, "sds", "SSL:",
-						r, ERR_error_string(ssl_err, NULL));
-			}
+				break;
+			case SSL_ERROR_ZERO_RETURN:
+				/* clean shutdown on the remote side */
+	
+				if (r == 0) {
+					/* FIXME: later */
+				}
 
-			switch(errno) {
+				/* fall through */
 			default:
-				log_error_write(srv, __FILE__, __LINE__, "sddds", "SSL:",
-						len, r, errno,
-						strerror(errno));
+				while((ssl_err = ERR_get_error())) {
+					/* get all errors from the error-queue */
+					ERROR("ssl-errors: %s", ERR_error_string(ssl_err, NULL));
+				}
 				break;
 			}
+		} else if (len == 0) {
+		} else {
+			b->used += len;
+			b->ptr[b->used++] = '\0';
 
-			break;
-		case SSL_ERROR_ZERO_RETURN:
-			/* clean shutdown on the remote side */
-
-			if (r == 0) {
-				/* FIXME: later */
-			}
-
-			/* fall thourgh */
-		default:
-			while((ssl_err = ERR_get_error())) {
-				/* get all errors from the error-queue */
-				log_error_write(srv, __FILE__, __LINE__, "sds", "SSL:",
-						r, ERR_error_string(ssl_err, NULL));
-			}
-			break;
+			read_something = 1;
 		}
-	}
+	} while (1);
 
-	assert(len > 0);
-	b->used += len;
-	b->ptr[b->used - 1] = '\0';
-
-	return NETWORK_STATUS_SUCCESS;
+	return NETWORK_STATUS_FATAL_ERROR;
 }
 
 
