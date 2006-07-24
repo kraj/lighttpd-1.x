@@ -69,6 +69,7 @@ typedef struct {
 	array *request_headers;
 
 	int is_chunked;            /** is the incoming content chunked (for HTTP) */
+	int is_closing;            /** our connection will close when we are done */
 	int send_response_content; /** 0 if we have to ignore the content-body */
 	int do_internal_redirect;  /** 1 if we do a internal redirect to the ->mode = DIRECT */
 	int internal_redirect_count;  /** protection against infinite loops */

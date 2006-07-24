@@ -606,6 +606,9 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 			/* let the getsockopt() catch this */
 			joblist_append(srv, sess->remote_con);
 			break;
+		case PROXY_STATE_READ_RESPONSE_BODY:
+			/* the keep-alive race-condition */
+			break;
 		default:
 			ERROR("oops, unexpected state for fdevent-hup %d", sess->state);
 			break;
@@ -889,7 +892,7 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 			default:
 				return HANDLER_ERROR;
 			}
-			
+
 			if (sess->do_internal_redirect) {
 				/* now it becomes tricky
 				 * 
@@ -929,10 +932,9 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 				 * 3. we read() ... and finally receive the close-event for the connection
 				 */
 
-				con->http_status = 500;
+				ERROR("%s", "++ oops, connection closed while waiting to read a response, restarting");
 
-				ERROR("++ %s", "oops, connection got closed while we were reading from it");
-				return HANDLER_FINISHED;
+				return HANDLER_COMEBACK;
 			}
 
 			ERROR("%s", "conn-close after header-read");
@@ -1232,8 +1234,10 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 				req = proxy_request_init();
 				req->added_ts = srv->cur_ts;
 				req->con = con;
-				
-				TRACE("backlog: the con-pool is full, putting %s (%d) into the backlog", con->uri.path->ptr, con->sock->fd);
+			
+#if 0	
+				TRACE("backlog: the con-pool is full, putting %s (%d) into the backlog", BUF_STR(con->uri.path), con->sock->fd);
+#endif
 				proxy_backlog_push(p->conf.backlog, req);
 
 				/* no, not really a event, 
@@ -1312,22 +1316,29 @@ REQUESTDONE_FUNC(mod_proxy_connection_close_callback) {
 CONNECTION_FUNC(mod_proxy_connection_reset) {
 	plugin_data *p = p_d;
 	proxy_session *sess = con->plugin_ctx[p->id]; 
+	proxy_request *req;
 
 	if (!sess) return HANDLER_GO_ON;
 
 	if (sess->proxy_con) {
 		switch (sess->proxy_con->state) {
 		case PROXY_CONNECTION_STATE_CONNECTED:
-			sess->proxy_con->state = PROXY_CONNECTION_STATE_IDLE;
+			if (!sess->is_closing) {
+				sess->proxy_con->state = PROXY_CONNECTION_STATE_IDLE;
 
-			/* ignore events as the FD is idle, we might get a HUP as the remote connection might close */
-			fdevent_event_del(srv->ev, sess->proxy_con->sock);
-			fdevent_unregister(srv->ev, sess->proxy_con->sock);
+				/* don't ignore events as the FD is idle
+				 * we might get a HUP as the remote connection might close */
+				fdevent_event_del(srv->ev, sess->proxy_con->sock);
+				fdevent_unregister(srv->ev, sess->proxy_con->sock);
 
-			fdevent_register(srv->ev, sess->proxy_con->sock, proxy_handle_fdevent_idle, sess->proxy_con);
-			fdevent_event_add(srv->ev, sess->proxy_con->sock, FDEVENT_IN);
+				fdevent_register(srv->ev, sess->proxy_con->sock, proxy_handle_fdevent_idle, sess->proxy_con);
+				fdevent_event_add(srv->ev, sess->proxy_con->sock, FDEVENT_IN);
 
-			break;
+				break;
+			}
+
+			/* fall-through for non-keep-alive */
+
 		case PROXY_CONNECTION_STATE_CLOSED:
 			proxy_connection_pool_remove_connection(sess->proxy_backend->pool, sess->proxy_con);
 	
@@ -1352,6 +1363,16 @@ CONNECTION_FUNC(mod_proxy_connection_reset) {
 	proxy_session_free(sess);
 
 	con->plugin_ctx[p->id] = NULL;
+
+	/* wake up a connection from the backlog */
+	if ((req = proxy_backlog_shift(p->conf.backlog))) {
+		connection *next_con = req->con;
+
+		joblist_append(srv, next_con);
+
+		proxy_request_free(req);
+	}
+
 	
 	return HANDLER_GO_ON;
 }

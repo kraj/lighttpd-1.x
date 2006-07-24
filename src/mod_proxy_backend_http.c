@@ -247,7 +247,7 @@ parse_status_t proxy_http_parse_response_header(server *srv, connection *con, pl
 
 		/* copy the http-headers */
 		for (i = 0; i < p->resp->headers->used; i++) {
-			const char *ign[] = { "Status", "Connection", NULL };
+			const char *ign[] = { "Status", NULL };
 			size_t j, k;
 			data_string *ds;
 
@@ -316,6 +316,13 @@ parse_status_t proxy_http_parse_response_header(server *srv, connection *con, pl
 				}
 				/* ignore the header */
 				continue;
+			} else if (0 == buffer_caseless_compare(CONST_BUF_LEN(header->key), CONST_STR_LEN("Connection"))) {
+				if (strstr(header->value->ptr, "close")) {
+					sess->is_closing = 1;
+				}
+				/* ignore the header */
+				continue;
+
 			}
 			
 			if (NULL == (ds = (data_string *)array_get_unused_element(con->response.headers, TYPE_STRING))) {
