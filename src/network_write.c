@@ -58,6 +58,8 @@ NETWORK_BACKEND_READ(read) {
 				/* remove the last chunk from the chunkqueue */
 				chunkqueue_remove_empty_last_chunk(cq);
 				return read_something ? NETWORK_STATUS_SUCCESS : NETWORK_STATUS_WAIT_FOR_EVENT;
+			case ECONNRESET:
+				return NETWORK_STATUS_CONNECTION_CLOSE;
 			default:
 				ERROR("oops, read from fd=%d failed: %s (%d)", sock->fd, strerror(errno), errno );
 
