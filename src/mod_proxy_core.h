@@ -24,6 +24,7 @@ typedef struct {
 	unsigned short allow_x_sendfile;
 	unsigned short allow_x_rewrite;
 	unsigned short debug;
+	unsigned short max_pool_size;
 
 	proxy_balance_t balancer;
 	proxy_protocol_t protocol;

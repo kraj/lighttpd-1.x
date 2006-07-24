@@ -29,6 +29,7 @@
 #define CONFIG_PROXY_CORE_REWRITE_RESPONSE "proxy-core.rewrite-response"
 #define CONFIG_PROXY_CORE_ALLOW_X_SENDFILE "proxy-core.allow-x-sendfile"
 #define CONFIG_PROXY_CORE_ALLOW_X_REWRITE "proxy-core.allow-x-rewrite"
+#define CONFIG_PROXY_CORE_MAX_POOL_SIZE "proxy-core.max-pool-size"
 
 int array_insert_int(array *a, const char *key, int val) {
 	data_integer *di;
@@ -197,6 +198,7 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		{ CONFIG_PROXY_CORE_REWRITE_RESPONSE, NULL, T_CONFIG_LOCAL, T_CONFIG_SCOPE_CONNECTION },     /* 5 */
 		{ CONFIG_PROXY_CORE_ALLOW_X_SENDFILE, NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },   /* 6 */
 		{ CONFIG_PROXY_CORE_ALLOW_X_REWRITE, NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },    /* 7 */
+		{ CONFIG_PROXY_CORE_MAX_POOL_SIZE, NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },        /* 8 */
 		{ NULL,                        NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
 	};
 
@@ -226,6 +228,7 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		cv[3].destination = p->protocol_buf;        /* parse into a constant */
 		cv[6].destination = &(s->allow_x_sendfile);
 		cv[7].destination = &(s->allow_x_rewrite);
+		cv[8].destination = &(s->max_pool_size);
 
 		buffer_reset(p->balance_buf);
 
@@ -271,6 +274,10 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 				if (0 != proxy_address_pool_add_string(backend->address_pool, ds->value)) {
 					return HANDLER_ERROR;
 				}
+			}
+
+			if (s->max_pool_size) {
+				backend->pool->max_size = s->max_pool_size;
 			}
 
 			proxy_backends_add(s->backends, backend);
