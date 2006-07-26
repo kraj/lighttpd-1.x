@@ -173,7 +173,7 @@ lib_LTLIBRARIES += mod_proxy_core.la
 mod_proxy_core_la_SOURCES = mod_proxy_core.c mod_proxy_core_pool.c \
 			    mod_proxy_core_backend.c mod_proxy_core_address.c \
 			    mod_proxy_core_backlog.c mod_proxy_core_rewrites.c \
-			    mod_proxy_backend_http.c
+			    mod_proxy_backend_http.c mod_proxy_backend_fastcgi.c
 mod_proxy_core_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
 mod_proxy_core_la_LIBADD = $(common_libadd) $(PCRE_LIB)
 

@@ -68,6 +68,8 @@ INIT_FUNC(mod_proxy_core_init) {
 	p->replace_buf = buffer_init();
 	p->backends_arr = array_init();
 
+	p->tmp_buf = buffer_init();
+
 	p->resp = http_response_init();
 
 	return p;
@@ -103,6 +105,7 @@ FREE_FUNC(mod_proxy_core_free) {
 	buffer_free(p->balance_buf);
 	buffer_free(p->protocol_buf);
 	buffer_free(p->replace_buf);
+	buffer_free(p->tmp_buf);
 	
 	http_response_free(p->resp);
 
@@ -303,6 +306,7 @@ proxy_session *proxy_session_init(void) {
 
 	sess->state = PROXY_STATE_UNSET;
 	sess->request_headers = array_init();
+	sess->env_headers = array_init();
 
 	sess->recv = chunkqueue_init();
 	sess->recv_raw = chunkqueue_init();
@@ -319,6 +323,7 @@ void proxy_session_free(proxy_session *sess) {
 	if (!sess) return;
 
 	array_free(sess->request_headers);
+	array_free(sess->env_headers);
 
 	chunkqueue_free(sess->recv);
 	chunkqueue_free(sess->recv_raw);
@@ -439,7 +444,7 @@ parse_status_t proxy_parse_response_header(server *srv, connection *con, plugin_
 
 handler_t proxy_connection_connect(proxy_connection *con) {
 	int fd;
-       
+
 	if (-1 == (fd = socket(con->address->addr.plain.sa_family, SOCK_STREAM, 0))) {
 	}
 
@@ -719,14 +724,7 @@ int proxy_get_request_header(server *srv, connection *con, plugin_data *p, proxy
 		}
 	}
 
-	switch (p->conf.protocol) {
-	case PROXY_PROTOCOL_HTTP:
-		proxy_get_request_chunk(srv, con, p, sess, sess->send_raw);
-		break;
-	default:
-		ERROR("protocol %d is not supported yet", p->conf.protocol);
-		break;
-	}
+	proxy_get_request_chunk(srv, con, p, sess, sess->send_raw);
 
 	return 0;
 }
@@ -1461,7 +1459,7 @@ int mod_proxy_core_plugin_init(plugin *p) {
 	p->init         = mod_proxy_core_init;
 	p->cleanup      = mod_proxy_core_free;
 	p->set_defaults = mod_proxy_core_set_defaults;
-	p->handle_uri_clean        = mod_proxy_core_check_extension;
+	p->handle_physical         = mod_proxy_core_check_extension;
 	p->handle_subrequest_start = mod_proxy_core_check_extension;
 	p->handle_subrequest       = mod_proxy_core_check_extension;
 	p->connection_reset        = mod_proxy_connection_reset;

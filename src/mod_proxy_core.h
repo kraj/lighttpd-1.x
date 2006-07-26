@@ -45,6 +45,8 @@ typedef struct {
 
 	buffer *replace_buf;
 
+	buffer *tmp_buf;     /** a temporary buffer, used by mod_proxy_backend_fastcgi */
+
 	plugin_config **config_storage;
 
 	plugin_config conf;
@@ -67,7 +69,8 @@ typedef struct {
 
 	connection *remote_con;
 
-	array *request_headers;
+	array *request_headers;    /** the con->request.headers without the hop-to-hop headers */
+	array *env_headers;        /** transformed request-headers for the backend */
 
 	int is_chunked;            /** is the incoming content chunked (for HTTP) */
 	int is_closing;            /** our connection will close when we are done */
@@ -93,5 +96,7 @@ typedef struct {
 
 	proxy_state_t state;
 } proxy_session;
+
+void proxy_set_header(array *hdrs, const char *key, size_t key_len, const char *value, size_t val_len);
 
 #endif
