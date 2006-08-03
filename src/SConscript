@@ -22,7 +22,10 @@ common_src = Split("buffer.c log.c \
       network_write.c network_linux_sendfile.c \
       network_freebsd_sendfile.c  network_win32_send.c \
       network_solaris_sendfilev.c network_openssl.c \
-      http_resp.c http_resp_parser.c ")
+      http_resp.c http_resp_parser.c \
+      http_req.c http_req_parser.c \
+      http_req_range.c http_req_range_parser.c ")
+
       
 src = Split("server.c response.c connections.c network.c sys-socket.c sys-files.c\
       configfile.c configparser.c request.c proc_open.c")
@@ -57,11 +60,27 @@ env.Append(BUILDERS = {'Lemon': lemonbuilder})
 configparser = env.Lemon('configparser.y');
 mod_ssi_exprparser = env.Lemon('mod_ssi_exprparser.y');
 http_resp_parser = env.Lemon('http_resp_parser.y');
+http_req_parser = env.Lemon('http_req_parser.y');
+http_req_range_parser = env.Lemon('http_req_range_parser.y');
 
-env.Alias('http_resp', env.Program('http_resp', 
+testenv = env.Copy(LIBS = ['-ltap', '-lpcre'])
+
+resptest = testenv.Program('http_resp.t', 
     [ 'http_resp_parser.c', 'http_resp.c', 'buffer.c', 'array.c', 'chunk.c',
       'keyvalue.c', 'data_string.c', 'http_resp_test.c', 'log.c'
-    ] ))
+    ] )
+
+reqtest = testenv.Program('http_req.t', 
+    [ 'http_req_parser.c', 'http_req.c', 'buffer.c', 'array.c', 'chunk.c',
+      'keyvalue.c', 'data_string.c', 'http_req_test.c', 'log.c'
+    ] )
+
+reqrangetest = testenv.Program('http_req_range.t', 
+    [ 'http_req_range_parser.c', 'http_req_range.c', 'buffer.c', 'array.c', 'chunk.c',
+      'keyvalue.c', 'data_string.c', 'http_req_range_test.c', 'log.c'
+    ] )
+
+testenv.Alias('bin-tests', [resptest, reqtest, reqrangetest ] )
 
 ## the modules and how they are built
 modules = {
