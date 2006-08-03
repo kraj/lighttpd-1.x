@@ -11,11 +11,12 @@
 
 #include "stat_cache.h"
 #include "etag.h"
-#include "http_chunk.h"
 #include "response.h"
 
 #include "sys-files.h"
 #include "sys-strings.h"
+
+#include "http_req_range.h"
 /**
  * this is a staticfile for a lighttpd plugin
  *
@@ -138,20 +139,24 @@ static int mod_staticfile_patch_connection(server *srv, connection *con, plugin_
 
 static int http_response_parse_range(server *srv, connection *con, plugin_data *p) {
 	int multipart = 0;
-	int error;
-	off_t start, end;
-	const char *s, *minus;
 	char *boundary = "fkj49sn38dcn3";
 	data_string *ds;
 	stat_cache_entry *sce = NULL;
 	buffer *content_type = NULL;
+	buffer *range = NULL;
+	http_req_range *ranges, *r;
+
+	if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "Range"))) {
+		range = ds->value;
+	} else {
+		/* we don't have a Range header */
+
+		return -1;
+	}
 
 	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
 		SEGFAULT();
 	}
-
-	start = 0;
-	end = sce->st.st_size - 1;
 
 	con->response.content_length = 0;
 
@@ -159,155 +164,109 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 		content_type = ds->value;
 	}
 
-	for (s = con->request.http_range, error = 0;
-	     !error && *s && NULL != (minus = strchr(s, '-')); ) {
-		char *err;
-		off_t la, le;
+	/* start the range-header parser
+	 * bytes=<num>  */
 
-		if (s == minus) {
-			/* -<stop> */
+	ranges = http_request_range_init();
+	switch (http_request_range_parse(range, ranges)) {
+	case PARSE_ERROR:
+		return -1; /* no range valid Range Header */
+	case PARSE_SUCCESS:
+		break;
+	default:
+		TRACE("%s", "foobar");
+		return -1;
+	}
 
-			le = strtoll(s, &err, 10);
+	if (ranges->next) {
+		multipart = 1;
+	}
 
-			if (le == 0) {
-				/* RFC 2616 - 14.35.1 */
-
-				con->http_status = 416;
-				error = 1;
-			} else if (*err == '\0') {
-				/* end */
-				s = err;
-
-				end = sce->st.st_size - 1;
-				start = sce->st.st_size + le;
-			} else if (*err == ',') {
-				multipart = 1;
-				s = err + 1;
-
-				end = sce->st.st_size - 1;
-				start = sce->st.st_size + le;
-			} else {
-				error = 1;
-			}
-
-		} else if (*(minus+1) == '\0' || *(minus+1) == ',') {
-			/* <start>- */
-
-			la = strtoll(s, &err, 10);
-
-			if (err == minus) {
-				/* ok */
-
-				if (*(err + 1) == '\0') {
-					s = err + 1;
-
-					end = sce->st.st_size - 1;
-					start = la;
-
-				} else if (*(err + 1) == ',') {
-					multipart = 1;
-					s = err + 2;
-
-					end = sce->st.st_size - 1;
-					start = la;
-				} else {
-					error = 1;
-				}
-			} else {
-				/* error */
-				error = 1;
-			}
-		} else {
-			/* <start>-<stop> */
-
-			la = strtoll(s, &err, 10);
-
-			if (err == minus) {
-				le = strtoll(minus+1, &err, 10);
-
-				/* RFC 2616 - 14.35.1 */
-				if (la > le) {
-					error = 1;
-				}
-
-				if (*err == '\0') {
-					/* ok, end*/
-					s = err;
-
-					end = le;
-					start = la;
-				} else if (*err == ',') {
-					multipart = 1;
-					s = err + 1;
-
-					end = le;
-					start = la;
-				} else {
-					/* error */
-
-					error = 1;
-				}
-			} else {
-				/* error */
-
-				error = 1;
-			}
+	/* patch the '-1' */
+	for (r = ranges; r; r = r->next) {
+		if (r->start == -1) {
+			/* -<end>
+			 *
+			 * the last <end> bytes  */
+			r->start = sce->st.st_size - r->end;
+			r->end = sce->st.st_size - 1;
+		} 
+		if (r->end == -1) {
+			/* <start>-
+			 * all but the first <start> bytes */
+					
+			r->end = sce->st.st_size - 1;
 		}
 
-		if (!error) {
-			if (start < 0) start = 0;
-
-			/* RFC 2616 - 14.35.1 */
-			if (end > sce->st.st_size - 1) end = sce->st.st_size - 1;
-
-			if (start > sce->st.st_size - 1) {
-				error = 1;
-
-				con->http_status = 416;
-			}
+		if (r->end > sce->st.st_size - 1) {
+			/* RFC 2616 - 14.35.1
+			 *
+			 * if last-byte-pos not present or > size-of-file 
+			 * take the size-of-file
+			 *
+			 *  */
+			r->end = sce->st.st_size - 1;
 		}
 
-		if (!error) {
-			if (multipart) {
-				/* write boundary-header */
-				buffer *b;
+		if (r->start > sce->st.st_size - 1) {
+			/* RFC 2616 - 14.35.1
+			 *
+			 * if first-byte-pos > file-size, 416
+			 */
 
-				b = chunkqueue_get_append_buffer(con->write_queue);
+			con->http_status = 416;
+			return -1;
+		}
 
-				buffer_copy_string(b, "\r\n--");
-				buffer_append_string(b, boundary);
+		if (r->start > r->end) {
+			/* RFC 2616 - 14.35.1
+			 *
+			 * if last-byte-pos is present, it has to be >= first-byte-pos
+			 * 
+			 * invalid ranges have to be handle as no Range specified
+			 *  */
 
-				/* write Content-Range */
-				buffer_append_string(b, "\r\nContent-Range: bytes ");
-				buffer_append_off_t(b, start);
-				buffer_append_string(b, "-");
-				buffer_append_off_t(b, end);
-				buffer_append_string(b, "/");
-				buffer_append_off_t(b, sce->st.st_size);
-
-				buffer_append_string(b, "\r\nContent-Type: ");
-				buffer_append_string_buffer(b, content_type);
-
-				/* write END-OF-HEADER */
-				buffer_append_string(b, "\r\n\r\n");
-
-				con->response.content_length += b->used - 1;
-
-			}
-
-			chunkqueue_append_file(con->write_queue, con->physical.path, start, end - start + 1);
-			con->response.content_length += end - start + 1;
+			return -1;
 		}
 	}
 
-	/* something went wrong */
-	if (error) return -1;
+	if (r) {
+		/* we ran into an range violation */
+		return -1;
+	}
 
 	if (multipart) {
-		/* add boundary end */
 		buffer *b;
+		for (r = ranges; r; r = r->next) {
+			/* write boundary-header */
 
-		b = chunkqueue_get_append_buffer(con->write_queue);
+			b = chunkqueue_get_append_buffer(con->send);
+
+			buffer_copy_string(b, "\r\n--");
+			buffer_append_string(b, boundary);
+
+			/* write Content-Range */
+			buffer_append_string(b, "\r\nContent-Range: bytes ");
+			buffer_append_off_t(b, r->start);
+			buffer_append_string(b, "-");
+			buffer_append_off_t(b, r->end);
+			buffer_append_string(b, "/");
+			buffer_append_off_t(b, sce->st.st_size);
+
+			buffer_append_string(b, "\r\nContent-Type: ");
+			buffer_append_string_buffer(b, content_type);
+
+			/* write END-OF-HEADER */
+			buffer_append_string(b, "\r\n\r\n");
+
+			con->response.content_length += b->used - 1;
+
+			chunkqueue_append_file(con->send, con->physical.path, r->start, r->end - r->start + 1);
+			con->response.content_length += r->end - r->start + 1;
+		}
+
+		/* add boundary end */
+		b = chunkqueue_get_append_buffer(con->send);
 
 		buffer_copy_string_len(b, "\r\n--", 4);
 		buffer_append_string(b, boundary);
@@ -322,19 +281,23 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 
 		/* overwrite content-type */
 		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(p->range_buf));
+
 	} else {
-		/* add Content-Range-header */
+		r = ranges;
+
+		chunkqueue_append_file(con->send, con->physical.path, r->start, r->end - r->start + 1);
+		con->response.content_length += r->end - r->start + 1;
 
 		buffer_copy_string(p->range_buf, "bytes ");
-		buffer_append_off_t(p->range_buf, start);
+		buffer_append_off_t(p->range_buf, r->start);
 		buffer_append_string(p->range_buf, "-");
-		buffer_append_off_t(p->range_buf, end);
+		buffer_append_off_t(p->range_buf, r->end);
 		buffer_append_string(p->range_buf, "/");
 		buffer_append_off_t(p->range_buf, sce->st.st_size);
 
 		response_header_insert(srv, con, CONST_STR_LEN("Content-Range"), CONST_BUF_LEN(p->range_buf));
 	}
-
+	
 	/* ok, the file is set-up */
 	return 0;
 }
@@ -376,7 +339,9 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 		if (ds->value->used == 0) continue;
 
 		if (buffer_is_equal_right_len(con->physical.path, ds->value, ds->value->used - 1)) {
-			return HANDLER_GO_ON;
+			con->http_status = 403;
+
+			return HANDLER_FINISHED;
 		}
 	}
 
@@ -438,7 +403,8 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 
 	if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {
 		return HANDLER_FINISHED;
-	} else if (con->request.http_range && con->conf.range_requests) {
+	} else if (con->conf.range_requests && 
+	           NULL != array_get_element(con->request.headers, "Range")) {
 		int do_range_request = 1;
 		/* check if we have a conditional GET */
 
@@ -453,7 +419,7 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 
 		if (do_range_request) {
 			/* content prepared, I'm done */
-			con->file_finished = 1;
+			con->send->is_closed = 1;
 
 			if (0 == http_response_parse_range(srv, con, p)) {
 				con->http_status = 206;
@@ -467,13 +433,61 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 	/* we add it here for all requests
 	 * the HEAD request will drop it afterwards again
 	 */
-	http_chunk_append_file(srv, con, con->physical.path, 0, sce->st.st_size);
+	chunkqueue_append_file(con->send, con->physical.path, 0, sce->st.st_size);
 
-	con->file_finished = 1;
+	con->send->is_closed = 1;
 
 	return HANDLER_FINISHED;
 }
 
+/**
+ * mark all the content as read
+ */
+CONNECTION_FUNC(mod_staticfile_dev_null) {
+	chunk *c;
+	off_t offset;
+	chunkqueue *in = con->recv;
+
+	/* there is nothing that we have to send out anymore */
+	if (in->bytes_in == in->bytes_out && 
+	    in->is_closed) return HANDLER_GO_ON;
+
+	for (c = in->first; in->bytes_out < in->bytes_in; c = c->next) {
+		off_t weWant = in->bytes_in - in->bytes_out;
+		off_t weHave = 0;
+
+		/* we announce toWrite octects
+		 * now take all the request_content chunk that we need to fill this request
+		 */
+
+		switch (c->type) {
+		case FILE_CHUNK:
+			weHave = c->file.length - c->offset;
+
+			if (weHave > weWant) weHave = weWant;
+
+			c->offset += weHave;
+			in->bytes_out += weHave;
+
+			break;
+		case MEM_CHUNK:
+			/* append to the buffer */
+			weHave = c->mem->used - 1 - c->offset;
+
+			if (weHave > weWant) weHave = weWant;
+
+			c->offset += weHave;
+			in->bytes_out += weHave;
+
+			break;
+		default:
+			break;
+		}
+	}
+
+	return HANDLER_GO_ON;
+
+}
 /* this function is called at dlopen() time and inits the callbacks */
 
 int mod_staticfile_plugin_init(plugin *p) {
@@ -481,7 +495,8 @@ int mod_staticfile_plugin_init(plugin *p) {
 	p->name        = buffer_init_string("staticfile");
 
 	p->init        = mod_staticfile_init;
-	p->handle_subrequest_start = mod_staticfile_subrequest;
+	p->handle_start_backend = mod_staticfile_subrequest;
+	p->handle_send_request_content = mod_staticfile_dev_null;
 	p->set_defaults  = mod_staticfile_set_defaults;
 	p->cleanup     = mod_staticfile_free;
 
