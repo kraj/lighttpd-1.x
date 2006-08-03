@@ -43,6 +43,8 @@ typedef struct {
 
 	array *tempdirs;
 
+	int is_closed;   /* the input to this CQ is closed */
+
 	off_t  bytes_in, bytes_out;
 } chunkqueue;
 

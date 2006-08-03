@@ -159,6 +159,7 @@ void chunkqueue_reset(chunkqueue *cq) {
 	chunkqueue_remove_finished_chunks(cq);
 	cq->bytes_in = 0;
 	cq->bytes_out = 0;
+	cq->is_closed = 0;
 }
 
 int chunkqueue_append_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len) {
