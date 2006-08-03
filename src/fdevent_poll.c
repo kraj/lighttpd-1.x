@@ -43,6 +43,7 @@ static int fdevent_poll_event_del(fdevents *ev, iosocket *sock) {
 
 		ev->unused.ptr[ev->unused.used++] = k;
 	} else {
+		TRACE("(fdevent-poll-del) sock->fde_ndx: %d, sock->fd: %d -> stored fd: %d", sock->fde_ndx, sock->fd, ev->pollfds[sock->fde_ndx].fd);
 		SEGFAULT();
 	}
 

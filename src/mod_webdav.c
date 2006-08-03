@@ -1095,7 +1095,7 @@ int webdav_lockdiscovery(server *srv, connection *con,
 		CONST_STR_LEN("Content-Type"),
 		CONST_STR_LEN("text/xml; charset=\"utf-8\""));
 
-	b = chunkqueue_get_append_buffer(con->write_queue);
+	b = chunkqueue_get_append_buffer(con->send);
 
 	buffer_copy_string(b, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
 
@@ -1238,7 +1238,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 		if (con->request.content_length) {
 			xmlDocPtr xml;
 
-			if (1 == webdav_parse_chunkqueue(srv, con, p, con->request_content_queue, &xml)) {
+			if (1 == webdav_parse_chunkqueue(srv, con, p, con->recv, &xml)) {
 				xmlNode *rootnode = xmlDocGetRootElement(xml);
 
 				assert(rootnode);
@@ -1326,7 +1326,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 
 		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/xml; charset=\"utf-8\""));
 
-		b = chunkqueue_get_append_buffer(con->write_queue);
+		b = chunkqueue_get_append_buffer(con->send);
 
 		buffer_copy_string(b, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
 
@@ -1472,7 +1472,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 		if (p->conf.log_xml) {
 			log_error_write(srv, __FILE__, __LINE__, "sb", "XML-response-body:", b);
 		}
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		return HANDLER_FINISHED;
 	case HTTP_METHOD_MKCOL:
@@ -1506,7 +1506,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 			}
 		} else {
 			con->http_status = 201;
-			con->file_finished = 1;
+			con->send->is_closed = 1;
 		}
 
 		return HANDLER_FINISHED;
@@ -1540,7 +1540,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 				/* we got an error somewhere in between, build a 207 */
 				response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/xml; charset=\"utf-8\""));
 
-				b = chunkqueue_get_append_buffer(con->write_queue);
+				b = chunkqueue_get_append_buffer(con->send);
 
 				buffer_copy_string(b, "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
 
@@ -1555,7 +1555,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 				}
 
 				con->http_status = 207;
-				con->file_finished = 1;
+				con->send->is_closed = 1;
 			} else {
 				/* everything went fine, remove the directory */
 
@@ -1592,7 +1592,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 		return HANDLER_FINISHED;
 	case HTTP_METHOD_PUT: {
 		int fd;
-		chunkqueue *cq = con->request_content_queue;
+		chunkqueue *cq = con->recv;
 		chunk *c;
 		data_string *ds_range;
 
@@ -1687,7 +1687,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 			}
 		}
 
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		for (c = cq->first; c; c = cq->first) {
 			int r = 0;
@@ -1911,7 +1911,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 				rmdir(con->physical.path->ptr);
 			}
 			con->http_status = 201;
-			con->file_finished = 1;
+			con->send->is_closed = 1;
 		} else {
 			/* it is just a file, good */
 			int r;
@@ -1937,7 +1937,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 
 			if (-1 == r) {
 				con->http_status = 201; /* we will create a new one */
-				con->file_finished = 1;
+				con->send->is_closed = 1;
 
 				switch(errno) {
 				case ENOTDIR:
@@ -2024,7 +2024,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 		if (con->request.content_length) {
 			xmlDocPtr xml;
 
-			if (1 == webdav_parse_chunkqueue(srv, con, p, con->request_content_queue, &xml)) {
+			if (1 == webdav_parse_chunkqueue(srv, con, p, con->recv, &xml)) {
 				xmlNode *rootnode = xmlDocGetRootElement(xml);
 
 				if (0 == xmlStrcmp(rootnode->name, BAD_CAST "propertyupdate")) {
@@ -2130,7 +2130,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 						}
 						con->http_status = 200;
 					}
-					con->file_finished = 1;
+					con->send->is_closed = 1;
 
 					return HANDLER_FINISHED;
 				}
@@ -2192,7 +2192,7 @@ propmatch_cleanup:
 				return HANDLER_FINISHED;
 			}
 
-			if (1 == webdav_parse_chunkqueue(srv, con, p, con->request_content_queue, &xml)) {
+			if (1 == webdav_parse_chunkqueue(srv, con, p, con->recv, &xml)) {
 				xmlNode *rootnode = xmlDocGetRootElement(xml);
 
 				assert(rootnode);
@@ -2332,7 +2332,7 @@ propmatch_cleanup:
 							webdav_lockdiscovery(srv, con, p->tmp_buf, lockscope, locktype, depth);
 
 							con->http_status = 201;
-							con->file_finished = 1;
+							con->send->is_closed = 1;
 						}
 					}
 				}
@@ -2372,7 +2372,7 @@ propmatch_cleanup:
 				webdav_lockdiscovery(srv, con, p->tmp_buf, "exclusive", "write", 0);
 
 				con->http_status = 200;
-				con->file_finished = 1;
+				con->send->is_closed = 1;
 				return HANDLER_FINISHED;
 			} else {
 				/* we need a lock-token to refresh */

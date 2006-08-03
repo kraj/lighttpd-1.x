@@ -44,7 +44,7 @@ static int http_chunk_append_len(server *srv, connection *con, size_t len) {
 	}
 
 	buffer_append_string(b, "\r\n");
-	chunkqueue_append_buffer(con->write_queue, b);
+	chunkqueue_append_buffer(con->send_raw, b);
 
 	return 0;
 }
@@ -55,7 +55,7 @@ int http_chunk_append_file(server *srv, connection *con, buffer *fn, off_t offse
 
 	if (!con) return -1;
 
-	cq = con->write_queue;
+	cq = con->send_raw;
 
 	if (con->response.transfer_encoding & HTTP_TRANSFER_ENCODING_CHUNKED) {
 		http_chunk_append_len(srv, con, len);
@@ -75,7 +75,7 @@ int http_chunk_append_buffer(server *srv, connection *con, buffer *mem) {
 
 	if (!con) return -1;
 
-	cq = con->write_queue;
+	cq = con->send_raw;
 
 	if (con->response.transfer_encoding & HTTP_TRANSFER_ENCODING_CHUNKED) {
 		http_chunk_append_len(srv, con, mem->used - 1);
@@ -95,7 +95,7 @@ int http_chunk_append_mem(server *srv, connection *con, const char * mem, size_t
 
 	if (!con) return -1;
 
-	cq = con->write_queue;
+	cq = con->send_raw;
 
 	if (len == 0) {
 		if (con->response.transfer_encoding & HTTP_TRANSFER_ENCODING_CHUNKED) {
@@ -128,5 +128,5 @@ off_t http_chunkqueue_length(server *srv, connection *con) {
 		return 0;
 	}
 
-	return chunkqueue_length(con->write_queue);
+	return chunkqueue_length(con->send_raw);
 }

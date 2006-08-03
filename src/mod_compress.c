@@ -13,7 +13,6 @@
 #include "buffer.h"
 #include "response.h"
 #include "stat_cache.h"
-#include "http_chunk.h"
 
 #include "plugin.h"
 
@@ -422,8 +421,8 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 	if (HANDLER_ERROR != stat_cache_get_entry(srv, con, p->ofn, &compressed_sce)) {
 		/* file exists */
 
-		http_chunk_append_file(srv, con, p->ofn, 0, compressed_sce->st.st_size);
-		con->file_finished = 1;
+		chunkqueue_append_file(con->send_raw, p->ofn, 0, compressed_sce->st.st_size);
+		con->send->is_closed = 1;
 
 		return 0;
 	}
@@ -498,8 +497,8 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 
 	if (ret != 0) return -1;
 
-	http_chunk_append_file(srv, con, p->ofn, 0, r);
-	con->file_finished = 1;
+	chunkqueue_append_file(con->send_raw, p->ofn, 0, r);
+	con->send->is_closed = 1;
 
 	return 0;
 }
@@ -559,13 +558,13 @@ static int deflate_file_to_buffer(server *srv, connection *con, plugin_data *p, 
 
 	if (ret != 0) return -1;
 
-	chunkqueue_reset(con->write_queue);
-	b = chunkqueue_get_append_buffer(con->write_queue);
+	chunkqueue_reset(con->send);
+	b = chunkqueue_get_append_buffer(con->send);
 	buffer_copy_memory(b, p->b->ptr, p->b->used + 1);
 
 	buffer_reset(con->physical.path);
 
-	con->file_finished = 1;
+	con->send->is_closed = 1;
 	con->file_started  = 1;
 
 	return 0;
@@ -738,7 +737,10 @@ int mod_compress_plugin_init(plugin *p) {
 
 	p->init        = mod_compress_init;
 	p->set_defaults = mod_compress_setdefaults;
-	p->handle_subrequest_start  = mod_compress_physical;
+
+	/* we have to hook into the response-header settings */
+	p->handle_response_header  = mod_compress_physical;
+
 	p->cleanup     = mod_compress_free;
 
 	p->data        = NULL;

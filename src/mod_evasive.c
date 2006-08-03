@@ -142,7 +142,7 @@ URIHANDLER_FUNC(mod_evasive_uri_handler) {
 		 * we can only ban connections which are already behind the 'read request' state
 		 * */
 		if (c->dst_addr.ipv4.sin_addr.s_addr == con->dst_addr.ipv4.sin_addr.s_addr &&
-		    c->state > CON_STATE_REQUEST_END) {
+		    c->state > CON_STATE_HANDLE_REQUEST_HEADER) {
 			conns_by_ip++;
 
 			if (conns_by_ip > p->conf.max_conns) {

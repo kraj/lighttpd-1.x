@@ -6,7 +6,6 @@
 #include "log.h"
 #include "buffer.h"
 #include "response.h"
-#include "http_chunk.h"
 #include "stat_cache.h"
 
 #include "plugin.h"
@@ -241,14 +240,14 @@ URIHANDLER_FUNC(mod_flv_streaming_path_handler) {
 			}
 
 			/* we are safe now, let's build a flv header */
-			b = chunkqueue_get_append_buffer(con->write_queue);
+			b = chunkqueue_get_append_buffer(con->send);
 			BUFFER_COPY_STRING_CONST(b, "FLV\x1\x1\0\0\0\x9\0\0\0\x9");
 
-			http_chunk_append_file(srv, con, con->physical.path, start, sce->st.st_size - start);
+			chunkqueue_append_file(con->send, con->physical.path, start, sce->st.st_size - start);
 
 			response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("video/x-flv"));
 
-			con->file_finished = 1;
+			con->send->is_closed = 1;
 
 			return HANDLER_FINISHED;
 		}

@@ -12,7 +12,6 @@
 #include "keyvalue.h"
 #include "log.h"
 
-#include "http_chunk.h"
 #include "fdevent.h"
 #include "connections.h"
 #include "response.h"
@@ -511,7 +510,7 @@ static int proxy_create_env(server *srv, handler_ctx *hctx) {
 	/* body */
 
 	if (con->request.content_length) {
-		chunkqueue *req_cq = con->request_content_queue;
+		chunkqueue *req_cq = con->recv;
 		chunk *req_c;
 		off_t offset;
 
@@ -588,7 +587,7 @@ static int proxy_demux_response(server *srv, handler_ctx *hctx) {
 		return 0;
 	case NETWORK_STATUS_CONNECTION_CLOSE:
 		/* we are done, get out of here */
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		/* close the chunk-queue with a empty chunk */
 
@@ -658,11 +657,6 @@ static int proxy_demux_response(server *srv, handler_ctx *hctx) {
 
 			con->file_started = 1;
 
-			if (con->request.http_version == HTTP_VERSION_1_1 &&
-			    !have_content_length) {
-				con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
-	   		}
-
 			hctx->state = PROXY_STATE_RESPONSE_CONTENT;
 			break;
 		}
@@ -674,7 +668,7 @@ static int proxy_demux_response(server *srv, handler_ctx *hctx) {
 	* - use next-queue instead of con->write_queue
 	*/
 
-	next_queue = con->write_queue;
+	next_queue = con->send;
 
 	assert(hctx->state == PROXY_STATE_RESPONSE_CONTENT);
 
@@ -685,7 +679,7 @@ static int proxy_demux_response(server *srv, handler_ctx *hctx) {
 
 	/* copy the content to the next cq */
 	for (c = hctx->rb->first; c; c = c->next) {
-		http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+		chunkqueue_append_mem(con->send, c->mem->ptr + c->offset, c->mem->used - c->offset);
 
 		c->offset = c->mem->used - 1;
 	}
@@ -940,8 +934,6 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 					"proxy: request done", hctx->sock->fd);
 			hctx->host->usage--;
 
-			http_chunk_append_mem(srv, con, NULL, 0);
-
 			/* we are done */
 			proxy_connection_close(srv, hctx);
 
@@ -950,7 +942,6 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 		case -1:
 			if (con->file_started == 0) {
 				/* nothing has been send out yet, send a 500 */
-				connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
 				con->http_status = 500;
 				con->mode = DIRECT;
 			} else {
@@ -1007,7 +998,7 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 			return HANDLER_FINISHED;
 		}
 
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		proxy_connection_close(srv, hctx);
 		joblist_append(srv, con);
@@ -1308,7 +1299,7 @@ int mod_proxy_plugin_init(plugin *p) {
 	p->connection_reset        = mod_proxy_connection_close_callback; /* end of req-resp cycle */
 	p->handle_connection_close = mod_proxy_connection_close_callback; /* end of client connection */
 	p->handle_uri_clean        = mod_proxy_check_extension;
-	p->handle_subrequest       = mod_proxy_handle_subrequest;
+	p->handle_start_backend    = mod_proxy_handle_subrequest;
 	p->handle_trigger          = mod_proxy_trigger;
 
 	p->data         = NULL;

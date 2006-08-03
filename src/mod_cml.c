@@ -312,7 +312,7 @@ int mod_cml_plugin_init(plugin *p) {
 	p->cleanup     = mod_cml_free;
 	p->set_defaults  = mod_cml_set_defaults;
 
-	p->handle_subrequest_start = mod_cml_is_handled;
+	p->handle_start_backend    = mod_cml_is_handled;
 	p->handle_physical         = mod_cml_power_magnet;
 
 	p->data        = NULL;

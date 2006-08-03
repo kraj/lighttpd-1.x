@@ -12,7 +12,6 @@
 #include "keyvalue.h"
 #include "log.h"
 
-#include "http_chunk.h"
 #include "fdevent.h"
 #include "connections.h"
 #include "response.h"
@@ -2000,7 +1999,7 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	hctx->wb->bytes_in += b->used - 1;
 
 	if (con->request.content_length) {
-		chunkqueue *req_cq = con->request_content_queue;
+		chunkqueue *req_cq = con->recv;
 		chunk *req_c;
 		off_t offset;
 
@@ -2359,7 +2358,7 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 						
 						if (host->allow_xsendfile &&
 						    HANDLER_ERROR != stat_cache_get_entry(srv, con, header->value, &sce)) {
-							http_chunk_append_file(srv, con, header->value, 0, sce->st.st_size);
+							chunkqueue_append_file(con->send, header->value, 0, sce->st.st_size);
 							hctx->send_content_body = 0; /* ignore the content */
 					
 							joblist_append(srv, con);
@@ -2384,20 +2383,10 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 				if (hctx->send_content_body) {
 					chunk *c = hctx->http_rb->first;
 
-					/* if we don't have a content-length enable chunked encoding 
-					 * if possible
-					 * 
-					 * TODO: move this to a later stage in the filter-queue
-					 *  */
-					if (con->request.http_version == HTTP_VERSION_1_1 &&
-					    !have_content_length) {
-						con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
-					}
-
 					/* copy the rest of the data */
 					for (c = hctx->http_rb->first; c; c = c->next) {
 						if (c->mem->used > 1) {
-							http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+							chunkqueue_append_mem(con->send, c->mem->ptr + c->offset, c->mem->used - c->offset);
 							c->offset = c->mem->used - 1;
 						}
 					}
@@ -2405,7 +2394,7 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 					joblist_append(srv, con);
 				}
 			} else if (hctx->send_content_body && packet.b->used > 1) {
-				http_chunk_append_mem(srv, con, packet.b->ptr, packet.b->used);
+				chunkqueue_append_mem(con->send, packet.b->ptr, packet.b->used);
 				joblist_append(srv, con);
 			}
 			break;
@@ -2415,13 +2404,12 @@ static int fcgi_demux_response(server *srv, handler_ctx *hctx) {
 
 			break;
 		case FCGI_END_REQUEST:
-			con->file_finished = 1;
+			con->send->is_closed = 1;
 
 			if (host->mode != FCGI_AUTHORIZER ||
 			    !(con->http_status == 0 ||
 			      con->http_status == 200)) {
 				/* send chunk-end if nesseary */
-				http_chunk_append_mem(srv, con, NULL, 0);
 				joblist_append(srv, con);
 			}
 
@@ -3098,7 +3086,6 @@ static handler_t fcgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 				fcgi_connection_close(srv, hctx);
 
-				connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
 				buffer_reset(con->physical.path);
 				con->http_status = 500;
 				con->mode = DIRECT;
@@ -3496,7 +3483,6 @@ TRIGGER_FUNC(mod_fastcgi_handle_trigger) {
 		 * kill the connection */
 
 		if (con->mode != p->id) continue;
-		if (con->state != CON_STATE_HANDLE_REQUEST) continue;
 		if (srv->cur_ts < con->request_start + 60) continue;
 
 		/* the request is waiting for a FCGI_STDOUT since 60 seconds */
@@ -3700,8 +3686,8 @@ int mod_fastcgi_plugin_init(plugin *p) {
 	p->connection_reset        = fcgi_connection_reset;
 	p->handle_connection_close = fcgi_connection_close_callback;
 	p->handle_uri_clean        = fcgi_check_extension_1;
-	p->handle_subrequest_start = fcgi_check_extension_2;
-	p->handle_subrequest       = mod_fastcgi_handle_subrequest;
+	p->handle_start_backend    = fcgi_check_extension_2;
+	p->handle_send_request_content = mod_fastcgi_handle_subrequest;
 	p->handle_joblist          = mod_fastcgi_handle_joblist;
 	p->handle_trigger          = mod_fastcgi_handle_trigger;
 

@@ -400,7 +400,7 @@ int cache_parse_lua(server *srv, connection *con, plugin_data *p, buffer *fn) {
 			char timebuf[sizeof("Sat, 23 Jul 2005 21:20:01 GMT")];
 			buffer tbuf;
 
-			con->file_finished = 1;
+			con->send->is_closed = 1;
 
 			ds = (data_string *)array_get_element(con->response.headers, "Last-Modified");
 

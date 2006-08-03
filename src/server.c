@@ -20,7 +20,6 @@
 #include "response.h"
 #include "request.h"
 #include "chunk.h"
-#include "http_chunk.h"
 #include "fdevent.h"
 #include "connections.h"
 #include "stat_cache.h"
@@ -541,8 +540,11 @@ int lighty_mainloop(server *srv) {
 
 					con = conns->ptr[ndx];
 
-					if (con->state == CON_STATE_READ ||
-					    con->state == CON_STATE_READ_POST) {
+					switch (con->state) {
+					case CON_STATE_READ_REQUEST_HEADER:
+					case CON_STATE_READ_REQUEST_CONTENT: 
+						if (con->recv->is_closed) break; /* everything is read, no need to fear a timeout */
+						
 						if (con->request_count == 1) {
 							if (srv->cur_ts - con->read_idle_ts > con->conf.max_read_idle) {
 								/* time - out */
@@ -550,6 +552,7 @@ int lighty_mainloop(server *srv) {
 								log_error_write(srv, __FILE__, __LINE__, "sd",
 										"connection closed - read-timeout:", con->fd);
 #endif
+								TRACE("%s", "(timeout)");
 								connection_set_state(srv, con, CON_STATE_ERROR);
 								changed = 1;
 							}
@@ -560,22 +563,18 @@ int lighty_mainloop(server *srv) {
 								log_error_write(srv, __FILE__, __LINE__, "sd",
 										"connection closed - read-timeout:", con->fd);
 #endif
+								TRACE("%s", "(timeout)");
 								connection_set_state(srv, con, CON_STATE_ERROR);
 								changed = 1;
 							}
 						}
-					}
+						break;
+					case CON_STATE_WRITE_RESPONSE_HEADER:
+					case CON_STATE_WRITE_RESPONSE_CONTENT:
+					
 
-					if ((con->state == CON_STATE_WRITE) &&
-					    (con->write_request_ts != 0)) {
-#if 0
-						if (srv->cur_ts - con->write_request_ts > 60) {
-							log_error_write(srv, __FILE__, __LINE__, "sdd",
-									"connection closed - pre-write-request-timeout:", con->fd, srv->cur_ts - con->write_request_ts);
-						}
-#endif
-
-						if (srv->cur_ts - con->write_request_ts > con->conf.max_write_idle) {
+						if (con->write_request_ts != 0 &&
+						    srv->cur_ts - con->write_request_ts > con->conf.max_write_idle) {
 							/* time - out */
 #if 1
 							log_error_write(srv, __FILE__, __LINE__, "sbsosds",
@@ -587,9 +586,14 @@ int lighty_mainloop(server *srv) {
 									(int)con->conf.max_write_idle,
 									"seconds. If this a problem increase server.max-write-idle");
 #endif
+								TRACE("%s", "(timeout)");
 							connection_set_state(srv, con, CON_STATE_ERROR);
 							changed = 1;
 						}
+						break;
+					default:
+						/* the other ones are uninteresting */
+						break;
 					}
 					/* we don't like div by zero */
 					if (0 == (t_diff = srv->cur_ts - con->connection_start)) t_diff = 1;

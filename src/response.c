@@ -26,13 +26,13 @@
 #include "sys-files.h"
 #include "sys-strings.h"
 
-int http_response_write_header(server *srv, connection *con) {
+int http_response_write_header(server *srv, connection *con, chunkqueue *raw) {
 	buffer *b;
 	size_t i;
 	int have_date = 0;
 	int have_server = 0;
 
-	b = chunkqueue_get_prepend_buffer(con->write_queue);
+	b = chunkqueue_get_prepend_buffer(raw);
 
 	if (con->request.http_version == HTTP_VERSION_1_1) {
 		BUFFER_COPY_STRING_CONST(b, "HTTP/1.1 ");
@@ -118,16 +118,13 @@ int http_response_write_header(server *srv, connection *con) {
 
 
 
-handler_t http_response_prepare(server *srv, connection *con) {
+handler_t handle_get_backend(server *srv, connection *con) {
 	handler_t r;
 
 	/* looks like someone has already made a decision */
 	if (con->mode == DIRECT &&
 	    (con->http_status != 0 && con->http_status != 200)) {
 		/* remove a packets in the queue */
-		if (con->file_finished == 0) {
-			chunkqueue_reset(con->write_queue);
-		}
 
 		return HANDLER_FINISHED;
 	}
@@ -290,7 +287,8 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			response_header_insert(srv, con, CONST_STR_LEN("Allow"), CONST_STR_LEN("OPTIONS, GET, HEAD, POST"));
 
 			con->http_status = 200;
-			con->file_finished = 1;
+			/* no more content to send */
+			con->send->is_closed = 1;
 
 			return HANDLER_FINISHED;
 		}
@@ -415,11 +413,11 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			buffer_append_string_buffer(con->physical.path, con->physical.rel_path);
 		}
 
-        /* win32: directories can't have a trailing slash */
-        if (con->physical.path->ptr[con->physical.path->used - 2] == DIR_SEPERATOR) {
-            con->physical.path->ptr[con->physical.path->used - 2] = '\0';
-            con->physical.path->used--;
-        }
+		/* win32: directories can't have a trailing slash */
+		if (con->physical.path->ptr[con->physical.path->used - 2] == DIR_SEPERATOR) {
+			con->physical.path->ptr[con->physical.path->used - 2] = '\0';
+			con->physical.path->used--;
+		}
 
 		if (con->conf.log_request_handling) {
 			log_error_write(srv, __FILE__, __LINE__,  "s",  "-- after doc_root");
@@ -452,7 +450,8 @@ handler_t http_response_prepare(server *srv, connection *con) {
 	/*
 	 * No one took the file away from the normal path of execution yet (like mod_access)
 	 *
-	 * Go on and check of the file exists at all
+	 * we don't have a backend yet, try to resolve the physical path and go on
+	 * 
 	 */
 
 	if (con->mode == DIRECT) {
@@ -598,11 +597,11 @@ handler_t http_response_prepare(server *srv, connection *con) {
 		}
 
 		/* call the handlers */
-		switch(r = plugins_call_handle_subrequest_start(srv, con)) {
+		switch(r = plugins_call_handle_start_backend(srv, con)) {
 		case HANDLER_GO_ON:
-			/* request was not handled */
-			break;
 		case HANDLER_FINISHED:
+			/* if we are still here, no one wanted the file; status 403 is ok I think */
+
 		default:
 			if (con->conf.log_request_handling) {
 				log_error_write(srv, __FILE__, __LINE__,  "s",  "-- subrequest finished");
@@ -611,30 +610,17 @@ handler_t http_response_prepare(server *srv, connection *con) {
 			/* something strange happened */
 			return r;
 		}
-
-		/* if we are still here, no one wanted the file; status 403 is ok I think */
-
-		if (con->mode == DIRECT) {
-			con->http_status = 403;
-
-			return HANDLER_FINISHED;
-		}
-
 	}
 
-	switch(r = plugins_call_handle_subrequest(srv, con)) {
-	case HANDLER_GO_ON:
-		/* request was not handled; looks like we are done */
+	if (con->mode == DIRECT) {
+		con->http_status = 403;
+
+		TRACE("%s", "aaaaaaah, sending 403");
+
 		return HANDLER_FINISHED;
-	case HANDLER_FINISHED:
-		/* request is finished */
-	default:
-		/* something strange happened */
-		return r;
+	} else {
+		return HANDLER_GO_ON;
 	}
-
-	/* can't happen */
-	return HANDLER_COMEBACK;
 }
 
 

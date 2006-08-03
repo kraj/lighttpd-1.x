@@ -12,7 +12,6 @@
 #include "keyvalue.h"
 #include "log.h"
 
-#include "http_chunk.h"
 #include "fdevent.h"
 #include "connections.h"
 #include "response.h"
@@ -1561,7 +1560,7 @@ static int scgi_create_env(server *srv, handler_ctx *hctx) {
 	hctx->wb->bytes_in += b->used - 1;
 
 	if (con->request.content_length) {
-		chunkqueue *req_cq = con->request_content_queue;
+		chunkqueue *req_cq = con->recv;
 		chunk *req_c;
 		off_t offset;
 
@@ -1643,7 +1642,7 @@ static int scgi_demux_response(server *srv, handler_ctx *hctx) {
 		if (0 == con->file_started) return -1;
 	case NETWORK_STATUS_CONNECTION_CLOSE:
 		/* we are done, get out of here */
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		/* close the chunk-queue with a empty chunk */
 
@@ -1738,7 +1737,7 @@ static int scgi_demux_response(server *srv, handler_ctx *hctx) {
 
 	/* copy the content to the next cq */
 	for (c = hctx->rb->first; c; c = c->next) {
-		http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+		chunkqueue_append_mem(con->send, c->mem->ptr + c->offset, c->mem->used - c->offset);
 
 		c->offset = c->mem->used - 1;
 	}
@@ -2410,7 +2409,6 @@ static handler_t scgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 				scgi_connection_cleanup(srv, hctx);
 
-				connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
 				buffer_reset(con->physical.path);
 				con->http_status = 500;
 				con->mode = DIRECT;
@@ -2946,8 +2944,10 @@ int mod_scgi_plugin_init(plugin *p) {
 	p->connection_reset        = scgi_connection_reset;
 	p->handle_connection_close = scgi_connection_close_callback;
 	p->handle_uri_clean        = scgi_check_extension_1;
-	p->handle_subrequest_start = scgi_check_extension_2;
+	p->handle_start_backend    = scgi_check_extension_2;
+#if 0
 	p->handle_subrequest       = mod_scgi_handle_subrequest;
+#endif
 	p->handle_joblist          = mod_scgi_handle_joblist;
 	p->handle_trigger          = mod_scgi_handle_trigger;
 

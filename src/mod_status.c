@@ -207,7 +207,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 
 	int days, hours, mins, seconds;
 
-	b = chunkqueue_get_append_buffer(con->write_queue);
+	b = chunkqueue_get_append_buffer(con->send);
 
 	BUFFER_COPY_STRING_CONST(b,
 				 "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>\n"
@@ -483,8 +483,8 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 
 		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"int bytes_read\">");
 
-		if (con->request.content_length) {
-			buffer_append_long(b, c->request_content_queue->bytes_in);
+		if (c->request.content_length != -1) {
+			buffer_append_long(b, c->recv->bytes_in);
 			BUFFER_APPEND_STRING_CONST(b, "/");
 			buffer_append_long(b, c->request.content_length);
 		} else {
@@ -493,9 +493,9 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 
 		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"int bytes_written\">");
 
-		buffer_append_off_t(b, chunkqueue_written(c->write_queue));
+		buffer_append_off_t(b, chunkqueue_written(c->send_raw));
 		BUFFER_APPEND_STRING_CONST(b, "/");
-		buffer_append_off_t(b, chunkqueue_length(c->write_queue));
+		buffer_append_off_t(b, chunkqueue_length(c->send_raw));
 
 		BUFFER_APPEND_STRING_CONST(b, "</td><td class=\"string state\">");
 
@@ -549,7 +549,7 @@ static handler_t mod_status_handle_server_status_text(server *srv, connection *c
 	double avg;
 	time_t ts;
 
-	b = chunkqueue_get_append_buffer(con->write_queue);
+	b = chunkqueue_get_append_buffer(con->send);
 
 	/* output total number of requests */
 	BUFFER_APPEND_STRING_CONST(b, "Total Accesses: ");
@@ -590,12 +590,12 @@ static handler_t mod_status_handle_server_statistics(server *srv, connection *co
 	if (0 == st->used) {
 		/* we have nothing to send */
 		con->http_status = 204;
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		return HANDLER_FINISHED;
 	}
 
-	b = chunkqueue_get_append_buffer(con->write_queue);
+	b = chunkqueue_get_append_buffer(con->send);
 
 	for (i = 0; i < st->used; i++) {
 		size_t ndx = st->sorted[i];
@@ -609,7 +609,7 @@ static handler_t mod_status_handle_server_statistics(server *srv, connection *co
 	response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/plain"));
 
 	con->http_status = 200;
-	con->file_finished = 1;
+	con->send->is_closed = 1;
 
 	return HANDLER_FINISHED;
 }
@@ -624,7 +624,7 @@ static handler_t mod_status_handle_server_status(server *srv, connection *con, v
 	}
 
 	con->http_status = 200;
-	con->file_finished = 1;
+	con->send->is_closed = 1;
 
 	return HANDLER_FINISHED;
 }
@@ -662,7 +662,7 @@ static handler_t mod_status_handle_server_config(server *srv, connection *con, v
 		{ FDEVENT_HANDLER_UNSET,          NULL }
 	};
 
-	b = chunkqueue_get_append_buffer(con->write_queue);
+	b = chunkqueue_get_append_buffer(con->send);
 
 	BUFFER_COPY_STRING_CONST(b,
 			   "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>\n"
@@ -718,7 +718,7 @@ static handler_t mod_status_handle_server_config(server *srv, connection *con, v
 	response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/html"));
 
 	con->http_status = 200;
-	con->file_finished = 1;
+	con->send->is_closed = 1;
 
 	return HANDLER_FINISHED;
 }
@@ -831,7 +831,7 @@ int mod_status_plugin_init(plugin *p) {
 
 	p->handle_uri_clean    = mod_status_handler;
 	p->handle_trigger      = mod_status_trigger;
-	p->handle_request_done = mod_status_account;
+	p->handle_response_done = mod_status_account;
 
 	p->data        = NULL;
 

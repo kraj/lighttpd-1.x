@@ -402,7 +402,6 @@ static handler_t cgi_connection_close(server *srv, connection *con, plugin_data 
 		default:
 			/* Send an error if we haven't sent any data yet */
 			if (0 == con->file_started) {
-				connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
 				if (con->http_status == 0) con->http_status = 500;
 				con->mode = DIRECT;
 			}
@@ -462,7 +461,7 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 				/* the connection is gone
 				 * make the connect */
-				sess->remote_con->file_finished = 1;
+				sess->remote_con->send->is_closed = 1;
 #if 0
 				fdevent_event_del(srv->ev, sess->sock);
 #endif
@@ -486,7 +485,7 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 				}
 				chunkqueue_remove_finished_chunks(sess->rb);
 
-				if (sess->remote_con->file_finished) {
+				if (sess->remote_con->send->is_closed) {
 					/* send final HTTP-Chunk packet */
 					http_chunk_append_mem(srv, sess->remote_con, NULL, 0);
 				}
@@ -511,7 +510,7 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 
 	/* perhaps this issue is already handled */
 	if (revents & FDEVENT_HUP) {
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		fdevent_event_del(srv->ev, sess->sock);
 
@@ -519,7 +518,7 @@ static handler_t cgi_handle_fdevent(void *s, void *ctx, int revents) {
 		http_chunk_append_mem(srv, sess->remote_con, NULL, 0);
 		joblist_append(srv, sess->remote_con);
 	} else if (revents & FDEVENT_ERR) {
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		/* kill all connections to the cgi process */
 		fdevent_event_del(srv->ev, sess->sock);
@@ -844,7 +843,7 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 		close(to_cgi_fds[0]);
 
 		if (con->request.content_length) {
-			chunkqueue *cq = con->request_content_queue;
+			chunkqueue *cq = con->recv;
 			chunk *c;
 
 			assert(chunkqueue_length(cq) == (off_t)con->request.content_length);
@@ -1086,7 +1085,6 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 		cgi_connection_close(srv, con, p);
 
 		if (0 == con->http_status) con->http_status = 500;
-		connection_set_state(srv, con, CON_STATE_HANDLE_REQUEST);
 		con->mode = DIRECT;
 
 		return HANDLER_FINISHED;
@@ -1103,7 +1101,7 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 		 * otherwise the event-handler will send us the incoming data */
 
 		if (!con->file_started) return HANDLER_WAIT_FOR_EVENT;
-		if (con->file_finished) return HANDLER_FINISHED;
+		if (con->send->is_closed) return HANDLER_FINISHED;
 
 		return HANDLER_GO_ON;
 	case -1:
@@ -1132,7 +1130,7 @@ SUBREQUEST_FUNC(mod_cgi_handle_subrequest) {
 
 		return HANDLER_FINISHED;
 	default:
-		con->file_finished = 1;
+		con->send->is_closed = 1;
 
 		if (WIFEXITED(status)) {
 			/* nothing */
@@ -1166,11 +1164,9 @@ int mod_cgi_plugin_init(plugin *p) {
 	p->name        = buffer_init_string("cgi");
 
 	p->connection_reset = cgi_connection_close_callback;
-	p->handle_subrequest_start = cgi_is_handled;
-	p->handle_subrequest = mod_cgi_handle_subrequest;
-#if 0
-	p->handle_fdevent = cgi_handle_fdevent;
-#endif
+	p->handle_start_backend = cgi_is_handled;
+	p->handle_send_request_content = mod_cgi_handle_subrequest;
+
 	p->handle_trigger = cgi_trigger;
 	p->init           = mod_cgi_init;
 	p->cleanup        = mod_cgi_free;

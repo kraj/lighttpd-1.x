@@ -701,9 +701,12 @@ REQUESTDONE_FUNC(log_access_write) {
 				}
 				break;
 			case FORMAT_REQUEST_LINE:
-				if (con->request.request_line->used) {
-					buffer_append_string_buffer(b, con->request.request_line);
-				}
+				buffer_append_string(b, get_http_method_name(con->request.http_method));
+				buffer_append_string(b, " ");
+				buffer_append_string_buffer(b, con->request.orig_uri);
+				buffer_append_string(b, " ");
+				buffer_append_string(b, get_http_version_name(con->request.http_version));
+
 				break;
 			case FORMAT_STATUS:
 				buffer_append_long(b, con->http_status);
@@ -839,8 +842,8 @@ int mod_accesslog_plugin_init(plugin *p) {
 	p->set_defaults= log_access_open;
 	p->cleanup     = mod_accesslog_free;
 
-	p->handle_request_done  = log_access_write;
-	p->handle_sighup        = log_access_cycle;
+	p->handle_response_done  = log_access_write;
+	p->handle_sighup         = log_access_cycle;
 
 	p->data        = NULL;
 

@@ -732,7 +732,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 
 	if (files.used) http_dirls_sort(files.ent, files.used);
 
-	out = chunkqueue_get_append_buffer(con->write_queue);
+	out = chunkqueue_get_append_buffer(con->send);
 	BUFFER_COPY_STRING_CONST(out, "<?xml version=\"1.0\" encoding=\"");
 	if (buffer_is_empty(p->conf.encoding)) {
 		BUFFER_APPEND_STRING_CONST(out, "iso-8859-1");
@@ -842,7 +842,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 		response_header_insert(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(p->content_charset));
 	}
 
-	con->file_finished = 1;
+	con->send->is_closed = 1;
 
 	return 0;
 }
@@ -912,7 +912,7 @@ int mod_dirlisting_plugin_init(plugin *p) {
 	p->name        = buffer_init_string("dirlisting");
 
 	p->init        = mod_dirlisting_init;
-	p->handle_subrequest_start  = mod_dirlisting_subrequest;
+	p->handle_start_backend  = mod_dirlisting_subrequest;
 	p->set_defaults  = mod_dirlisting_set_defaults;
 	p->cleanup     = mod_dirlisting_free;
 

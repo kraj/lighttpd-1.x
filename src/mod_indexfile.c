@@ -219,7 +219,7 @@ int mod_indexfile_plugin_init(plugin *p) {
 	p->name        = buffer_init_string("indexfile");
 
 	p->init        = mod_indexfile_init;
-	p->handle_subrequest_start = mod_indexfile_subrequest;
+	p->handle_start_backend = mod_indexfile_subrequest;
 	p->set_defaults  = mod_indexfile_set_defaults;
 	p->cleanup     = mod_indexfile_free;
 

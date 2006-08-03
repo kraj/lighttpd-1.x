@@ -194,7 +194,7 @@ int http_response_redirect_to_directory(server *srv, connection *con) {
 	response_header_insert(srv, con, CONST_STR_LEN("Location"), CONST_BUF_LEN(o));
 
 	con->http_status = 301;
-	con->file_finished = 1;
+	con->send->is_closed = 1; /* no content */
 
 	buffer_free(o);
 
@@ -230,6 +230,9 @@ buffer * strftime_cache_get(server *srv, time_t last_mod) {
 
 
 int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
+	data_string *http_if_none_match;
+	data_string *http_if_modified_since;
+
 	/*
 	 * 14.26 If-None-Match
 	 *    [...]
@@ -240,24 +243,27 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 	 *    return a 304 (Not Modified) response.
 	 */
 
+	http_if_none_match = (data_string *)array_get_element(con->request.headers, "if-none-match");
+	http_if_modified_since = (data_string *)array_get_element(con->request.headers, "if-modified-since");
+
 	/* last-modified handling */
-	if (con->request.http_if_none_match) {
-		if (etag_is_equal(con->physical.etag, con->request.http_if_none_match)) {
+	if (http_if_none_match) {
+		if (etag_is_equal(con->physical.etag, BUF_STR(http_if_none_match->value))) {
 			if (con->request.http_method == HTTP_METHOD_GET ||
 			    con->request.http_method == HTTP_METHOD_HEAD) {
 
 				/* check if etag + last-modified */
-				if (con->request.http_if_modified_since) {
+				if (http_if_modified_since) {
 					size_t used_len;
 					char *semicolon;
 
-					if (NULL == (semicolon = strchr(con->request.http_if_modified_since, ';'))) {
-						used_len = strlen(con->request.http_if_modified_since);
+					if (NULL == (semicolon = strchr(BUF_STR(http_if_modified_since->value), ';'))) {
+						used_len = http_if_modified_since->value->used - 1;
 					} else {
-						used_len = semicolon - con->request.http_if_modified_since;
+						used_len = semicolon - BUF_STR(http_if_modified_since->value);
 					}
 
-					if (0 == strncmp(con->request.http_if_modified_since, mtime->ptr, used_len)) {
+					if (0 == strncmp(BUF_STR(http_if_modified_since->value), mtime->ptr, used_len)) {
 						con->http_status = 304;
 						return HANDLER_FINISHED;
 					} else {
@@ -268,16 +274,16 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 
 						/* check if we can safely copy the string */
 						if (used_len >= sizeof(buf)) {
-							log_error_write(srv, __FILE__, __LINE__, "ssdd",
-									"DEBUG: Last-Modified check failed as the received timestamp was too long:",
-									con->request.http_if_modified_since, used_len, sizeof(buf) - 1);
+							TRACE("last-mod check failed as timestamp was too long: %s: %d, %d", 
+									BUF_STR(http_if_modified_since->value), 
+									used_len, sizeof(buf) - 1);
 
 							con->http_status = 412;
 							return HANDLER_FINISHED;
 						}
 
 
-						strncpy(buf, con->request.http_if_modified_since, used_len);
+						strncpy(buf, BUF_STR(http_if_modified_since->value), used_len);
 						buf[used_len] = '\0';
 
 						strptime(buf, "%a, %d %b %Y %H:%M:%S GMT", &tm);
@@ -291,7 +297,7 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 						con->http_status = 304;
 						return HANDLER_FINISHED;
 #else
-                        return HANDLER_GO_ON;
+						return HANDLER_GO_ON;
 #endif
 					}
 				} else {
@@ -303,17 +309,17 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 				return HANDLER_FINISHED;
 			}
 		}
-	} else if (con->request.http_if_modified_since) {
+	} else if (http_if_modified_since) {
 		size_t used_len;
 		char *semicolon;
 
-		if (NULL == (semicolon = strchr(con->request.http_if_modified_since, ';'))) {
-			used_len = strlen(con->request.http_if_modified_since);
+		if (NULL == (semicolon = strchr(BUF_STR(http_if_modified_since->value), ';'))) {
+			used_len = http_if_modified_since->value->used - 1;
 		} else {
-			used_len = semicolon - con->request.http_if_modified_since;
+			used_len = semicolon - BUF_STR(http_if_modified_since->value);
 		}
 
-		if (0 == strncmp(con->request.http_if_modified_since, mtime->ptr, used_len)) {
+		if (0 == strncmp(BUF_STR(http_if_modified_since->value), mtime->ptr, used_len)) {
 			con->http_status = 304;
 			return HANDLER_FINISHED;
 		} else {
@@ -325,7 +331,7 @@ int http_response_handle_cachable(server *srv, connection *con, buffer *mtime) {
 			/* convert to timestamp */
 			if (used_len >= sizeof(buf)) return HANDLER_GO_ON;
 
-			strncpy(buf, con->request.http_if_modified_since, used_len);
+			strncpy(buf, BUF_STR(http_if_modified_since->value), used_len);
 			buf[used_len] = '\0';
 
 			strptime(buf, "%a, %d %b %Y %H:%M:%S GMT", &tm);

@@ -236,7 +236,7 @@ int mod_setenv_plugin_init(plugin *p) {
 	p->set_defaults  = mod_setenv_set_defaults;
 	p->cleanup     = mod_setenv_free;
 
-	p->handle_request_done  = mod_setenv_reset;
+	p->connection_reset  = mod_setenv_reset;
 
 	p->data        = NULL;
 

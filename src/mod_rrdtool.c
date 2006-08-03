@@ -436,7 +436,7 @@ int mod_rrdtool_plugin_init(plugin *p) {
 	p->set_defaults= mod_rrd_set_defaults;
 
 	p->handle_trigger      = mod_rrd_trigger;
-	p->handle_request_done = mod_rrd_account;
+	p->handle_response_done = mod_rrd_account;
 
 	p->data        = NULL;
 
