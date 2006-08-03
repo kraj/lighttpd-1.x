@@ -94,8 +94,7 @@ NETWORK_BACKEND_WRITE(linuxsendfile) {
 				switch (errno) {
 				case EAGAIN:
 				case EINTR:
-					r = 0;
-					break;
+					return NETWORK_STATUS_WAIT_FOR_EVENT;
 				case EPIPE:
 				case ECONNRESET:
 					return NETWORK_STATUS_CONNECTION_CLOSE;
