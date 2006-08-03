@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <ctype.h>
+#include <assert.h>
 
 #include "buffer.h"
 #include "array.h"
@@ -13,7 +14,6 @@
 #include "joblist.h"
 #include "sys-files.h"
 #include "inet_ntop_cache.h"
-#include "http_chunk.h"
 #include "crc32.h"
 #include "configfile.h"
 
@@ -216,7 +216,7 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		buffer_reset(p->balance_buf);
 		buffer_reset(p->protocol_buf);
 
-		s = malloc(sizeof(plugin_config));
+		s = calloc(1, sizeof(plugin_config));
 		s->debug     = 0;
 		s->balancer  = PROXY_BALANCE_UNSET;
 		s->protocol  = PROXY_PROTOCOL_UNSET;
@@ -334,15 +334,21 @@ void proxy_session_free(proxy_session *sess) {
 }
 
 /**
- * handler for the backends
+ * decode the content for the protocol
+ *
+ * http might have chunk-encoding 
+ * fastcgi has the fastcgi wrapper code
+ *
+ * @param in chunkqueue for the encoded, protocol specific data
+ * @param out chunkqueue for the plain content
  */
 
-int proxy_stream_decoder(server *srv, proxy_session *sess, chunkqueue *raw, chunkqueue *decoded) {
+int proxy_stream_decoder(server *srv, proxy_session *sess, chunkqueue *in, chunkqueue *out) {
 	switch (sess->proxy_backend->protocol) {
 	case PROXY_PROTOCOL_HTTP:
-		return proxy_http_stream_decoder(srv, sess, raw, decoded);
+		return proxy_http_stream_decoder(srv, sess, in, out);
 	case PROXY_PROTOCOL_FASTCGI:
-		return proxy_fastcgi_stream_decoder(srv, sess, raw, decoded);
+		return proxy_fastcgi_stream_decoder(srv, sess, in, out);
 	default:
 		ERROR("protocol %d is not supported yet", sess->proxy_backend->protocol);
 		return -1;
@@ -351,70 +357,20 @@ int proxy_stream_decoder(server *srv, proxy_session *sess, chunkqueue *raw, chun
 /**
  * encode the content for the protocol
  *
- * @param decoded chunkqueue with the content to (no encoding)
- * @param raw chunkqueue for the encoded, protocol specific data
+ * @param in chunkqueue with the content to (no encoding)
+ * @param out chunkqueue for the encoded, protocol specific data
  */
-int proxy_stream_encoder(server *srv, proxy_session *sess, chunkqueue *decoded, chunkqueue *raw) {
-	chunk *req_c;
-	off_t offset;
-
-	if (sess->proxy_backend->protocol != PROXY_PROTOCOL_HTTP) {
+int proxy_stream_encoder(server *srv, proxy_session *sess, chunkqueue *in, chunkqueue *out) {
+	switch (sess->proxy_backend->protocol) {
+	case PROXY_PROTOCOL_HTTP:
+		return proxy_http_stream_encoder(srv, sess, in, out);
+	case PROXY_PROTOCOL_FASTCGI:
+		return proxy_fastcgi_stream_encoder(srv, sess, in, out);
+	default:
 		ERROR("protocol %d is not supported yet", sess->proxy_backend->protocol);
 		return -1;
 	}
-
-	/* there is nothing that we have to send out anymore */
-	if (decoded->bytes_in == decoded->bytes_out) return 0;
-
-	for (offset = 0, req_c = decoded->first; offset != decoded->bytes_in; req_c = req_c->next) {
-		buffer *b;
-		off_t weWant = decoded->bytes_in - offset;
-		off_t weHave = 0;
-
-		/* we announce toWrite octects
-		 * now take all the request_content chunk that we need to fill this request
-		 */
-
-		switch (req_c->type) {
-		case FILE_CHUNK:
-			weHave = req_c->file.length - req_c->offset;
-
-			if (weHave > weWant) weHave = weWant;
-
-			chunkqueue_append_file(raw, req_c->file.name, req_c->offset, weHave);
-
-			req_c->offset += weHave;
-			decoded->bytes_out += weHave;
-
-			raw->bytes_in += weHave;
-
-			break;
-		case MEM_CHUNK:
-			/* append to the buffer */
-			weHave = req_c->mem->used - 1 - req_c->offset;
-
-			if (weHave > weWant) weHave = weWant;
-
-			b = chunkqueue_get_append_buffer(raw);
-			buffer_append_memory(b, req_c->mem->ptr + req_c->offset, weHave);
-			b->used++; /* add virtual \0 */
-
-			req_c->offset += weHave;
-			decoded->bytes_out += weHave;
-
-			raw->bytes_in += weHave;
-
-			break;
-		default:
-			break;
-		}
-
-		offset += weHave;
-	}
-
-	return 0;
 }
-
 
 int proxy_get_request_chunk(server *srv, connection *con, plugin_data *p, proxy_session *sess, chunkqueue *cq) {
 	switch (sess->proxy_backend->protocol) {
@@ -518,6 +474,7 @@ static handler_t proxy_handle_fdevent_idle(void *s, void *ctx, int revents) {
 static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 	server      *srv  = (server *)s;
 	proxy_session *sess = ctx;
+	connection  *con  = sess->remote_con;
 
 	if (revents & FDEVENT_OUT) {
 		switch (sess->state) {
@@ -526,7 +483,7 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 		case PROXY_STATE_WRITE_REQUEST_BODY:
 			/* we are still connection */
 
-			joblist_append(srv, sess->remote_con);
+			joblist_append(srv, con);
 			break;
 		default:
 			ERROR("oops, unexpected state for fdevent-out %d", sess->state);
@@ -538,7 +495,7 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 		switch (sess->state) {
 		case PROXY_STATE_READ_RESPONSE_HEADER:
 			/* call our header parser */
-			joblist_append(srv, sess->remote_con);
+			joblist_append(srv, con);
 			break;
 		case PROXY_STATE_READ_RESPONSE_BODY:
 			/* we should be in the WRITE state now, 
@@ -546,13 +503,13 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 			 * */
 
 			chunkqueue_remove_finished_chunks(sess->recv_raw);
-			switch (srv->network_backend_read(srv, sess->remote_con, sess->proxy_con->sock, sess->recv_raw)) {
+			switch (srv->network_backend_read(srv, con, sess->proxy_con->sock, sess->recv_raw)) {
 			case NETWORK_STATUS_CONNECTION_CLOSE:
 				fdevent_event_del(srv->ev,sess->proxy_con->sock);
 
 				/* the connection is gone
 				 * make the connect */
-				sess->remote_con->file_finished = 1;
+				con->send->is_closed = 1;
 				sess->proxy_con->state = PROXY_CONNECTION_STATE_CLOSED;
 
 			case NETWORK_STATUS_SUCCESS:
@@ -571,7 +528,7 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 					break;
 				case 1:
 					/* we are done */
-					sess->remote_con->file_finished = 1;
+					con->send->is_closed = 1;
 
 					break;
 				}
@@ -584,18 +541,13 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 
 					if (sess->send_response_content) {
 						/* X-Sendfile ignores the content-body */
-						http_chunk_append_mem(srv, sess->remote_con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+						chunkqueue_append_mem(con->send, c->mem->ptr + c->offset, c->mem->used - c->offset);
 					}
 	
 					c->offset = c->mem->used - 1;
 
 				}
 				chunkqueue_remove_finished_chunks(sess->recv);
-
-				if (sess->remote_con->file_finished) {
-					/* send final HTTP-Chunk packet */
-					http_chunk_append_mem(srv, sess->remote_con, NULL, 0);
-				}
 				
 				break;
 			default:
@@ -603,7 +555,9 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 				break;
 			}
 
-			joblist_append(srv, sess->remote_con);
+			/* we wrote something into the the send-buffers, 
+			 * call the connection-handler to push it to the client */
+			joblist_append(srv, con);
 			break;
 		default:
 			ERROR("oops, unexpected state for fdevent-in %d", sess->state);
@@ -616,7 +570,7 @@ static handler_t proxy_handle_fdevent(void *s, void *ctx, int revents) {
 		switch (sess->state) {
 		case PROXY_STATE_CONNECTING:
 			/* let the getsockopt() catch this */
-			joblist_append(srv, sess->remote_con);
+			joblist_append(srv, con);
 			break;
 		case PROXY_STATE_READ_RESPONSE_BODY:
 			/* the keep-alive race-condition */
@@ -729,6 +683,7 @@ int proxy_get_request_header(server *srv, connection *con, plugin_data *p, proxy
 	return 0;
 }
 
+
 /* we are event-driven
  * 
  * the first entry is connect() call, if the doesn't need a event 
@@ -746,6 +701,7 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 
 	if (sess->state == PROXY_STATE_UNSET) {
 		/* we are not started yet */
+		sess->connect_start_ts = srv->cur_ts;
 		switch(proxy_connection_connect(sess->proxy_con)) {
 		case HANDLER_WAIT_FOR_EVENT:
 			/* waiting on the connect call */
@@ -844,33 +800,44 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 		default:
 			return HANDLER_ERROR;
 		}
+
+		chunkqueue_remove_finished_chunks(sess->send_raw);
+		
 		/* fall through */
 	case PROXY_STATE_WRITE_REQUEST_BODY:
 		/* do we have a content-body to send up to the backend ? */
 
 		fdevent_event_del(srv->ev, sess->proxy_con->sock);
-		if (con->request.content_length) {
-			proxy_stream_encoder(srv, sess, con->request_content_queue, sess->send_raw);
 
-			switch (srv->network_backend_write(srv, con, sess->proxy_con->sock, sess->send_raw)) {
-			case NETWORK_STATUS_SUCCESS:
+		proxy_stream_encoder(srv, sess, con->recv, sess->send_raw);
+
+		chunkqueue_remove_finished_chunks(con->recv);
+
+		switch (srv->network_backend_write(srv, con, sess->proxy_con->sock, sess->send_raw)) {
+		case NETWORK_STATUS_SUCCESS:
+			if (con->recv->is_closed && /* no further input */
+			    con->recv->bytes_in == con->recv->bytes_out &&  /* everything is encoded */
+			    sess->send_raw->bytes_in == sess->send_raw->bytes_out) { /* everything is sent */
 				sess->state = PROXY_STATE_READ_RESPONSE_HEADER;
-				break;
-			case NETWORK_STATUS_WAIT_FOR_EVENT:
-				fdevent_event_add(srv->ev, sess->proxy_con->sock, FDEVENT_OUT);
-
-				return HANDLER_WAIT_FOR_EVENT;
-			case NETWORK_STATUS_CONNECTION_CLOSE:
-				/* the connection got close while sending the request content up 
-				 * to the backend, for now handle this as error */
-
-				return HANDLER_ERROR;
-			default:
-				return HANDLER_ERROR;
 			}
-		} else {
-			sess->state = PROXY_STATE_READ_RESPONSE_HEADER;
+			break;
+		case NETWORK_STATUS_WAIT_FOR_EVENT:
+			fdevent_event_add(srv->ev, sess->proxy_con->sock, FDEVENT_OUT);
+
+			chunkqueue_remove_finished_chunks(sess->send_raw);
+
+			return HANDLER_WAIT_FOR_EVENT;
+		case NETWORK_STATUS_CONNECTION_CLOSE:
+			/* the connection got close while sending the request content up 
+			 * to the backend, for now handle this as error */
+
+			TRACE("%s", "(con-close)");
+			return HANDLER_ERROR;
+		default:
+			TRACE("%s", "(error)");
+			return HANDLER_ERROR;
 		}
+		chunkqueue_remove_finished_chunks(sess->send_raw);
 
 		/* fall through */
 	case PROXY_STATE_READ_RESPONSE_HEADER:
@@ -908,6 +875,8 @@ handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p, proxy
 			}
 
 			con->file_started = 1;
+			/* if Status: ... is not set, 200 is our default status-code */
+			if (con->http_status == 0) con->http_status = 200;
 
 			sess->state = PROXY_STATE_READ_RESPONSE_BODY;
 
@@ -1120,7 +1089,6 @@ static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_
 	return 0;
 }
 
-
 SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 	plugin_data *p = p_d;
 	proxy_session *sess = con->plugin_ctx[p->id]; /* if this is the second round, sess is already prepared */
@@ -1133,6 +1101,25 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 
 	if (p->conf.backends->used == 0) return HANDLER_GO_ON;
 
+	if (!sess) {
+		/* a session lives for a single request */
+		sess = proxy_session_init();
+
+		con->plugin_ctx[p->id] = sess;
+		con->mode = p->id;
+
+		sess->remote_con = con;
+	}
+
+	return HANDLER_GO_ON;
+}
+
+CONNECTION_FUNC(mod_proxy_core_start_backend) {
+	plugin_data *p = p_d;
+	proxy_session *sess = con->plugin_ctx[p->id];
+
+	if (p->id != con->mode) return HANDLER_GO_ON;
+
 	/* 
 	 * 0. build session
 	 * 1. get a proxy connection
@@ -1144,15 +1131,8 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 	 * 7. kill session
 	 * */
 
-	if (!sess) {
-		/* a session lives for a single request */
-		sess = proxy_session_init();
 
-		con->plugin_ctx[p->id] = sess;
-		con->mode = p->id;
-
-		sess->remote_con = con;
-	} 
+	assert(sess);
 
 	if (sess->do_internal_redirect) {
 	       if (sess->internal_redirect_count > MAX_INTERNAL_REDIRECTS) {
@@ -1166,9 +1146,9 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 	case PROXY_STATE_CONNECTING:
 		/* this connections is waited 10 seconds to connect to the backend
 		 * and didn't got a successful connection yet, sending timeout */
-		if (srv->cur_ts - con->request_start > 10) {
+		if (srv->cur_ts - sess->connect_start_ts > 10) {
 			con->http_status = 504; /* gateway timeout */
-			con->file_finished = 1;
+			con->send->is_closed = 1;
 
 			if (sess->proxy_con) {
 				/* if we are waiting for a proxy-connection right now, close it */
@@ -1181,14 +1161,18 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 			
 				sess->proxy_con = NULL;
 			}
+
+			TRACE("%s", "connect to backend timed out");
 			
 			return HANDLER_FINISHED;
 		}
 	default:
 		/* handle-request-timeout,  */
+#if 0
 		if (srv->cur_ts - con->request_start > 60) {
 			TRACE("request runs longer than 60sec: current state: %d", sess->state);
 		}
+#endif
 		break;
 	}
 
@@ -1296,14 +1280,30 @@ SUBREQUEST_FUNC(mod_proxy_core_check_extension) {
 		case HANDLER_GO_ON:
 			return HANDLER_GO_ON;
 		default:
+			TRACE("state: %d (error)", sess->state);
 			return HANDLER_ERROR;
 		}
 	}
 
+	TRACE("state: %d", sess->state);
 	/* should not be reached */
 	return HANDLER_ERROR;
 }
 
+CONNECTION_FUNC(mod_proxy_send_request_content) {
+	plugin_data *p = p_d;
+	proxy_session *sess = con->plugin_ctx[p->id]; 
+
+	if (p->id != con->mode) return HANDLER_GO_ON;
+
+	/* read all the content before we start our backend */
+	if (!con->recv->is_closed) {
+		return HANDLER_GO_ON;
+	}
+
+	/* copy the chunks to our queue and call the state-engine to send it out */
+	return mod_proxy_core_start_backend(srv, con, p_d);
+}
 /**
  * end of the connection to the client
  */
@@ -1460,8 +1460,7 @@ int mod_proxy_core_plugin_init(plugin *p) {
 	p->cleanup      = mod_proxy_core_free;
 	p->set_defaults = mod_proxy_core_set_defaults;
 	p->handle_physical         = mod_proxy_core_check_extension;
-	p->handle_subrequest_start = mod_proxy_core_check_extension;
-	p->handle_subrequest       = mod_proxy_core_check_extension;
+	p->handle_send_request_content = mod_proxy_send_request_content;
 	p->connection_reset        = mod_proxy_connection_reset;
 	p->handle_connection_close = mod_proxy_connection_close_callback;
 	p->handle_trigger          = mod_proxy_trigger;
