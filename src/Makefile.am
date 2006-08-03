@@ -37,7 +37,7 @@ http_resp.c: http_resp_parser.h
 
 common_src=buffer.c log.c \
       keyvalue.c chunk.c  \
-      http_chunk.c stream.c fdevent.c \
+      stream.c fdevent.c \
       stat_cache.c plugin.c joblist.c etag.c array.c \
       data_string.c data_count.c data_array.c \
       data_integer.c md5.c data_fastcgi.c \
@@ -52,7 +52,10 @@ common_src=buffer.c log.c \
       network_write.c network_linux_sendfile.c \
       network_freebsd_sendfile.c network_writev.c \
       network_solaris_sendfilev.c network_openssl.c \
-      splaytree.c http_resp.c http_resp_parser.c 
+      splaytree.c \
+      http_resp.c http_resp_parser.c \
+      http_req.c http_req_parser.c \
+      http_req_range.c http_req_range_parser.c 
       
 src = server.c response.c connections.c network.c \
       configfile.c configparser.c request.c proc_open.c
@@ -251,7 +254,7 @@ mod_accesslog_la_LIBADD = $(common_libadd)
 
 hdr = server.h buffer.h network.h log.h keyvalue.h \
       response.h request.h fastcgi.h chunk.h \
-      settings.h http_chunk.h http_auth_digest.h \
+      settings.h http_auth_digest.h \
       md5.h http_auth.h stream.h \
       fdevent.h connections.h base.h stat_cache.h \
       plugin.h mod_auth.h \
@@ -261,13 +264,20 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       configparser.h mod_ssi_exprparser.h \
       sys-mmap.h sys-socket.h mod_cml.h mod_cml_funcs.h \
       splaytree.h proc_open.h http_resp.h mod_sql_vhost_core.h \
-      sys-files.h sys-process.h sys-strings.h http_resp_parser.h \
+      sys-files.h sys-process.h sys-strings.h  \
       iosocket.h array-static.h \
-      mod_proxy_core_address.h mod_proxy_core_backend.h \
-      mod_proxy_core_backlog.h mod_proxy_core.h  \
-      mod_proxy_core_pool.h mod_proxy_core_rewrites.h \
-      status_counter.h mod_proxy_backend_http.h \
-      mod_proxy_backend_fastcgi.h
+      mod_proxy_core_address.h \
+      mod_proxy_core_backend.h \
+      mod_proxy_core_backlog.h \
+      mod_proxy_core.h  \
+      mod_proxy_core_pool.h \
+      mod_proxy_core_rewrites.h \
+      mod_proxy_backend_http.h \
+      mod_proxy_backend_fastcgi.h \
+      status_counter.h \
+      http_req_parser.h \
+      http_req_range_parser.h \
+      http_resp_parser.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 
@@ -294,4 +304,10 @@ proc_open_CPPFLAGS= -DDEBUG_PROC_OPEN
 #ajp_SOURCES = ajp.c
 
 noinst_HEADERS   = $(hdr)
-EXTRA_DIST = mod_skeleton.c configparser.y mod_ssi_exprparser.y lempar.c http_resp_parser.y
+EXTRA_DIST = mod_skeleton.c \
+	     configparser.y \
+	     mod_ssi_exprparser.y \
+	     lempar.c  \
+	     http_resp_parser.y \
+	     http_req_parser.y \
+	     http_req_range_parser.y 
