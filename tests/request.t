@@ -96,12 +96,16 @@ $t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.0', 'HTTP-Status' => 404, '-HTTP
 ok($tf->handle_http($t) == 0, 'HEAD request, file-not-found, query-string');
 
 $t->{REQUEST}  = ( <<EOF
-GET / HTTP/1.1
+POST / HTTP/1.1
 Connection: close
+Content-Length: 4
+Host: www.example.org
 Expect: 100-continue
+
+1234
 EOF
  );
-$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.1', 'HTTP-Status' => 417, '-HTTP-Content' => ''} ];
+$t->{RESPONSE} = [ { 'HTTP-Protocol' => 'HTTP/1.1', 'HTTP-Status' => 100} ];
 ok($tf->handle_http($t) == 0, 'Continue, Expect');
 
 ## ranges
