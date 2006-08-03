@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 
 #include "inet_ntop_cache.h"
 #include "mod_proxy_core.h"
@@ -249,26 +250,27 @@ static int fcgi_header(FCGI_Header * header, unsigned char type, size_t request_
 }
 
 
-int proxy_fastcgi_get_request_chunk(server *srv, connection *con, plugin_data *p, proxy_session *sess, chunkqueue *cq) {
+int proxy_fastcgi_get_request_chunk(server *srv, connection *con, plugin_data *p, proxy_session *sess, chunkqueue *out) {
 	buffer *b, *packet;
 	size_t i;
 	FCGI_BeginRequestRecord beginRecord;
 	FCGI_Header header;
 	int request_id = 1;
 
-	b = chunkqueue_get_append_buffer(cq);
+	b = chunkqueue_get_append_buffer(out);
 	/* send FCGI_BEGIN_REQUEST */
 
-	fcgi_header(&(beginRecord.header), FCGI_BEGIN_REQUEST, request_id, sizeof(beginRecord.body), 0);
+	fcgi_header(&(beginRecord.header), FCGI_BEGIN_REQUEST, FCGI_NULL_REQUEST_ID, sizeof(beginRecord.body), 0);
 	beginRecord.body.roleB0 = FCGI_RESPONDER;
 	beginRecord.body.roleB1 = 0;
 	beginRecord.body.flags = 0;
 	memset(beginRecord.body.reserved, 0, sizeof(beginRecord.body.reserved));
 
 	buffer_copy_string_len(b, (const char *)&beginRecord, sizeof(beginRecord));
+	out->bytes_in += sizeof(beginRecord);
 
 	/* send FCGI_PARAMS */
-	b = chunkqueue_get_append_buffer(cq);
+	b = chunkqueue_get_append_buffer(out);
 	buffer_prepare_copy(b, 1024);
 
 	/* fill the sess->env_headers */
@@ -285,20 +287,17 @@ int proxy_fastcgi_get_request_chunk(server *srv, connection *con, plugin_data *p
 		fcgi_env_add(packet, CONST_BUF_LEN(ds->key), CONST_BUF_LEN(ds->value));
 	}
 
-	fcgi_header(&(header), FCGI_PARAMS, request_id, packet->used, 0);
+	fcgi_header(&(header), FCGI_PARAMS, FCGI_NULL_REQUEST_ID, packet->used, 0);
 	buffer_append_memory(b, (const char *)&header, sizeof(header));
 	buffer_append_memory(b, (const char *)packet->ptr, packet->used);
+	out->bytes_in += sizeof(header);
+	out->bytes_in += packet->used - 1;
 
 	buffer_free(packet);
 
-	fcgi_header(&(header), FCGI_PARAMS, request_id, 0, 0);
+	fcgi_header(&(header), FCGI_PARAMS, FCGI_NULL_REQUEST_ID, 0, 0);
 	buffer_append_memory(b, (const char *)&header, sizeof(header));
-
-	b = chunkqueue_get_append_buffer(cq);
-	/* terminate STDIN */
-	fcgi_header(&(header), FCGI_STDIN, request_id, 0, 0);
-	buffer_copy_memory(b, (const char *)&header, sizeof(header));
-	b->used++; /* add virtual \0 */
+	out->bytes_in += sizeof(header);
 
 	return 0;
 }
@@ -428,6 +427,111 @@ int proxy_fastcgi_stream_decoder(server *srv, proxy_session *sess, chunkqueue *r
 }
 
 /**
+ * transform the content-stream into a valid HTTP-content-stream
+ *
+ * as we don't apply chunked-encoding here, pass it on AS IS
+ */
+int proxy_fastcgi_stream_encoder(server *srv, proxy_session *sess, chunkqueue *in, chunkqueue *out) {
+	chunk *c;
+	buffer *b;
+	FCGI_Header header;
+
+	/* there is nothing that we have to send out anymore */
+	for (c = in->first; in->bytes_out < in->bytes_in; ) {
+		off_t weWant = in->bytes_in - in->bytes_out > FCGI_MAX_LENGTH ? FCGI_MAX_LENGTH : in->bytes_in - in->bytes_out;
+		off_t weHave = 0;
+
+		/* we announce toWrite octects
+		 * now take all the request_content chunk that we need to fill this request
+		 */
+		b = chunkqueue_get_append_buffer(out);
+		fcgi_header(&(header), FCGI_STDIN, FCGI_NULL_REQUEST_ID, weWant, 0);
+		buffer_copy_memory(b, (const char *)&header, sizeof(header) + 1);
+		out->bytes_in += sizeof(header);
+
+		switch (c->type) {
+		case FILE_CHUNK:
+			weHave = c->file.length - c->offset;
+
+			if (weHave > weWant) weHave = weWant;
+
+			chunkqueue_append_file(out, c->file.name, c->offset, weHave);
+
+			c->offset += weHave;
+			in->bytes_out += weHave;
+
+			out->bytes_in += weHave;
+
+			/* steal the tempfile
+			 *
+			 * This is tricky:
+			 * - we reference the tempfile from the in-queue several times
+			 *   if the chunk is larger than FCGI_MAX_LENGTH
+			 * - we can't simply cleanup the in-queue as soon as possible
+			 *   as it would remove the tempfiles
+			 * - the idea is to 'steal' the tempfiles and attach the is_temp flag to the last
+			 *   referencing chunk of the fastcgi-write-queue
+			 *
+			 */
+
+			if (c->offset == c->file.length) {
+				chunk *out_c;
+
+				out_c = out->last;
+
+				/* the last of the out-queue should be a FILE_CHUNK (we just created it)
+				 * and the incoming side should have given use a temp-file-chunk */
+				assert(out_c->type == FILE_CHUNK);
+				assert(c->file.is_temp == 1);
+
+				out_c->file.is_temp = 1;
+				c->file.is_temp = 0;
+
+				c = c->next;
+			}
+
+			break;
+		case MEM_CHUNK:
+			/* append to the buffer */
+			weHave = c->mem->used - 1 - c->offset;
+
+			if (weHave > weWant) weHave = weWant;
+
+			b = chunkqueue_get_append_buffer(out);
+			buffer_append_memory(b, c->mem->ptr + c->offset, weHave);
+			b->used++; /* add virtual \0 */
+
+			c->offset += weHave;
+			in->bytes_out += weHave;
+
+			out->bytes_in += weHave;
+
+			if (c->offset == c->mem->used - 1) {
+				c = c->next;
+			}
+
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (in->bytes_in == in->bytes_out && in->is_closed && !out->is_closed) {
+		/* send the closing packet */
+		b = chunkqueue_get_append_buffer(out);
+		/* terminate STDIN */
+		fcgi_header(&(header), FCGI_STDIN, FCGI_NULL_REQUEST_ID, 0, 0);
+		buffer_copy_memory(b, (const char *)&header, sizeof(header) + 1);
+
+		out->bytes_in += sizeof(header);
+		out->is_closed = 1;
+	}
+
+	return 0;
+
+}
+
+/**
  * parse the response header
  *
  * NOTE: this can be used by all backends as they all send a HTTP-Response a clean block
@@ -436,17 +540,17 @@ int proxy_fastcgi_stream_decoder(server *srv, proxy_session *sess, chunkqueue *r
 parse_status_t proxy_fastcgi_parse_response_header(server *srv, connection *con, plugin_data *p, proxy_session *sess, chunkqueue *cq) {
 	int have_content_length = 0;
 	size_t i;
-	off_t old_len = chunkqueue_length(cq);
+	off_t old_len;
 
 	http_response_reset(p->resp);
 
 	/* decode the whole packet stream */
 	do {
-		
-		old_len = chunkqueue_length(cq);
+		old_len = chunkqueue_length(sess->recv);
 		/* decode the packet */
 		switch (proxy_fastcgi_stream_decoder(srv, sess, cq, sess->recv)) {
 		case 0:
+			/* STDERR + STDOUT */
 			break;
 		case 1:
 			/* the FIN packet was catched, why ever */
@@ -454,7 +558,7 @@ parse_status_t proxy_fastcgi_parse_response_header(server *srv, connection *con,
 		case -1:
 			return PARSE_ERROR;
 		}
-	} while (chunkqueue_length(cq) != old_len);
+	} while (chunkqueue_length(sess->recv) == old_len);
 	
 	switch (http_response_parse_cq(sess->recv, p->resp)) {
 	case PARSE_ERROR:
@@ -540,12 +644,6 @@ parse_status_t proxy_fastcgi_parse_response_header(server *srv, connection *con,
 
 			array_insert_unique(con->response.headers, (data_unset *)ds);
 		}
-
-		/* does the client allow us to send chunked encoding ? */
-		if (con->request.http_version == HTTP_VERSION_1_1 &&
-		    !have_content_length) {
-			con->response.transfer_encoding = HTTP_TRANSFER_ENCODING_CHUNKED;
-   		}
 
 		break;
 	}

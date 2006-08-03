@@ -149,7 +149,65 @@ int proxy_http_stream_decoder(server *srv, proxy_session *sess, chunkqueue *raw,
 	return 0;
 }
 
+/**
+ * transform the content-stream into a valid HTTP-content-stream
+ *
+ * as we don't apply chunked-encoding here, pass it on AS IS
+ */
+int proxy_http_stream_encoder(server *srv, proxy_session *sess, chunkqueue *in, chunkqueue *out) {
+	chunk *c;
 
+	/* there is nothing that we have to send out anymore */
+	if (in->bytes_in == in->bytes_out && 
+	    in->is_closed) return 0;
+
+	for (c = in->first; in->bytes_out < in->bytes_in; c = c->next) {
+		buffer *b;
+		off_t weWant = in->bytes_in - in->bytes_out;
+		off_t weHave = 0;
+
+		/* we announce toWrite octects
+		 * now take all the request_content chunk that we need to fill this request
+		 */
+
+		switch (c->type) {
+		case FILE_CHUNK:
+			weHave = c->file.length - c->offset;
+
+			if (weHave > weWant) weHave = weWant;
+
+			chunkqueue_append_file(out, c->file.name, c->offset, weHave);
+
+			c->offset += weHave;
+			in->bytes_out += weHave;
+
+			out->bytes_in += weHave;
+
+			break;
+		case MEM_CHUNK:
+			/* append to the buffer */
+			weHave = c->mem->used - 1 - c->offset;
+
+			if (weHave > weWant) weHave = weWant;
+
+			b = chunkqueue_get_append_buffer(out);
+			buffer_append_memory(b, c->mem->ptr + c->offset, weHave);
+			b->used++; /* add virtual \0 */
+
+			c->offset += weHave;
+			in->bytes_out += weHave;
+
+			out->bytes_in += weHave;
+
+			break;
+		default:
+			break;
+		}
+	}
+
+	return 0;
+
+}
 /**
  * generate a HTTP/1.1 proxy request from the set of request-headers
  *
