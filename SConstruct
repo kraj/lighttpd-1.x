@@ -5,7 +5,7 @@ import string
 from stat import *
 
 package = 'lighttpd'
-version = '1.4.11'
+version = '1.5.0'
 
 def checkCHeaders(autoconf, hdrs):
 	p = re.compile('[^A-Z0-9]')
@@ -231,8 +231,9 @@ if 1:
 			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_SQLITE3_H', '-DHAVE_LIBSQLITE3' ], LIBSQLITE3 = 'sqlite3')
 
 	if env['with_lua']:
+		autoconf.CheckLibWithHeader('m', 'math.h', 'C')
 		if autoconf.CheckLibWithHeader('lua', 'lua.h', 'C'):
-			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_LUA_H', '-DHAVE_LIBLUA' ], LIBLUA = 'lua', LIBLUALIB = 'lualib')
+			autoconf.env.Append(CPPFLAGS = [ '-DHAVE_LUA_H', '-DHAVE_LIBLUA' ], LIBLUA = 'lua')
 		else:
 			print >> sys.stderr, "* error: --with_lua set but lua not found"
 	
