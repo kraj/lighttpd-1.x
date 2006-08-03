@@ -37,16 +37,19 @@
 NETWORK_BACKEND_READ(read) {
 	int toread;
 	buffer *b;
-	off_t r;
+	off_t r, start_bytes_in;
+	off_t max_read = 256 * 1024;
 
 	/**
 	 * a EAGAIN is a successful read if we already read something to the chunkqueue
 	 */
 	int read_something = 0;
 
-	/* use a chunk-size of 8k */
+	start_bytes_in = cq->bytes_in;
+	
+	/* use a chunk-size of 16k */
 	do {
-		toread = 8192;
+		toread = 16384;
 
 		b = chunkqueue_get_append_buffer(cq);
 
@@ -76,6 +79,9 @@ NETWORK_BACKEND_READ(read) {
 
 		b->used = r;
 		b->ptr[b->used++] = '\0';
+		cq->bytes_in += r;
+
+		if (cq->bytes_in - start_bytes_in > max_read) break;
 	} while (r == toread); 
 
 	return NETWORK_STATUS_SUCCESS;
