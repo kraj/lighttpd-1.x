@@ -3,13 +3,7 @@
 
 #include "array.h"
 #include "chunk.h"
-
-typedef enum {
-    PARSE_UNSET,
-    PARSE_SUCCESS,
-    PARSE_ERROR,
-    PARSE_NEED_MORE
-} parse_status_t;
+#include "http_parser.h"
 
 typedef struct {
     int protocol;   /* http/1.0, http/1.1 */
