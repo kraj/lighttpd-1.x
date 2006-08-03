@@ -270,7 +270,7 @@ URIHANDLER_FUNC(mod_uploadprogress_uri_handler) {
 	plugin_data *p = p_d;
 	size_t i;
 	data_string *ds;
-	buffer *b;
+	buffer *b, *tracking_id;
 	connection *post_con = NULL;
 
 	UNUSED(srv);
@@ -296,8 +296,8 @@ URIHANDLER_FUNC(mod_uploadprogress_uri_handler) {
 		}
 
 		if (b->used != 32 + 1) {
-			log_error_write(srv, __FILE__, __LINE__, "sd",
-					"len of progress-id != 32:", b->used - 1);
+			ERROR("the Progress-ID has to be 32 characters long, got %d characters", b->used - 1);
+
 			return HANDLER_GO_ON;
 		}
 
@@ -305,8 +305,8 @@ URIHANDLER_FUNC(mod_uploadprogress_uri_handler) {
 			char c = b->ptr[i];
 
 			if (!light_isxdigit(c)) {
-				log_error_write(srv, __FILE__, __LINE__, "sb",
-						"non-xdigit in progress-id:", b);
+				ERROR("only hex-digits are allowed (0-9 + a-f): (ascii: %d)", c);
+
 				return HANDLER_GO_ON;
 			}
 		}
@@ -322,26 +322,26 @@ URIHANDLER_FUNC(mod_uploadprogress_uri_handler) {
 		if (NULL == (ds = (data_string *)array_get_element(con->request.headers, "X-Progress-ID"))) {
 			if (!buffer_is_empty(con->uri.query)) {
 				/* perhaps the GET request is using the querystring to pass the X-Progress-ID */
-				b = con->uri.query;
+				tracking_id = con->uri.query;
 			} else {
 				return HANDLER_GO_ON;
 			}
 		} else {
-			b = ds->value;
+			tracking_id = ds->value;
 		}
 
-		if (b->used != 32 + 1) {
-			log_error_write(srv, __FILE__, __LINE__, "sd",
-					"len of progress-id != 32:", b->used - 1);
+		if (tracking_id->used != 32 + 1) {
+			ERROR("the Progress-ID has to be 32 characters long, got %d characters", tracking_id->used - 1);
+
 			return HANDLER_GO_ON;
 		}
 
-		for (i = 0; i < b->used - 1; i++) {
-			char c = b->ptr[i];
+		for (i = 0; i < tracking_id->used - 1; i++) {
+			char c = tracking_id->ptr[i];
 
 			if (!light_isxdigit(c)) {
-				log_error_write(srv, __FILE__, __LINE__, "sb",
-						"non-xdigit in progress-id:", b);
+				ERROR("only hex-digits are allowed (0-9 + a-f): (ascii: %d)", c);
+
 				return HANDLER_GO_ON;
 			}
 		}
@@ -349,43 +349,36 @@ URIHANDLER_FUNC(mod_uploadprogress_uri_handler) {
 		buffer_reset(con->physical.path);
 
 		con->file_started = 1;
-		con->file_finished = 1;
-
 		con->http_status = 200;
+		con->send->is_closed = 1;
+
+		/* send JSON content */
+
+		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/javascript"));
+
+		/* just an attempt the force the IE/proxies to NOT cache the request */
+		response_header_overwrite(srv, con, CONST_STR_LEN("Pragma"), CONST_STR_LEN("no-cache"));
+		response_header_overwrite(srv, con, CONST_STR_LEN("Expires"), CONST_STR_LEN("Thu, 19 Nov 1981 08:52:00 GMT"));
+		response_header_overwrite(srv, con, CONST_STR_LEN("Cache-Control"), 
+				CONST_STR_LEN("no-store, no-cache, must-revalidate, post-check=0, pre-check=0"));
+
+		b = chunkqueue_get_append_buffer(con->send);
 
 		/* get the connection */
-		if (NULL == (post_con = connection_map_get_connection(p->con_map, b))) {
-			log_error_write(srv, __FILE__, __LINE__, "sb",
-					"ID no known:", b);
-
-			b = chunkqueue_get_append_buffer(con->write_queue);
-
-			BUFFER_APPEND_STRING_CONST(b, "starting");
+		if (NULL == (post_con = connection_map_get_connection(p->con_map, tracking_id))) {
+			BUFFER_APPEND_STRING_CONST(b, "var upload = { 'status' : 'starting' }\r\n");
 
 			return HANDLER_FINISHED;
 		}
 
-		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/xml"));
-
-		/* just an attempt the force the IE/proxies to NOT cache the request ... doesn't help :( */
-		response_header_overwrite(srv, con, CONST_STR_LEN("Pragma"), CONST_STR_LEN("no-cache"));
-		response_header_overwrite(srv, con, CONST_STR_LEN("Expires"), CONST_STR_LEN("Thu, 19 Nov 1981 08:52:00 GMT"));
-		response_header_overwrite(srv, con, CONST_STR_LEN("Cache-Control"), CONST_STR_LEN("no-store, no-cache, must-revalidate, post-check=0, pre-check=0"));
-
-		b = chunkqueue_get_append_buffer(con->write_queue);
-
 		/* prepare XML */
-		BUFFER_COPY_STRING_CONST(b, "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>");
-		BUFFER_APPEND_STRING_CONST(b, "<upload>");
-		BUFFER_APPEND_STRING_CONST(b, "<size>");
-		buffer_append_off_t(b, post_con->request.content_length);
-		BUFFER_APPEND_STRING_CONST(b, "</size>");
-		BUFFER_APPEND_STRING_CONST(b, "<received>");
-		buffer_append_off_t(b, post_con->request_content_queue->bytes_in);
-		BUFFER_APPEND_STRING_CONST(b, "</received>");
-		BUFFER_APPEND_STRING_CONST(b, "</upload>");
-
-		log_error_write(srv, __FILE__, __LINE__, "sb", "...", b);
+		BUFFER_COPY_STRING_CONST(b, "var upload = { 'state' : ");
+		buffer_append_string(b, post_con->recv->is_closed ? "'done'" : "'uploading'");
+		BUFFER_APPEND_STRING_CONST(b, ", 'size' : ");
+		buffer_append_off_t(b, post_con->request.content_length == -1 ? 0 : post_con->request.content_length);
+		BUFFER_APPEND_STRING_CONST(b, ", 'received' : ");
+		buffer_append_off_t(b, post_con->recv->bytes_in);
+		BUFFER_APPEND_STRING_CONST(b, "};\r\n");
 
 		return HANDLER_FINISHED;
 	default:
@@ -416,8 +409,8 @@ int mod_uploadprogress_plugin_init(plugin *p) {
 	p->name        = buffer_init_string("uploadprogress");
 
 	p->init        = mod_uploadprogress_init;
-	p->handle_uri_clean  = mod_uploadprogress_uri_handler;
-	p->handle_request_done  = mod_uploadprogress_request_done;
+	p->handle_uri_clean = mod_uploadprogress_uri_handler;
+	p->handle_response_done  = mod_uploadprogress_request_done;
 	p->set_defaults  = mod_uploadprogress_set_defaults;
 	p->cleanup     = mod_uploadprogress_free;
 
