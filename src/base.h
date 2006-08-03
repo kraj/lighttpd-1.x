@@ -24,6 +24,7 @@
 #include "fdevent.h"
 #include "sys-socket.h"
 #include "splaytree.h"
+#include "http_req.h"
 
 #if defined HAVE_LIBSSL && defined HAVE_OPENSSL_SSL_H
 # define USE_OPENSSL
@@ -113,13 +114,6 @@ typedef struct {
 	short factor;
 } fcgi_connections;
 
-/* fcgi_response_header contains ... */
-#define HTTP_STATUS         BV(0)
-#define HTTP_CONNECTION     BV(1)
-#define HTTP_CONTENT_LENGTH BV(2)
-#define HTTP_DATE           BV(3)
-#define HTTP_LOCATION       BV(4)
-
 typedef struct {
 	/** HEADER */
 	/* the request-line */
@@ -131,19 +125,12 @@ typedef struct {
 	http_method_t  http_method;
 	http_version_t http_version;
 
-	buffer *request_line;
-
-	/* strings to the header */
 	buffer *http_host;
-	const char   *http_range;
-	const char   *http_content_type;
-	const char   *http_if_modified_since;
-	const char   *http_if_none_match;
 
 	array  *headers;
 
 	/* CONTENT */
-	size_t content_length; /* returned by strtoul() */
+	off_t   content_length; /* returned by strtoul() */
 
 	/* internal representation */
 	int     accept_encoding;
@@ -276,14 +263,15 @@ typedef struct {
 /* the order of the items should be the same as they are processed
  * read before write as we use this later */
 typedef enum {
-	CON_STATE_CONNECT,
-	CON_STATE_REQUEST_START,
-	CON_STATE_READ,
-	CON_STATE_REQUEST_END,
-	CON_STATE_READ_POST,
-	CON_STATE_HANDLE_REQUEST,
-	CON_STATE_RESPONSE_START,
-	CON_STATE_WRITE,
+	CON_STATE_CONNECT,         /** we are wait for a connect */
+	CON_STATE_REQUEST_START,   /** after the connect, the request is initialized, keep-alive starts here again */
+	CON_STATE_READ_REQUEST_HEADER,   /** loop in the read-request-header until the full header is received */
+	CON_STATE_VALIDATE_REQUEST_HEADER,   /** validate the request-header */
+	CON_STATE_HANDLE_REQUEST_HEADER, /** find a handler for the request */
+	CON_STATE_READ_REQUEST_CONTENT,  /** forward the request content to the handler */
+	CON_STATE_HANDLE_RESPONSE_HEADER, /** the backend bounces the response back to the client */
+	CON_STATE_WRITE_RESPONSE_HEADER,
+	CON_STATE_WRITE_RESPONSE_CONTENT,
 	CON_STATE_RESPONSE_END,
 	CON_STATE_ERROR,
 	CON_STATE_CLOSE
@@ -324,14 +312,15 @@ typedef struct {
 	int is_readable;
 	int is_writable;
 
-	int     keep_alive;           /* only request.c can enable it, all others just disable */
+	int     keep_alive;          /* only request.c can enable it, all others just disable */
 
 	int file_started;
-	int file_finished;
 
-	chunkqueue *write_queue;      /* a large queue for low-level write ( HTTP response ) [ file, mem ] */
-	chunkqueue *read_queue;       /* a small queue for low-level read ( HTTP request ) [ mem ] */
-	chunkqueue *request_content_queue; /* takes request-content into tempfile if necessary [ tempfile, mem ]*/
+	chunkqueue *send;            /* the response-content without encoding */
+	chunkqueue *recv;            /* the request-content, without encoding */
+
+	chunkqueue *send_raw;        /* the full response (HTTP-Header + compression + chunking ) */
+	chunkqueue *recv_raw;        /* the full request (HTTP-Header + chunking ) */
 
 	int traffic_limit_reached;
 
@@ -347,8 +336,8 @@ typedef struct {
 
 	/* request */
 	buffer *parse_request;
-	unsigned int parsed_response; /* bitfield which contains the important header-fields of the parsed response header */
 
+	http_req *http_req;
 	request  request;
 	request_uri uri;
 	physical physical;
