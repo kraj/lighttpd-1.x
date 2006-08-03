@@ -15,7 +15,6 @@
 #include "log.h"
 #include "connections.h"
 #include "joblist.h"
-#include "http_chunk.h"
 #include "fdevent.h"
 
 #include "plugin.h"
@@ -329,7 +328,7 @@ static int cgi_demux_response(server *srv, connection *con, plugin_data *p) {
 
 	/* copy the content to the next cq */
 	for (c = sess->rb->first; c; c = c->next) {
-		http_chunk_append_mem(srv, con, c->mem->ptr + c->offset, c->mem->used - c->offset);
+		chunkqueue_append_mem(con->send, c->mem->ptr + c->offset, c->mem->used - c->offset);
 
 		c->offset = c->mem->used - 1;
 	}
