@@ -118,7 +118,7 @@ headers(HDRS) ::= header(HDR). {
     array_insert_unique(HDRS, (data_unset *)HDR);
 }
 header(HDR) ::= STRING(A) COLON STRING(B) CRLF. {
-    HDR = data_string_init();
+    HDR = data_response_init();
     
     buffer_copy_string_buffer(HDR->key, A);
     buffer_copy_string_buffer(HDR->value, B);    
