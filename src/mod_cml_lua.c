@@ -379,7 +379,7 @@ int cache_parse_lua(server *srv, connection *con, plugin_data *p, buffer *fn) {
 						break;
 					}
 				} else {
-					chunkqueue_append_file(con->write_queue, b, 0, sce->st.st_size);
+					chunkqueue_append_file(con->send, b, 0, sce->st.st_size);
 					if (sce->st.st_mtime > mtime) mtime = sce->st.st_mtime;
 				}
 			} else {
@@ -429,11 +429,11 @@ int cache_parse_lua(server *srv, connection *con, plugin_data *p, buffer *fn) {
 				/* ok, the client already has our content,
 				 * no need to send it again */
 
-				chunkqueue_reset(con->write_queue);
+				chunkqueue_reset(con->send);
 				ret = 0; /* cache-hit */
 			}
 		} else {
-			chunkqueue_reset(con->write_queue);
+			chunkqueue_reset(con->send);
 		}
 	}
 
@@ -445,7 +445,7 @@ int cache_parse_lua(server *srv, connection *con, plugin_data *p, buffer *fn) {
 		buffer_copy_string_buffer(con->physical.path, p->basedir);
 		buffer_append_string_buffer(con->physical.path, p->trigger_handler);
 
-		chunkqueue_reset(con->write_queue);
+		chunkqueue_reset(con->send);
 	}
 
 error:
