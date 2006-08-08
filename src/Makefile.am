@@ -17,23 +17,35 @@ else
 configparser.y: lemon
 mod_ssi_exprparser.y: lemon
 http_resp_parser.y: lemon
+http_req_parser.y: lemon
+http_req_range_parser.y: lemon
 
 configparser.c configparser.h: configparser.y
 	rm -f configparser.h
-	$(LEMON) -q $(srcdir)/$< $(srcdir)/lempar.c
+	$(LEMON) -q $(srcdir)/configparser.y $(srcdir)/lempar.c
 
 http_resp_parser.c http_resp_parser.h: http_resp_parser.y
 	rm -f http_resp_parser.h
-	$(LEMON) -q $(srcdir)/$< $(srcdir)/lempar.c
+	$(LEMON) -q $(srcdir)/http_resp_parser.y $(srcdir)/lempar.c
+
+http_req_parser.c http_req_parser.h: http_req_parser.y
+	rm -f http_req_parser.h
+	$(LEMON) -q $(srcdir)/http_req_parser.y $(srcdir)/lempar.c
+
+http_req_range_parser.c http_req_range_parser.h: http_req_range_parser.y
+	rm -f http_req_parser.h
+	$(LEMON) -q $(srcdir)/http_req_range_parser.y $(srcdir)/lempar.c
 
 mod_ssi_exprparser.c mod_ssi_exprparser.h: mod_ssi_exprparser.y 
 	rm -f mod_ssi_exprparser.h
-	$(LEMON) -q $(srcdir)/$< $(srcdir)/lempar.c
+	$(LEMON) -q $(srcdir)/mod_ssi_exprparser.y $(srcdir)/lempar.c
 endif
 
 configfile.c: configparser.h
 mod_ssi_expr.c: mod_ssi_exprparser.h
 http_resp.c: http_resp_parser.h
+http_req.c: http_req_parser.h
+http_req_range.c: http_req_range_parser.h
 
 common_src=buffer.c log.c \
       keyvalue.c chunk.c  \
@@ -263,7 +275,7 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       mod_ssi.h mod_ssi_expr.h inet_ntop_cache.h \
       configparser.h mod_ssi_exprparser.h \
       sys-mmap.h sys-socket.h mod_cml.h mod_cml_funcs.h \
-      splaytree.h proc_open.h http_resp.h mod_sql_vhost_core.h \
+      splaytree.h proc_open.h mod_sql_vhost_core.h \
       sys-files.h sys-process.h sys-strings.h  \
       iosocket.h array-static.h \
       mod_proxy_core_address.h \
@@ -275,9 +287,13 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       mod_proxy_backend_http.h \
       mod_proxy_backend_fastcgi.h \
       status_counter.h \
+      http_req.h \
       http_req_parser.h \
+      http_req_range.h \
       http_req_range_parser.h \
-      http_resp_parser.h
+      http_resp.h \
+      http_resp_parser.h \
+      http_parser.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 
