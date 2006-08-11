@@ -96,6 +96,11 @@ mod_flv_streaming_la_SOURCES = mod_flv_streaming.c
 mod_flv_streaming_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
 mod_flv_streaming_la_LIBADD = $(common_libadd)
 
+lib_LTLIBRARIES += mod_uploadprogress.la
+mod_uploadprogress_la_SOURCES = mod_uploadprogress.c 
+mod_uploadprogress_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
+mod_uploadprogress_la_LIBADD = $(common_libadd)
+
 lib_LTLIBRARIES += mod_evasive.la
 mod_evasive_la_SOURCES = mod_evasive.c
 mod_evasive_la_LDFLAGS = -module -export-dynamic -avoid-version -no-undefined
