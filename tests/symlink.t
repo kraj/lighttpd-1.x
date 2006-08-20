@@ -13,7 +13,7 @@ use LightyTest;
 
 my $tf = LightyTest->new();
 my $t;
-my $docroot = "$ENV{'SRCDIR'}/tmp/lighttpd/servers/www.example.org/pages/";
+my $docroot = "$tf->{'SRCDIR'}/tmp/lighttpd/servers/www.example.org/pages/";
 
 sub init_testbed {
     return 0 unless eval { symlink("",""); 1 };
