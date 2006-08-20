@@ -82,7 +82,8 @@ typedef enum { T_CONFIG_UNSET,
 		T_CONFIG_BOOLEAN,
 		T_CONFIG_ARRAY,
 		T_CONFIG_LOCAL,
-		T_CONFIG_DEPRECATED
+		T_CONFIG_DEPRECATED,
+		T_CONFIG_UNSUPPORTED
 } config_values_type_t;
 
 typedef enum { T_CONFIG_SCOPE_UNSET,
@@ -541,7 +542,8 @@ typedef struct server {
 
 	server_config  srvconf;
 
-	int config_deprecated;
+	short unsigned config_deprecated;
+	short unsigned config_unsupported;
 
 	connections *conns;
 	connections *joblist;

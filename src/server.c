@@ -1238,10 +1238,17 @@ int main (int argc, char **argv, char **envp) {
 		}
 	}
 
+	if (srv->config_unsupported) {
+		log_error_write(srv, __FILE__, __LINE__, "s", 
+				"Configuration contains unsupported keys. Going down.");
+	}
+
 	if (srv->config_deprecated) {
 		log_error_write(srv, __FILE__, __LINE__, "s",
 				"Configuration contains deprecated keys. Going down.");
+	}
 
+	if (srv->config_unsupported || srv->config_deprecated) {
 		plugins_free(srv);
 		network_close(srv);
 		server_free(srv);
