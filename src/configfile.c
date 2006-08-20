@@ -58,6 +58,11 @@ static int config_insert(server *srv) {
 		{ "server.max-fds",              NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_SERVER },       /* 23 */
 #ifdef HAVE_LSTAT
 		{ "server.follow-symlink",       NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION }, /* 24 */
+#else
+		{ "server.follow-symlink",
+		  "Your system lacks lstat(). We cant differ symlinks from files."
+		  "Please remove server.follow-symlinks from your config.",
+		  T_CONFIG_UNSUPPORTED, T_CONFIG_SCOPE_UNSET }, /* 24 */
 #endif
 		{ "server.kbytes-per-second",    NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },   /* 25 */
 		{ "connection.kbytes-per-second", NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },  /* 26 */
@@ -181,9 +186,6 @@ static int config_insert(server *srv) {
 		cv[22].destination = s->error_handler;
 #ifdef HAVE_LSTAT
 		cv[24].destination = &(s->follow_symlink);
-#else
-		log_error_write(srv, __FILE__, __LINE__, "s",
-				"server.follow-symlink can't be check was you system is not aware of the lstat() function.  This either means your systems doesn't support symlinks or we can't check for it.");
 #endif
 		/* 23 -> max-fds */
 		cv[25].destination = &(s->global_kbytes_per_second);
