@@ -516,14 +516,12 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 	sce->is_symlink = 0;
 	struct stat lst;
 	if (stat_cache_lstat(srv, name->ptr, &lst)  == 0) {
-		if (S_ISLNK(lst.st_mode)) {
 #ifdef DEBUG_STAT_CACHE
 			log_error_write(srv, __FILE__, __LINE__, "sb",
 					"found symlink", name);
 #endif
 			sce->is_symlink = 1;
 		}
-	}
 
 	/*
 	 * we assume "/" can not be symlink, so
@@ -535,6 +533,12 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 		dname = strndup(name->ptr, name->used);
 		while ((s_cur = strrchr(dname,'/'))) {
 			*s_cur = '\0';
+			if (dname == s_cur) {
+#ifdef DEBUG_STAT_CACHE
+				log_error_write(srv, __FILE__, __LINE__, "s", "reached /");
+#endif
+				break;
+			}
 #ifdef DEBUG_STAT_CACHE
 			log_error_write(srv, __FILE__, __LINE__, "sss",
 					"checking if", dname, "is a symlink");
