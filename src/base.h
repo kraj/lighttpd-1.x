@@ -176,6 +176,10 @@ typedef struct {
 
 	time_t stat_ts;
 
+#ifdef HAVE_LSTAT
+	char is_symlink;
+#endif
+
 #ifdef HAVE_FAM_H
 	int    dir_version;
 	int    dir_ndx;

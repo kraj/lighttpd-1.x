@@ -473,6 +473,20 @@ handler_t handle_get_backend(server *srv, connection *con) {
 				log_error_write(srv, __FILE__, __LINE__,  "sb", "Path         :", con->physical.path);
 			}
 
+#ifdef HAVE_LSTAT
+			if ((sce->is_symlink != 0) && !con->conf.follow_symlink) {
+				con->http_status = 403;
+
+				if (con->conf.log_request_handling) {
+					log_error_write(srv, __FILE__, __LINE__,  "s",  "-- access denied due symlink restriction");
+					log_error_write(srv, __FILE__, __LINE__,  "sb", "Path         :", con->physical.path);
+				}
+
+				buffer_reset(con->physical.path);
+				return HANDLER_FINISHED;
+			};
+#endif
+
 			if (S_ISDIR(sce->st.st_mode)) {
 				if (con->uri.path->ptr[con->uri.path->used - 2] != '/') {
 					/* redirect to .../ */
@@ -481,7 +495,11 @@ handler_t handle_get_backend(server *srv, connection *con) {
 
 					return HANDLER_FINISHED;
 				}
+#ifdef HAVE_LSTAT
+			} else if (!S_ISREG(sce->st.st_mode) && !sce->is_symlink) {
+#else
 			} else if (!S_ISREG(sce->st.st_mode)) {
+#endif
 				/* any special handling of non-reg files ?*/
 
 
