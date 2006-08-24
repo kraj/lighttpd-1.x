@@ -412,7 +412,9 @@ int proxy_fastcgi_stream_decoder(server *srv, proxy_session *sess, chunkqueue *r
 		buffer_free(packet.b);
 		return 0;
 	case FCGI_STDERR:
-		TRACE("(fastcgi-stderr) %s", BUF_STR(packet.b));
+		if (!buffer_is_empty(packet.b)) {
+			TRACE("(fastcgi-stderr) %s", BUF_STR(packet.b));
+		}
 		buffer_free(packet.b);
 		return 0;
 	case FCGI_END_REQUEST:
