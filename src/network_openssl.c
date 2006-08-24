@@ -30,10 +30,12 @@ NETWORK_BACKEND_READ(openssl) {
 	buffer *b;
 	off_t len;
 	int read_something = 0;
+	off_t max_read = 256 * 1024;
 
+	off_t start_bytes_in = cq->bytes_in;
 	do {
 		b = chunkqueue_get_append_buffer(cq);
-		buffer_prepare_copy(b, 8192);
+		buffer_prepare_copy(b, 8192 + 12); /* ssl-chunk-size is 8kb */
 		len = SSL_read(sock->ssl, b->ptr, b->size - 1);
 
 		if (len < 0) {
@@ -81,15 +83,20 @@ NETWORK_BACKEND_READ(openssl) {
 					/* get all errors from the error-queue */
 					ERROR("ssl-errors: %s", ERR_error_string(ssl_err, NULL));
 				}
-				break;
+
+				return NETWORK_STATUS_FATAL_ERROR;
 			}
 		} else if (len == 0) {
+			return NETWORK_STATUS_FATAL_ERROR;
 		} else {
 			b->used += len;
 			b->ptr[b->used++] = '\0';
 
 			read_something = 1;
+			cq->bytes_in += len;
 		}
+
+		if (cq->bytes_in - start_bytes_in > max_read) return NETWORK_STATUS_SUCCESS;
 	} while (1);
 
 	return NETWORK_STATUS_FATAL_ERROR;
