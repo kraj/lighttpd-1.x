@@ -366,19 +366,19 @@ URIHANDLER_FUNC(mod_uploadprogress_uri_handler) {
 
 		/* get the connection */
 		if (NULL == (post_con = connection_map_get_connection(p->con_map, tracking_id))) {
-			BUFFER_APPEND_STRING_CONST(b, "{ 'status' : 'starting' }\r\n");
+			BUFFER_APPEND_STRING_CONST(b, "new Object({ 'status' : 'starting' })\r\n");
 
 			return HANDLER_FINISHED;
 		}
 
 		/* prepare XML */
-		BUFFER_COPY_STRING_CONST(b, "{ 'state' : ");
+		BUFFER_COPY_STRING_CONST(b, "new Object({ 'state' : ");
 		buffer_append_string(b, post_con->recv->is_closed ? "'done'" : "'uploading'");
 		BUFFER_APPEND_STRING_CONST(b, ", 'size' : ");
 		buffer_append_off_t(b, post_con->request.content_length == -1 ? 0 : post_con->request.content_length);
 		BUFFER_APPEND_STRING_CONST(b, ", 'received' : ");
 		buffer_append_off_t(b, post_con->recv->bytes_in);
-		BUFFER_APPEND_STRING_CONST(b, "};\r\n");
+		BUFFER_APPEND_STRING_CONST(b, "})\r\n");
 
 		return HANDLER_FINISHED;
 	default:
