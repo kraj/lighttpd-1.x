@@ -604,9 +604,10 @@ handler_t connection_handle_read_request_header(server *srv, connection *con)  {
 	/* let's see if we need more data later */
 	fdevent_event_del(srv->ev, con->sock);
 
+	con->read_idle_ts = srv->cur_ts;  /* start a read-call() */
 
 	/* read from the network */ 
-	switch (srv->network_backend_read(srv, con, con->sock, con->recv_raw)) {
+	switch (network_read(srv, con, con->sock, con->recv_raw)) {
 	case NETWORK_STATUS_SUCCESS:
 		/* we read everything from the socket, do we have a full header ? */
 
@@ -661,22 +662,21 @@ handler_t connection_handle_read_request_content(server *srv, connection *con)  
 	/* let's see if we need more data later */
 	fdevent_event_del(srv->ev, con->sock);
 
-	if (con->request.content_length == -1) return HANDLER_GO_ON;
+	con->read_idle_ts = srv->cur_ts;  /* start a read-call() */
 
-	TRACE("%s", __FUNCTION__);
+	if (con->request.content_length == -1) return HANDLER_GO_ON;
 
 	/* if the content was short enough, it might be read already */
 	if (in->first &&
 	    chunkqueue_length(in) - in->first->offset > 0) {
 
-		/* relax */
-		TRACE("%s", "we still have content in the first chunk");
+		/*  
+		 * looks like the request-header also had some content for us
+		 */
 		
 	} else {
-
-		TRACE("%s", "have to read data");
 		/* read from the network */ 
-		switch (srv->network_backend_read(srv, con, con->sock, in)) {
+		switch (network_read(srv, con, con->sock, in)) {
 		case NETWORK_STATUS_SUCCESS:
 			/* we have data */
 			break;
@@ -695,8 +695,6 @@ handler_t connection_handle_read_request_content(server *srv, connection *con)  
 		}
 	}
 
-	TRACE("%lld - %lld", out->bytes_in, con->request.content_length);
-	
 	/* how much data do we want to extract ? */
 	for (c = in->first; c && (out->bytes_in != con->request.content_length); c = c->next) {
 		off_t weWant, weHave, toRead;
@@ -804,7 +802,6 @@ handler_t connection_handle_read_request_content(server *srv, connection *con)  
 		in->bytes_out += toRead;
 	}
 
-	TRACE("%lld - %lld", out->bytes_in, con->request.content_length);
 	if (out->bytes_in < con->request.content_length) {
 		/* we have to read more content */
 		fdevent_event_add(srv->ev, con->sock, FDEVENT_IN);
@@ -917,6 +914,7 @@ connection *connection_accept(server *srv, server_socket *srv_socket) {
 			connection_close(srv, con);
 			return NULL;
 		}
+			
 #ifdef USE_OPENSSL
 		/* connect FD to SSL */
 		if (srv_socket->is_ssl) {
@@ -1049,8 +1047,6 @@ int connection_state_machine(server *srv, connection *con) {
 	while (done == 0) {
 		size_t ostate = con->state;
 		int b;
-
-		TRACE("state: %s", connection_get_state(con->state));
 
 		switch (con->state) {
 		case CON_STATE_CONNECT:
@@ -1286,7 +1282,6 @@ int connection_state_machine(server *srv, connection *con) {
 			 * they might build the connection now or stream the content to the upstream server
 			 * */
 
-			TRACE("%s", "call the send-req-cont backend");
 			switch(r = plugins_call_handle_send_request_content(srv, con)) {
 			case HANDLER_GO_ON:
 				/* everything was forwarded */
@@ -1310,7 +1305,6 @@ int connection_state_machine(server *srv, connection *con) {
 			if (con->recv->is_closed && 
 			    con->recv->bytes_in == con->recv->bytes_out) {
 				/* everything we read is sent */
-				TRACE("%s", "everything is forwarded");
 				connection_set_state(srv, con, CON_STATE_HANDLE_RESPONSE_HEADER);
 			}
 

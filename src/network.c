@@ -632,17 +632,17 @@ int network_register_fdevents(server *srv) {
 	return 0;
 }
 
-network_status_t network_read_chunkqueue(server *srv, connection *con, chunkqueue *cq) {
+network_status_t network_read(server *srv, connection *con, iosocket *sock, chunkqueue *cq) {
 	server_socket *srv_socket = con->srv_socket;
 
    	if (srv_socket->is_ssl) {
 #ifdef USE_OPENSSL
-		return srv->network_ssl_backend_read(srv, con, con->sock, cq);
+		return srv->network_ssl_backend_read(srv, con, sock, cq);
 #else
 		return NETWORK_STATUS_FATAL_ERROR;
 #endif
 	} else {
-		return srv->network_backend_read(srv, con, con->sock, cq);
+		return srv->network_backend_read(srv, con, sock, cq);
 	}
 }
 
