@@ -33,7 +33,7 @@ http_req_parser.c http_req_parser.h: http_req_parser.y
 	$(LEMON) -q $(srcdir)/http_req_parser.y $(srcdir)/lempar.c
 
 http_req_range_parser.c http_req_range_parser.h: http_req_range_parser.y
-	rm -f http_req_parser.h
+	rm -f http_req_range_parser.h
 	$(LEMON) -q $(srcdir)/http_req_range_parser.y $(srcdir)/lempar.c
 
 mod_ssi_exprparser.c mod_ssi_exprparser.h: mod_ssi_exprparser.y 
