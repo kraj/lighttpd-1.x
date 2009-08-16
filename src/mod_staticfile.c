@@ -249,7 +249,7 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 		for (r = ranges; r; r = r->next) {
 			/* write boundary-header */
 
-			b = chunkqueue_get_append_buffer(con->send);
+			b = buffer_init();
 
 			buffer_copy_string_len(b, CONST_STR_LEN("\r\n--"));
 			buffer_append_string(b, boundary);
@@ -268,8 +268,10 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 			/* write END-OF-HEADER */
 			buffer_append_string_len(b, CONST_STR_LEN("\r\n\r\n"));
 
-			con->response.content_length += b->used - 1;
+			chunkqueue_append_buffer(con->send, b);
 			con->send->bytes_in += b->used - 1;
+
+			con->response.content_length += b->used - 1;
 
 			chunkqueue_append_file(con->send, con->physical.path, r->start, r->end - r->start + 1);
 			con->response.content_length += r->end - r->start + 1;
@@ -277,14 +279,16 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 		}
 
 		/* add boundary end */
-		b = chunkqueue_get_append_buffer(con->send);
+		b = buffer_init();
 
 		buffer_copy_string_len(b, "\r\n--", 4);
 		buffer_append_string(b, boundary);
 		buffer_append_string_len(b, "--\r\n", 4);
 
-		con->response.content_length += b->used - 1;
+		chunkqueue_append_buffer(con->send, b);
 		con->send->bytes_in += b->used - 1;
+
+		con->response.content_length += b->used - 1;
 
 		/* set header-fields */
 

@@ -120,7 +120,6 @@ static handler_t proxy_http_parse_chunked_stream(server *srv, proxy_session *ses
 	off_t we_have = 0, we_want = 0;
 	off_t chunk_len = 0;
 	off_t offset = 0;
-	buffer *b;
 	chunk *c;
 	char ch = '\0';
 	int finished = 0;
@@ -183,8 +182,7 @@ static handler_t proxy_http_parse_chunked_stream(server *srv, proxy_session *ses
 				chunkqueue_steal_chunk(out, c);
 				/* c is an empty chunk now */
 			} else {
-				b = chunkqueue_get_append_buffer(out);
-				buffer_copy_string_len(b, c->mem->ptr + c->offset, we_want);
+				chunkqueue_append_mem(out, c->mem->ptr + c->offset, we_want);
 				c->offset += we_want;
 			}
 
@@ -233,7 +231,7 @@ static handler_t proxy_http_parse_chunked_stream(server *srv, proxy_session *ses
 PROXY_STREAM_DECODER_FUNC(proxy_http_stream_decoder) {
 	proxy_connection *proxy_con = sess->proxy_con;
 	chunkqueue *in = proxy_con->recv;
-	chunk *c;
+	off_t we_have;
 
 	if (in->first == NULL) {
 		if ((sess->content_length >= 0 && sess->bytes_read == sess->content_length) || in->is_closed) {
@@ -258,30 +256,10 @@ PROXY_STREAM_DECODER_FUNC(proxy_http_stream_decoder) {
 		/* no chunked encoding, ok, perhaps a content-length ? */
 
 		chunkqueue_remove_finished_chunks(in);
-		for (c = in->first; c; c = c->next) {
-			buffer *b;
-
-			if (c->mem->used == 0) continue;
-
-			out->bytes_in += c->mem->used - c->offset - 1;
-			in->bytes_out += c->mem->used - c->offset - 1;
-
-			sess->bytes_read += c->mem->used - c->offset - 1;
-
-			if (c->offset == 0) {
-				/* we are copying the whole buffer, just steal it */
-
-				chunkqueue_steal_chunk(out, c);
-			} else {
-				b = chunkqueue_get_append_buffer(out);
-				buffer_copy_string_len(b, c->mem->ptr + c->offset, c->mem->used - c->offset - 1);
-				c->offset = c->mem->used - 1; /* marks is read */
-			}
-
-			if (sess->bytes_read == sess->content_length) {
-				break;
-			}
-		}
+		we_have = chunkqueue_steal_len(out, in, sess->content_length - sess->bytes_read);
+		out->bytes_in += we_have;
+		in->bytes_out += we_have;
+		sess->bytes_read += we_have;
 
 		if (in->is_closed || sess->bytes_read == sess->content_length) {
 			sess->is_request_finished = 1;
@@ -334,7 +312,7 @@ PROXY_STREAM_ENCODER_FUNC(proxy_http_encode_request_headers) {
 	UNUSED(srv);
 	UNUSED(in);
 
-	b = chunkqueue_get_append_buffer(out);
+	b = buffer_init();
 
 	/* request line */
 	buffer_copy_string(b, get_http_method_name(con->request.http_method));
@@ -362,6 +340,7 @@ PROXY_STREAM_ENCODER_FUNC(proxy_http_encode_request_headers) {
 
 	buffer_append_string_len(b, CONST_STR_LEN("\r\n"));
 
+	chunkqueue_append_buffer(out, b);
 	out->bytes_in += b->used - 1;
 
 	return HANDLER_FINISHED;

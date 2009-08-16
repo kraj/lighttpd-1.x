@@ -284,25 +284,27 @@ PROXY_STREAM_ENCODER_FUNC(proxy_scgi_encode_request_headers) {
 	UNUSED(in);
 
 	/* get buffer to write headers length into */
-	len_buf = chunkqueue_get_append_buffer(out);
+	len_buf = buffer_init();
 
 	/* write SCGI request headers */
-	env_headers = chunkqueue_get_append_buffer(out);
+	env_headers = buffer_init();
 	buffer_prepare_copy(env_headers, 1024);
 	proxy_scgi_get_env_scgi(srv, sess, env_headers);
 	proxy_scgi_get_env_request(srv, sess, env_headers);
 	headers_len = env_headers->used;
-	out->bytes_in += headers_len;
-
 	/* append "," after headers */
 	buffer_append_memory(env_headers, CONST_STR_LEN(","));
 	env_headers->used++; /* this is needed because the network will only write "used - 1" bytes */
-	out->bytes_in++;
 
 	/* prepend [headers_len]: */
 	buffer_append_long(len_buf, headers_len);
 	buffer_append_string_len(len_buf, CONST_STR_LEN(":"));
+
+	chunkqueue_append_buffer(out, len_buf);
 	out->bytes_in += len_buf->used - 1;
+
+	chunkqueue_append_buffer(out, env_headers);
+	out->bytes_in += env_headers->used - 1;
 
 	return HANDLER_FINISHED;
 }
@@ -334,7 +336,7 @@ static handler_t proxy_scgi_parse_response_headers(proxy_session *sess, chunkque
 PROXY_STREAM_DECODER_FUNC(proxy_scgi_stream_decoder) {
 	proxy_connection *proxy_con = sess->proxy_con;
 	chunkqueue *in = proxy_con->recv;
-	chunk *c;
+	off_t we_have;
 
 	UNUSED(srv);
 
@@ -356,30 +358,10 @@ PROXY_STREAM_DECODER_FUNC(proxy_scgi_stream_decoder) {
 	/* no chunked encoding, ok, perhaps a content-length ? */
 
 	chunkqueue_remove_finished_chunks(in);
-	for (c = in->first; c; c = c->next) {
-		buffer *b;
-
-		if (c->mem->used == 0) continue;
-
-		out->bytes_in += c->mem->used - c->offset - 1;
-		in->bytes_out += c->mem->used - c->offset - 1;
-
-		sess->bytes_read += c->mem->used - c->offset - 1;
-
-		if (c->offset == 0) {
-			/* we are copying the whole buffer, just steal it */
-
-			chunkqueue_steal_chunk(out, c);
-		} else {
-			b = chunkqueue_get_append_buffer(out);
-			buffer_copy_string_len(b, c->mem->ptr + c->offset, c->mem->used - c->offset - 1);
-			c->offset = c->mem->used - 1; /* marks is read */
-		}
-
-		if (sess->bytes_read == sess->content_length) {
-			break;
-		}
-	}
+	we_have = chunkqueue_steal_len(out, in, sess->content_length - sess->bytes_read);
+	out->bytes_in += we_have;
+	in->bytes_out += we_have;
+	sess->bytes_read += we_have;
 
 	if (in->is_closed || sess->bytes_read == sess->content_length) {
 		sess->is_request_finished = 1;

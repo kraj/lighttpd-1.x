@@ -215,7 +215,7 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 
 	int days, hours, mins, seconds;
 
-	b = chunkqueue_get_append_buffer(con->send);
+	b = buffer_init();
 
 	buffer_copy_string_len(b, CONST_STR_LEN(
 				 "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>\n"
@@ -550,6 +550,8 @@ static handler_t mod_status_handle_server_status_html(server *srv, connection *c
 		      ));
 
 	response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/html"));
+
+	chunkqueue_append_buffer(con->send, b);
 	con->send->bytes_in += b->used-1;
 
 	return 0;
@@ -565,7 +567,7 @@ static handler_t mod_status_handle_server_status_text(server *srv, connection *c
 	unsigned int k;
 	unsigned int l;
 
-	b = chunkqueue_get_append_buffer(con->send);
+	b = buffer_init();
 
 	/* output total number of requests */
 	buffer_append_string_len(b, CONST_STR_LEN("Total Accesses: "));
@@ -612,18 +614,20 @@ static handler_t mod_status_handle_server_status_text(server *srv, connection *c
 	/* output scoreboard */
 	buffer_append_string_len(b, CONST_STR_LEN("Scoreboard: "));
 	for (k = 0; k < srv->conns->used; k++) {
-        	connection *c = srv->conns->ptr[k];
-        	const char *state = connection_get_short_state(c->state);
-	        buffer_append_string_len(b, state, 1);
-        }
-        for (l = 0; l < srv->conns->size - srv->conns->used; l++) {
-	        buffer_append_string_len(b, CONST_STR_LEN("_"));
+		connection *c = srv->conns->ptr[k];
+		const char *state = connection_get_short_state(c->state);
+		buffer_append_string_len(b, state, 1);
+	}
+	for (l = 0; l < srv->conns->size - srv->conns->used; l++) {
+		buffer_append_string_len(b, CONST_STR_LEN("_"));
 	}
 	buffer_append_string_len(b, CONST_STR_LEN("\n"));
 
 	/* set text/plain output */
 
 	response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/plain"));
+
+	chunkqueue_append_buffer(con->send, b);
 	con->send->bytes_in += b->used-1;
 
 	return 0;
@@ -644,7 +648,7 @@ static handler_t mod_status_handle_server_statistics(server *srv, connection *co
 		return HANDLER_FINISHED;
 	}
 
-	b = chunkqueue_get_append_buffer(con->send);
+	b = buffer_init();
 
 	for (i = 0; i < st->used; i++) {
 		size_t ndx = st->sorted[i];
@@ -658,6 +662,7 @@ static handler_t mod_status_handle_server_statistics(server *srv, connection *co
 	response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/plain"));
 
 	con->http_status = 200;
+	chunkqueue_append_buffer(con->send, b);
 	con->send->bytes_in += b->used-1;
 	con->send->is_closed = 1;
 
@@ -687,7 +692,7 @@ static handler_t mod_status_handle_server_config(server *srv, connection *con, v
 	const fdevent_handler_info_t *handler;
 	const network_backend_info_t *backend;
 
-	b = chunkqueue_get_append_buffer(con->send);
+	b = buffer_init();;
 
 	BUFFER_COPY_STRING_CONST(b,
 			   "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>\n"
@@ -770,6 +775,7 @@ static handler_t mod_status_handle_server_config(server *srv, connection *con, v
 	response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/html"));
 
 	con->http_status = 200;
+	chunkqueue_append_buffer(con->send, b);
 	con->send->bytes_in += b->used-1;
 	con->send->is_closed = 1;
 

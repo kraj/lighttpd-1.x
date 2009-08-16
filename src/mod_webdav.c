@@ -1171,7 +1171,7 @@ static int webdav_lockdiscovery(server *srv, connection *con,
 		CONST_STR_LEN("Content-Type"),
 		CONST_STR_LEN("text/xml; charset=\"utf-8\""));
 
-	b = chunkqueue_get_append_buffer(con->send);
+	b = buffer_init();
 
 	buffer_copy_string_len(b, CONST_STR_LEN("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"));
 
@@ -1212,7 +1212,7 @@ static int webdav_lockdiscovery(server *srv, connection *con,
 	buffer_append_string_len(b,CONST_STR_LEN("</D:lockdiscovery>\n"));
 	buffer_append_string_len(b,CONST_STR_LEN("</D:prop>\n"));
 
-	con->send->bytes_in += b->used-1;
+	chunkqueue_append_buffer(con->send, b);
 
 	return 0;
 }
@@ -1435,7 +1435,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 
 		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/xml; charset=\"utf-8\""));
 
-		b = chunkqueue_get_append_buffer(con->send);
+		b = buffer_init();
 
 		buffer_copy_string_len(b, CONST_STR_LEN("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"));
 
@@ -1586,7 +1586,8 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 		if (p->conf.log_xml) {
 			TRACE("XML-response-body: %s", SAFE_BUF_STR(b));
 		}
-		con->send->bytes_in += b->used-1;
+
+		chunkqueue_append_buffer(con->send, b);
 		con->send->is_closed = 1;
 
 		return HANDLER_FINISHED;
@@ -1661,7 +1662,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 				/* we got an error somewhere in between, build a 207 */
 				response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/xml; charset=\"utf-8\""));
 
-				b = chunkqueue_get_append_buffer(con->send);
+				b = buffer_init();
 
 				buffer_copy_string_len(b, CONST_STR_LEN("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"));
 
@@ -1675,6 +1676,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 					log_error_write(srv, __FILE__, __LINE__, "sb", "XML-response-body:", b);
 				}
 
+				chunkqueue_append_buffer(con->send, b);
 				con->http_status = 207;
 				con->send->bytes_in += b->used-1;
 				con->send->is_closed = 1;

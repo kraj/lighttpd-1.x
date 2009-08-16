@@ -121,10 +121,4 @@ LI_API off_t chunkqeueu_to_gstring(chunkqueue *cq, GString *s);
 LI_API off_t chunkqueue_to_buffer_len(chunkqueue *cq, buffer *b, off_t max_len);
 LI_API off_t chunkqeueu_to_gstring_len(chunkqueue *cq, GString *s, off_t max_len);
 
-/* Deprecated */
-LI_API buffer * chunkqueue_get_append_buffer(chunkqueue *c);
-LI_API buffer * chunkqueue_get_prepend_buffer(chunkqueue *c);
-
-LI_API void chunkqueue_remove_empty_last_chunk(chunkqueue *cq);
-
 #endif

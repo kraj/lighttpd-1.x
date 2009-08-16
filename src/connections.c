@@ -310,8 +310,7 @@ static int connection_handle_response_header(server *srv, connection *con) {
 
 			buffer_reset(con->physical.path);
 
-			con->send->is_closed = 1;
-			b = chunkqueue_get_append_buffer(con->send);
+			b = buffer_init();;
 
 			/* build default error-page */
 			buffer_copy_string_len(b, CONST_STR_LEN(
@@ -339,7 +338,9 @@ static int connection_handle_response_header(server *srv, connection *con) {
 					     "</html>\n"
 					     );
 
+			chunkqueue_append_buffer(con->send, b);
 			con->send->bytes_in += b->used - 1;
+			con->send->is_closed = 1;
 
 			response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_STR_LEN("text/html"));
 		}
@@ -796,10 +797,7 @@ static handler_t connection_handle_read_request_content(server *srv, connection 
 				dst_c->file.fd = -1;
 			}
 		} else {
-			buffer *b;
-
-			b = chunkqueue_get_append_buffer(out);
-			buffer_copy_string_len(b, c->mem->ptr + c->offset, toRead);
+			chunkqueue_append_mem(out, c->mem->ptr + c->offset, toRead);
 		}
 
 		c->offset += toRead;

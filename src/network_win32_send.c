@@ -49,16 +49,17 @@ NETWORK_BACKEND_READ(win32recv)
 	do {
 		toread = 16384;
 
-		b = chunkqueue_get_append_buffer(cq);
+		b = buffer_init();
 
 		buffer_prepare_copy(b, toread);
 
 		if (-1 == (r = recv(sock->fd, b->ptr, toread, 0))) {
+			chunk_free(c);
+
 			switch (light_sock_errno()) {
 			case EAGAIN:
 			case EWOULDBLOCK:
 				/* remove the last chunk from the chunkqueue */
-				chunkqueue_remove_empty_last_chunk(cq);
 				return read_something ? NETWORK_STATUS_SUCCESS : NETWORK_STATUS_WAIT_FOR_EVENT;
 			case ECONNRESET:
 				return NETWORK_STATUS_CONNECTION_CLOSE;
@@ -70,7 +71,7 @@ NETWORK_BACKEND_READ(win32recv)
 		}
 
 		if (r == 0) {
-			chunkqueue_remove_empty_last_chunk(cq);
+			buffer_free(b);
 			return read_something ? NETWORK_STATUS_SUCCESS : NETWORK_STATUS_CONNECTION_CLOSE;
 		}
 
@@ -78,6 +79,8 @@ NETWORK_BACKEND_READ(win32recv)
 
 		b->used = r;
 		b->ptr[b->used++] = '\0';
+
+		chunkqueue_append_buffer(cq, b);
 		cq->bytes_in += r;
 
 		if (cq->bytes_in - start_bytes_in > max_read) break;

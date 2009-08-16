@@ -434,7 +434,6 @@ off_t chunkqueue_steal_len(chunkqueue *out, chunkqueue *in, off_t max_len) {
 off_t chunkqueue_steal_chunks_len(chunkqueue *out, chunk *c, off_t max_len) {
 	off_t total = 0;
 	off_t we_have = 0, we_want = 0;
-	buffer *b;
 
 	if (!out || !c) return 0;
 
@@ -495,8 +494,7 @@ off_t chunkqueue_steal_chunks_len(chunkqueue *out, chunk *c, off_t max_len) {
 				chunkqueue_steal_chunk(out, c);
 			} else {
 				/* copy unused data from chunk */
-				b = chunkqueue_get_append_buffer(out);
-				buffer_copy_string_len(b, c->mem->ptr + c->offset, we_want);
+				chunkqueue_append_mem(out, c->mem->ptr + c->offset, we_want);
 				c->offset += we_want;
 			}
 			total += we_want;
@@ -539,7 +537,7 @@ off_t chunkqueue_steal_chunks_len(chunkqueue *out, chunk *c, off_t max_len) {
 off_t chunkqueue_steal_chunk(chunkqueue *cq, chunk *c) {
 	/* we are copying the whole buffer, just steal it */
 	off_t total = 0;
-	buffer *b, btmp;
+	buffer *b;
 
 	if (!cq) return 0;
 	if (chunk_is_done(c)) return 0;
@@ -548,8 +546,11 @@ off_t chunkqueue_steal_chunk(chunkqueue *cq, chunk *c) {
 	case MEM_CHUNK:
 		total = c->mem->used - c->offset - 1;
 		if (c->offset == 0) {
-			b = chunkqueue_get_append_buffer(cq);
-			btmp = *b; *b = *(c->mem); *(c->mem) = btmp;
+			chunk *cout = chunkpool_get_unused_chunk();
+			cout->type = MEM_CHUNK;
+			cout->offset = 0;
+			b = cout->mem; cout->mem = c->mem; c->mem = b;
+			chunkqueue_append_chunk(cq, cout);
 		} else {
 			chunkqueue_append_mem(cq, c->mem->ptr + c->offset, total);
 			chunk_set_done(c);
@@ -831,64 +832,3 @@ off_t chunkqeueu_to_gstring_len(chunkqueue *cq, GString *s, off_t max_len) {
 	chunkqueue_remove_finished_chunks(cq);
 	return total;
 }
-
-/* Deprecated functions */
-
-/**
- * remove the last chunk if it is empty
- */
-
-void chunkqueue_remove_empty_last_chunk(chunkqueue *cq) {
-	chunk *c;
-	if (!cq->last) return;
-	if (!cq->first) return;
-
-	if (cq->last->type != MEM_CHUNK || cq->last->mem->used != 0) return;
-
-	if (cq->first == cq->last) {
-		c = cq->first;
-
-		chunk_free(c);
-		cq->first = cq->last = NULL;
-	} else {
-		for (c = cq->first; c->next; c = c->next) {
-			if (c->next == cq->last) {
-				cq->last = c;
-
-				chunk_free(c->next);
-				c->next = NULL;
-
-				return;
-			}
-		}
-	}
-}
-
-buffer * chunkqueue_get_prepend_buffer(chunkqueue *cq) {
-	chunk *c;
-
-	c = chunkpool_get_unused_chunk();
-
-	c->type = MEM_CHUNK;
-	c->offset = 0;
-	buffer_reset(c->mem);
-
-	chunkqueue_prepend_chunk(cq, c);
-
-	return c->mem;
-}
-
-buffer *chunkqueue_get_append_buffer(chunkqueue *cq) {
-	chunk *c;
-
-	c = chunkpool_get_unused_chunk();
-
-	c->type = MEM_CHUNK;
-	c->offset = 0;
-	buffer_reset(c->mem);
-
-	chunkqueue_append_chunk(cq, c);
-
-	return c->mem;
-}
-

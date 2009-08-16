@@ -35,7 +35,7 @@ int http_response_write_header(server *srv, connection *con, chunkqueue *raw) {
 	int have_server = 0;
 	int allow_keep_alive = 0;
 
-	b = chunkqueue_get_prepend_buffer(raw);
+	b = buffer_init();
 
 	if (con->request.http_version == HTTP_VERSION_1_1) {
 		buffer_copy_string_len(b, CONST_STR_LEN("HTTP/1.1 "));
@@ -136,6 +136,8 @@ int http_response_write_header(server *srv, connection *con, chunkqueue *raw) {
 
 
 	con->bytes_header = b->used - 1;
+
+	chunkqueue_prepend_buffer(raw, b);
 	raw->bytes_in += b->used - 1;
 
 	if (con->conf.log_response_header) {

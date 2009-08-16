@@ -365,11 +365,8 @@ NETWORK_BACKEND_WRITE(linuxaiosendfile) {
 
 			break;
 		}
-		default:
-
-			log_error_write(srv, __FILE__, __LINE__, "ds", c, "type not known");
-
-			return NETWORK_STATUS_FATAL_ERROR;
+		case UNUSED_CHUNK:
+			continue;
 		}
 
 		if (!chunk_finished) {

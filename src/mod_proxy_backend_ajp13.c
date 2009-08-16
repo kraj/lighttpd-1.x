@@ -515,7 +515,7 @@ PROXY_STREAM_ENCODER_FUNC(proxy_ajp13_encode_request_headers) {
 	UNUSED(srv);
 	UNUSED(in);
 
-	packet = chunkqueue_get_append_buffer(out);
+	packet = buffer_init();
 	buffer_prepare_copy(packet, 1024);
 
 	/* reserve bytes for header.  Will over right header when we know packet length. */
@@ -524,6 +524,7 @@ PROXY_STREAM_ENCODER_FUNC(proxy_ajp13_encode_request_headers) {
 	/* send AJP13_TYPE_FORWARD_REQUEST */
 	len = proxy_ajp13_forward_request(srv, con, sess, packet);
 	packet->used++; /* this is needed because the network will only write "used - 1" bytes */
+	chunkqueue_append_buffer(out, packet);
 	out->bytes_in += packet->used - 1;
 
 	/* rewrite packet header with correct length. */
@@ -749,7 +750,7 @@ PROXY_STREAM_ENCODER_FUNC(proxy_ajp13_stream_encoder) {
 	/*
 	 * write ajp13 header
 	 */
-	b = chunkqueue_get_append_buffer(out);
+	b = buffer_init();
 	buffer_prepare_copy(b, AJP13_HEADER_LEN);
 	b->used += AJP13_HEADER_LEN;
 	if (we_need > 0) {
@@ -761,8 +762,9 @@ PROXY_STREAM_ENCODER_FUNC(proxy_ajp13_stream_encoder) {
 		 */
 		ajp13_header(b->ptr, we_need);
 	}
-	out->bytes_in += b->used;
 	b->used++;
+	chunkqueue_append_buffer(out, b);
+	out->bytes_in += b->used - 1;
 
 	we_have = chunkqueue_steal_chunks_len(out, in->first, we_need);
 	in->bytes_out += we_have;

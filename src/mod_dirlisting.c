@@ -754,7 +754,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 
 	if (files.used) http_dirls_sort(files.ent, files.used);
 
-	out = chunkqueue_get_append_buffer(con->send);
+	out = buffer_init();
 	buffer_copy_string_len(out, CONST_STR_LEN("<?xml version=\"1.0\" encoding=\""));
 	if (buffer_is_empty(p->conf.encoding)) {
 		buffer_append_string_len(out, CONST_STR_LEN("iso-8859-1"));
@@ -864,6 +864,7 @@ static int http_list_directory(server *srv, connection *con, plugin_data *p, buf
 		response_header_insert(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(p->content_charset));
 	}
 
+	chunkqueue_append_buffer(con->send, out);
 	con->send->bytes_in += out->used - 1;
 
 	con->send->is_closed = 1;

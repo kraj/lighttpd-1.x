@@ -138,10 +138,8 @@ NETWORK_BACKEND_WRITE(freebsdsendfile) {
 
 			break;
 		}
-		default:
-			ERROR("chunk-type '%d' not known", c->type);
-
-			return NETWORK_STATUS_FATAL_ERROR;
+		case UNUSED_CHUNK:
+			continue;
 		}
 
 		if (!chunk_finished) {

@@ -374,7 +374,7 @@ PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_encode_request_headers) {
 	proxy_connection *proxy_con = sess->proxy_con;
 	chunkqueue *out = proxy_con->send;
 	connection *con = sess->remote_con;
-	buffer *b, *packet;
+	buffer *packet;
 	size_t i;
 	FCGI_BeginRequestRecord beginRecord;
 	FCGI_Header header;
@@ -383,7 +383,6 @@ PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_encode_request_headers) {
 	UNUSED(srv);
 	UNUSED(in);
 
-	b = chunkqueue_get_append_buffer(out);
 	/* send FCGI_BEGIN_REQUEST */
 
 	fcgi_header(&(beginRecord.header), FCGI_BEGIN_REQUEST, PROXY_FASTCGI_REQUEST_ID, sizeof(beginRecord.body), 0);
@@ -403,12 +402,10 @@ PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_encode_request_headers) {
 #endif
 	memset(beginRecord.body.reserved, 0, sizeof(beginRecord.body.reserved));
 
-	buffer_copy_string_len(b, (const char *)&beginRecord, sizeof(beginRecord));
+	chunkqueue_append_mem(out, (const char *)&beginRecord, sizeof(beginRecord));
 	out->bytes_in += sizeof(beginRecord);
 
 	/* send FCGI_PARAMS */
-	b = chunkqueue_get_append_buffer(out);
-	buffer_prepare_copy(b, 1024);
 
 	/* fill the sess->env_headers */
 	array_reset(sess->env_headers);
@@ -425,17 +422,18 @@ PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_encode_request_headers) {
 	}
 
 	fcgi_header(&(header), FCGI_PARAMS, PROXY_FASTCGI_REQUEST_ID, packet->used, 0);
-	buffer_append_memory(b, (const char *)&header, sizeof(header));
-	buffer_append_memory(b, (const char *)packet->ptr, packet->used);
+	chunkqueue_append_mem(out, (const char *)&header, sizeof(header));
 	out->bytes_in += sizeof(header);
-	out->bytes_in += packet->used - 1;
 
-	buffer_free(packet);
+	if (packet->used) {
+		packet->used++;
+		chunkqueue_append_buffer(out, packet);
+		out->bytes_in += packet->used - 1;
+	}
 
 	fcgi_header(&(header), FCGI_PARAMS, PROXY_FASTCGI_REQUEST_ID, 0, 0);
-	buffer_append_memory(b, (const char *)&header, sizeof(header));
-	b->used++;
-	out->bytes_in += sizeof(header) + 1;
+	chunkqueue_append_mem(out, (const char *)&header, sizeof(header));
+	out->bytes_in += sizeof(header);
 
 	return HANDLER_FINISHED;
 }
@@ -718,7 +716,6 @@ PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_stream_encoder) {
 	proxy_connection *proxy_con = sess->proxy_con;
 	chunkqueue *out = proxy_con->send;
 	chunk *c;
-	buffer *b;
 	FCGI_Header header;
 	off_t we_need = 0, we_have = 0;
 
@@ -736,9 +733,8 @@ PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_stream_encoder) {
 			we_need = in->bytes_in - in->bytes_out;
 			if(we_need > FCGI_MAX_LENGTH) we_need = FCGI_MAX_LENGTH;
 
-			b = chunkqueue_get_append_buffer(out);
 			fcgi_header(&(header), FCGI_STDIN, PROXY_FASTCGI_REQUEST_ID, we_need, 0);
-			buffer_copy_memory(b, (const char *)&header, sizeof(header) + 1);
+			chunkqueue_append_mem(out, (const char *)&header, sizeof(header));
 			out->bytes_in += sizeof(header);
 		}
 
@@ -750,10 +746,9 @@ PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_stream_encoder) {
 
 	if (in->bytes_in == in->bytes_out && in->is_closed && !out->is_closed) {
 		/* send the closing packet */
-		b = chunkqueue_get_append_buffer(out);
 		/* terminate STDIN */
 		fcgi_header(&(header), FCGI_STDIN, PROXY_FASTCGI_REQUEST_ID, 0, 0);
-		buffer_copy_memory(b, (const char *)&header, sizeof(header) + 1);
+		chunkqueue_append_mem(out, (const char *)&header, sizeof(header) );
 
 		out->bytes_in += sizeof(header);
 		out->is_closed = 1;

@@ -464,14 +464,14 @@ URIHANDLER_FUNC(mod_uploadprogress_uri_handler) {
 		response_header_overwrite(srv, con, CONST_STR_LEN("Cache-Control"),
 				CONST_STR_LEN("no-store, no-cache, must-revalidate, post-check=0, pre-check=0"));
 
-		b = chunkqueue_get_append_buffer(con->send);
+		b = buffer_init();
 
 		/* get the connection */
 		if (NULL == (post_con_entry = connection_map_get_connection_entry(p->con_map, tracking_id))) {
 			/**
 			 * looks like we don't know the tracking id yet, GET and POST out of sync ? */
 			buffer_append_string_len(b, CONST_STR_LEN("new Object({ 'state' : 'starting' })\r\n"));
-			con->send->bytes_in += b->used-1;
+			chunkqueue_append_buffer(con->send, b);
 
 			if (p->conf.debug) TRACE("connection unknown: %s, sending: %s", SAFE_BUF_STR(tracking_id), SAFE_BUF_STR(b));
 
@@ -496,7 +496,7 @@ URIHANDLER_FUNC(mod_uploadprogress_uri_handler) {
 			buffer_append_off_t(b, post_con_entry->con->request.content_length == -1 ? 0 : post_con_entry->con->request.content_length);
 		}
 		buffer_append_string_len(b, CONST_STR_LEN("})\r\n"));
-		con->send->bytes_in += b->used-1;
+		chunkqueue_append_buffer(con->send, b);
 
 		if (p->conf.debug) TRACE("connection is known: %s, sending: %s", SAFE_BUF_STR(tracking_id), SAFE_BUF_STR(b));
 
