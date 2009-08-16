@@ -1,29 +1,43 @@
-#include <stdlib.h>
-
 #include "mod_proxy_core_backlog.h"
 #include "array-static.h"
 
+typedef struct {
+	connection *con;
+	time_t added_ts; /* when was the entry added (for timeout handling) */
+} proxy_request;
+
+static proxy_request *proxy_request_init(connection *con, time_t cur_ts) {
+	proxy_request *req = g_slice_new0(proxy_request);
+	req->con = con;
+	req->added_ts = cur_ts;
+
+	return req;
+}
+
+static void proxy_request_free(proxy_request *req) {
+	g_slice_free(proxy_request, req);
+}
+
 proxy_backlog *proxy_backlog_init(void) {
-	STRUCT_INIT(proxy_backlog, backlog);
+	proxy_backlog *backlog = g_slice_new0(proxy_backlog);
+	g_queue_init(&backlog->queue);
 
 	return backlog;
 }
 
 void proxy_backlog_free(proxy_backlog *backlog) {
+	proxy_request *req;
 	if (!backlog) return;
 
-	free(backlog);
+	while (NULL != (req = (proxy_request*) g_queue_pop_head(&backlog->queue))) {
+		proxy_request_free(req);
+	}
+
+	g_slice_free(proxy_backlog, backlog);
 }
 
-int proxy_backlog_push(proxy_backlog *backlog, proxy_request *req) {
-	/* first entry */
-	if (NULL == backlog->first) {
-		backlog->first = backlog->last = req;
-	} else {
-		backlog->last->next = req;
-		backlog->last = req;
-	}
-	backlog->length++;
+int proxy_backlog_push(proxy_backlog *backlog, connection *con, time_t cur_ts) {
+	g_queue_push_tail(&backlog->queue, proxy_request_init(con, cur_ts));
 
 	return 0;
 }
@@ -31,79 +45,33 @@ int proxy_backlog_push(proxy_backlog *backlog, proxy_request *req) {
 /**
  * remove the first element from the backlog
  */
-proxy_request *proxy_backlog_shift(proxy_backlog *backlog) {
-	proxy_request *req = NULL;
+connection *proxy_backlog_shift(proxy_backlog *backlog) {
+	proxy_request *req = (proxy_request*) g_queue_pop_head(&backlog->queue);
+	connection *con = NULL;
 
-	if (!backlog->first) return req;
+	if (req) {
+		con = req->con;
+		proxy_request_free(req);
+	}
 
-	backlog->length--;
-
-	req = backlog->first;
-
-	backlog->first = req->next;
-
-	/* the backlog is empty */
-	if (backlog->first == NULL) backlog->last = NULL;
-
-	return req;
+	return con;
 }
 
-int proxy_backlog_remove_connection(proxy_backlog *backlog, void *con) {
-	proxy_request *req = NULL;
+static gint proxy_backlog_find_connection(gconstpointer el, gconstpointer con) {
+	return ( ((const proxy_request*) el)->con == (const connection*) con ) ? 0 : 1;
+}
 
-	if (!backlog->first) return -1;
+int proxy_backlog_remove_connection(proxy_backlog *backlog, connection *con) {
+	GList *el;
+
 	if (!con) return -1;
 
-	/* the first element is what we look for */
-	if (backlog->first->con == con) {
-		req = backlog->first;
+	el = g_queue_find_custom(&backlog->queue, con, proxy_backlog_find_connection);
 
-		backlog->first = req->next;
-		if (backlog->first == NULL) backlog->last = NULL;
+	if (!el) return -1;
 
-		backlog->length--;
+	proxy_request_free((proxy_request*) el->data);
+	g_queue_delete_link(&backlog->queue, el);
 
-		proxy_request_free(req);
-
-		return 0;
-	}
-
-
-	for (req = backlog->first; req && req->next; req = req->next) {
-		proxy_request *cur;
-
-		if (req->next->con != con) continue;
-
-		backlog->length--;
-		/* the next node is our searched connection */
-
-		cur = req->next;
-		req->next = cur->next;
-
-		/* the next node is the last one, make the current the new last */
-		if (cur == backlog->last) {
-			backlog->last = req;
-		}
-		cur->next = NULL;
-
-		proxy_request_free(cur);
-
-		return 0;
-	}
-
-	return -1;
+	return 0;
 }
-
-proxy_request *proxy_request_init(void) {
-	STRUCT_INIT(proxy_request, request);
-
-	return request;
-}
-
-void proxy_request_free(proxy_request *request) {
-	if (!request) return;
-
-	free(request);
-}
-
-

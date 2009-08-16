@@ -1135,7 +1135,7 @@ static int proxy_remove_backend_connection(server *srv, proxy_session *sess) {
  *
  */
 static int proxy_recycle_backend_connection(server *srv, plugin_data *p, proxy_session *sess) {
-	proxy_request *req;
+	connection *next_con;
 	int reuse = 1;
 
 	if (!sess) return HANDLER_GO_ON;
@@ -1197,14 +1197,11 @@ static int proxy_recycle_backend_connection(server *srv, plugin_data *p, proxy_s
 	}
 
 	/* wake up a connection from the backlog */
-	if ((req = proxy_backlog_shift(p->conf.backlog))) {
-		connection *next_con = req->con;
-
+	if ((next_con = proxy_backlog_shift(p->conf.backlog))) {
 		if (p->conf.debug) TRACE("wakeup a connection from backlog: con=%d", next_con->sock->fd);
 		joblist_append(srv, next_con);
 
 		COUNTER_DEC(p->conf.backlog_size);
-		proxy_request_free(req);
 	}
 
 	return HANDLER_GO_ON;
@@ -1216,18 +1213,11 @@ static int proxy_recycle_backend_connection(server *srv, plugin_data *p, proxy_s
  * @returns HANDLER_ERROR in case we reach the max-connect-retry limit
  */
 static handler_t mod_proxy_core_backlog_connection(server *srv, connection *con, plugin_data *p, proxy_session *sess) {
-	proxy_request *req;
-
 	if (sess->sent_to_backlog >= p->conf.max_backlog_size) {
 		return HANDLER_ERROR;
 	}
 
-	/* connection pool is full, queue the request for now */
-	req = proxy_request_init();
-	req->added_ts = srv->cur_ts;
-	req->con = con;
-
-	proxy_backlog_push(p->conf.backlog, req);
+	proxy_backlog_push(p->conf.backlog, con, srv->cur_ts);
 
 	COUNTER_INC(p->conf.backlog_size);
 	sess->sent_to_backlog++;
@@ -2471,8 +2461,8 @@ CONNECTION_FUNC(mod_proxy_send_request_content) {
  * trigger cleans up
  */
 static int mod_proxy_wakeup_connections(server *srv, plugin_data *p, plugin_config *p_conf) {
+	connection *con;
 	size_t i, j;
-	proxy_request *req;
 	int total_conns_available = 0, backends_available = 0;
 	int woken_up;
 
@@ -2572,14 +2562,11 @@ static int mod_proxy_wakeup_connections(server *srv, plugin_data *p, plugin_conf
 	}
 
 	/* wake up the connections from the backlog */
-	for (woken_up = 0; woken_up < total_conns_available && (req = proxy_backlog_shift(p_conf->backlog)); woken_up++) {
-		connection *con = req->con;
-
+	for (woken_up = 0; woken_up < total_conns_available && (con = proxy_backlog_shift(p_conf->backlog)); woken_up++) {
 		if (p_conf->debug) TRACE("wakeup a connection from backlog: con=%d", con->sock->fd);
 		joblist_append(srv, con);
 
 		COUNTER_DEC(p->conf.backlog_size);
-		proxy_request_free(req);
 	}
 
 	return woken_up;
