@@ -1297,7 +1297,7 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 
 #ifdef USE_PROPPATCH
 		/* any special requests or just allprop ? */
-		if (p->conf.sql && con->request.content_length > 0) {
+		if (con->request.content_length > 0) {
 			xmlDocPtr xml;
 
 			if (1 == webdav_parse_chunkqueue(srv, con, p, con->recv, &xml)) {
