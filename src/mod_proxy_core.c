@@ -1143,7 +1143,6 @@ static int proxy_recycle_backend_connection(server *srv, plugin_data *p, proxy_s
 	if (sess->proxy_con) {
 		COUNTER_INC(p->request_count);
 		COUNTER_INC(sess->proxy_backend->request_count);
-		COUNTER_DEC(sess->proxy_backend->load);
 		switch (sess->proxy_con->state) {
 		case PROXY_CONNECTION_STATE_CONNECTED:
 			/*
@@ -1177,6 +1176,7 @@ static int proxy_recycle_backend_connection(server *srv, plugin_data *p, proxy_s
 				fdevent_register(srv->ev, sess->proxy_con->sock, proxy_handle_fdevent_idle, sess->proxy_con);
 				fdevent_event_add(srv->ev, sess->proxy_con->sock, FDEVENT_IN);
 
+				COUNTER_DEC(sess->proxy_backend->load);
 				break;
 			}
 
@@ -1190,6 +1190,7 @@ static int proxy_recycle_backend_connection(server *srv, plugin_data *p, proxy_s
 			proxy_remove_backend_connection(srv, sess);
 		case PROXY_CONNECTION_STATE_IDLE:
 		default:
+			COUNTER_DEC(sess->proxy_backend->load);
 			break;
 		}
 		sess->proxy_con = NULL;
