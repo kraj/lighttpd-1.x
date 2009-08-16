@@ -15,6 +15,8 @@
 #define MAX_INTERNAL_REDIRECTS 8
 
 struct proxy_protocol;
+struct proxy_spawn_proc;
+struct proxy_spawn_config;
 
 typedef struct {
 	proxy_backends *backends;
@@ -49,6 +51,8 @@ typedef struct {
 	/* statistics counters. */
 	data_integer *request_count;
 
+	struct proxy_spawn_config *spawn_config;
+	
 	/* for parsing only */
 	array *backends_arr;
 	buffer *protocol_buf;
@@ -79,6 +83,7 @@ typedef enum {
 typedef struct proxy_session {
 	proxy_connection *proxy_con;
 	proxy_backend *proxy_backend;
+	struct proxy_spawn_proc *proxy_proc;
 
 	connection *remote_con;
 

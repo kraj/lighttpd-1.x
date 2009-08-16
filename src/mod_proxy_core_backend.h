@@ -4,6 +4,7 @@
 #include "array-static.h"
 #include "array.h"
 #include "buffer.h"
+#include "server.h"
 #include "mod_proxy_core_address.h"
 #include "mod_proxy_core_pool.h"
 #include "sys-socket.h"
@@ -41,6 +42,8 @@ typedef enum {
 	PROXY_BACKEND_STATE_DISABLED,
 } proxy_backend_state_t;
 
+struct proxy_spawn;
+
 typedef struct {
 	buffer *name;
 
@@ -51,6 +54,8 @@ typedef struct {
 	unsigned int disabled_addresses; /* track how many addresses are disabled. */
 	proxy_balance_t balancer; /* how to choose a address from the address-pool */
 	struct proxy_protocol *protocol; /* protocol handler */
+
+	struct proxy_spawn *spawn; /* manage spawning of worker procs */
 
 	proxy_backend_state_t state;
 
@@ -69,6 +74,13 @@ void proxy_backend_free(proxy_backend *backend);
 proxy_backends *proxy_backends_init(void);
 void proxy_backends_free(proxy_backends *backends);
 void proxy_backends_add(proxy_backends *backends, proxy_backend *backend);
+
+struct proxy_session;
+proxy_backend *proxy_backend_balancer(server *srv, connection *con, struct proxy_session *sess);
+proxy_address *proxy_address_balancer(server *srv, connection *con, struct proxy_session *sess);
+
+void proxy_backend_disable_address(struct proxy_session *sess, time_t until);
+void proxy_backend_close_connection(server *srv, struct proxy_session *sess);
 
 #endif
 

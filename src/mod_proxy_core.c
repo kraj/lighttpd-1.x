@@ -16,7 +16,6 @@
 #include "joblist.h"
 #include "sys-files.h"
 #include "inet_ntop_cache.h"
-#include "crc32.h"
 #include "configfile.h"
 #include "stat_cache.h"
 #include "buffer.h"
@@ -26,6 +25,7 @@
 
 #include "mod_proxy_core.h"
 #include "mod_proxy_core_protocol.h"
+#include "mod_proxy_core_spawn.h"
 
 #define PROXY_CORE "proxy-core"
 #define CONFIG_PROXY_CORE_BALANCER         PROXY_CORE ".balancer"
@@ -42,6 +42,10 @@
 #define CONFIG_PROXY_CORE_SPLIT_HOSTNAMES  PROXY_CORE ".split-hostnames"
 #define CONFIG_PROXY_CORE_DISABLE_TIME     PROXY_CORE ".disable-time"
 #define CONFIG_PROXY_CORE_MAX_BACKLOG_SIZE PROXY_CORE ".max-backlog-size"
+
+#undef strncmp
+
+proxy_backend *proxy_find_backend(server *srv, connection *con, plugin_data *p, buffer *name); /* TODO: put prototype in a header */
 
 static int mod_proxy_wakeup_connections(server *srv, plugin_data *p, plugin_config *p_conf);
 
@@ -76,6 +80,8 @@ INIT_FUNC(mod_proxy_core_init) {
 	proxy_protocols_init();
 
 	p = calloc(1, sizeof(*p));
+
+	p->spawn_config = proxy_spawn_config_init();
 
 	/* create some backends as long as we don't have the config-parser */
 
@@ -134,6 +140,8 @@ FREE_FUNC(mod_proxy_core_free) {
 		}
 		free(p->config_storage);
 	}
+
+	proxy_spawn_config_free(p->spawn_config);
 
 	array_free(p->possible_balancers);
 	array_free(p->backends_arr);
@@ -276,6 +284,10 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 		{ NULL,                        NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
 	};
 
+	if (HANDLER_GO_ON != proxy_spawn_config_parse(srv, p)) {
+		return HANDLER_ERROR;
+	}
+
 	stat_basename = buffer_init();
 
 	p->config_storage = calloc(1, srv->config_context->used * sizeof(specific_config *));
@@ -364,6 +376,24 @@ SETDEFAULTS_FUNC(mod_proxy_core_set_defaults) {
 			/* check if the backends have a valid host-name */
 			for (j = 0; j < p->backends_arr->used; j++) {
 				data_string *ds = (data_string *)p->backends_arr->data[j];
+
+				// let the spawn code setup the spawn backend
+				if (0 == strncmp(ds->value->ptr, CONST_STR_LEN(PROXY_CORE_SPAWN_URL))) {
+					if (0 == (backend = proxy_spawn_config_backend(p->spawn_config, ds->value))) {
+						return HANDLER_ERROR;
+					}
+
+					/* save name of backend for config. */
+					buffer_copy_string_buffer(backend->name, ds->value);
+
+					/* append backend to list of backends */
+					proxy_backends_add(s->backends, backend);
+
+					/* setup stats */
+					mod_proxy_core_create_backend_stats(p, stat_basename, backend);
+					continue;
+				}
+
 				backend = proxy_backend_init();
 
 				/* save name of backend for config. */
@@ -1108,12 +1138,7 @@ static int proxy_remove_backend_connection(server *srv, proxy_session *sess) {
 	COUNTER_SET(sess->proxy_backend->pool_size, sess->proxy_backend->pool->used);
 	COUNTER_DEC(sess->proxy_backend->load);
 
-	/* the backend might have been disabled by a full connection pool, re-enable
-	 * if there is at least one active address.
-	 */
-	if (sess->proxy_backend->disabled_addresses <= sess->proxy_backend->address_pool->used) {
-		sess->proxy_backend->state = PROXY_BACKEND_STATE_ACTIVE;
-	}
+	proxy_backend_close_connection(srv, sess);
 
 	if (sess->proxy_con->sock->fd != -1) {
 		/* if we fail in connect() might not have a FD yet */
@@ -1444,21 +1469,13 @@ static handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p
 			return HANDLER_WAIT_FOR_FD;
 		case HANDLER_ERROR:
 			/* there is no-one on the other side */
-			sess->proxy_con->address->disabled_until = srv->cur_ts + p->conf.disable_time;
-
 			TRACE("connecting to address %s (%p) failed, disabling for %u sec",
 					SAFE_BUF_STR(sess->proxy_con->address->name),
 					(void*) sess->proxy_con->address,
 					(unsigned int) p->conf.disable_time);
 			COUNTER_INC(sess->proxy_backend->requests_failed);
 
-			sess->proxy_con->address->state = PROXY_ADDRESS_STATE_DISABLED;
-			sess->proxy_backend->disabled_addresses++;
-			/* if all addresses in address_pool are disabled, then disable this backend. */
-
-			if (sess->proxy_backend->disabled_addresses == sess->proxy_backend->address_pool->used) {
-				sess->proxy_backend->state = PROXY_BACKEND_STATE_DISABLED;
-			}
+			proxy_backend_disable_address(sess, srv->cur_ts + p->conf.disable_time);
 			/* try another backend instead */
 			return HANDLER_COMEBACK;
 		default:
@@ -1480,65 +1497,49 @@ static handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p
 			case PROXY_CONNECTION_STATE_CONNECTING:
 				if (0 != getsockopt(sess->proxy_con->sock->fd, SOL_SOCKET, SO_ERROR, &socket_error, &socket_error_len)) {
 					ERROR("getsockopt failed: %s", strerror(errno));
-	
+
 					return HANDLER_ERROR;
 				}
 				if (socket_error != 0) {
 					switch (socket_error) {
 					case ECONNREFUSED:
 						/* there is no-one on the other side */
-						sess->proxy_con->address->disabled_until = srv->cur_ts + p->conf.disable_time;
-	
 						TRACE("address %s refused us, disabling for %u sec", sess->proxy_con->address->name->ptr, (unsigned int) p->conf.disable_time);
 						COUNTER_INC(sess->proxy_backend->requests_failed);
-	
+
+						proxy_backend_disable_address(sess, srv->cur_ts + p->conf.disable_time);
 						break;
 					case EHOSTUNREACH:
 						/* there is no-one on the other side */
-						sess->proxy_con->address->disabled_until = srv->cur_ts + p->conf.disable_time;
-	
 						TRACE("host %s is unreachable, disabling for %u sec", sess->proxy_con->address->name->ptr, (unsigned int) p->conf.disable_time);
+
+						proxy_backend_disable_address(sess, srv->cur_ts + p->conf.disable_time);
 						break;
 					default:
-						sess->proxy_con->address->disabled_until = srv->cur_ts + p->conf.disable_time;
-	
 						TRACE("connected finally failed: %s (%d)", strerror(socket_error), socket_error);
-	
+
 						TRACE("connect to address %s failed and I don't know why, disabling for %u sec", sess->proxy_con->address->name->ptr, (unsigned int) p->conf.disable_time);
-	
+
+						proxy_backend_disable_address(sess, srv->cur_ts + p->conf.disable_time);
 						break;
-					}
-	
-					sess->proxy_con->address->state = PROXY_ADDRESS_STATE_DISABLED;
-					sess->proxy_backend->disabled_addresses++;
-					/* if all addresses in address_pool are disabled, then disable this backend. */
-					if (sess->proxy_backend->disabled_addresses == sess->proxy_backend->address_pool->used) {
-						sess->proxy_backend->state = PROXY_BACKEND_STATE_DISABLED;
 					}
 					return HANDLER_COMEBACK;
 				}
-	
+
 				sess->state = PROXY_STATE_CONNECTED;
 				sess->proxy_con->state = PROXY_CONNECTION_STATE_CONNECTED;
-	
+
 				/* initialize stream. */
 				proxy_stream_init(srv, sess);
 
 				break;
 			case PROXY_CONNECTION_STATE_CLOSED:
 				/* looks like the connect() timed out */
-				sess->proxy_con->address->disabled_until = srv->cur_ts + p->conf.disable_time;
-				sess->proxy_con->address->state = PROXY_ADDRESS_STATE_DISABLED;
 
 				/* the connection */
 				sess->proxy_con->state = PROXY_CONNECTION_STATE_CLOSED;
 
-				/* if all addresses in address_pool are disabled, then disable this backend. */
-				sess->proxy_backend->disabled_addresses++;
-
-				if (sess->proxy_backend->disabled_addresses == sess->proxy_backend->address_pool->used) {
-					sess->proxy_backend->state = PROXY_BACKEND_STATE_DISABLED;
-				}
+				proxy_backend_disable_address(sess, srv->cur_ts + p->conf.disable_time);
 				TRACE("connect(%s) to failed: trying another backed", 
 						SAFE_BUF_STR(sess->proxy_con->address->name));
 				return HANDLER_COMEBACK;
@@ -1759,7 +1760,7 @@ static handler_t proxy_state_engine(server *srv, connection *con, plugin_data *p
 	return HANDLER_GO_ON;
 }
 
-static proxy_backend *proxy_find_backend(server *srv, connection *con, plugin_data *p, buffer *name) {
+proxy_backend *proxy_find_backend(server *srv, connection *con, plugin_data *p, buffer *name) {
 	size_t i;
 
 	UNUSED(srv);
@@ -1774,254 +1775,6 @@ static proxy_backend *proxy_find_backend(server *srv, connection *con, plugin_da
 	}
 
 	return NULL;
-}
-
-/**
- * choose an available backend
- *
- */
-static proxy_backend *proxy_backend_balancer(server *srv, connection *con, proxy_session *sess) {
-	size_t i;
-	plugin_data *p = sess->p;
-	proxy_backends *backends = p->conf.backends;
-	unsigned long last_max; /* for the HASH balancer */
-	proxy_backend *backend = NULL, *cur_backend = NULL;
-	int active_backends = 0, rand_ndx;
-	size_t min_used;
-
-	UNUSED(srv);
-
-	/* if we only have one backend just return it. */
-	if (backends->used == 1) {
-		backend = backends->ptr[0];
-
-		return backend->state == PROXY_BACKEND_STATE_ACTIVE ? backend : NULL;
-	}
-
-	/* frist try to select backend based on sticky session. */
-	if (sess->sticky_session) {
-		/* find backend */
-		backend = proxy_find_backend(srv, con, p, sess->sticky_session);
-		if (NULL != backend) return backend;
-	}
-
-	/* apply balancer algorithm to select backend. */
-	switch(p->conf.balancer) {
-	case PROXY_BALANCE_CARP:
-		/* hash balancing */
-
-		for (i = 0, last_max = ULONG_MAX; i < backends->used; i++) {
-			unsigned long cur_max;
-
-			cur_backend = backends->ptr[i];
-
-			if (cur_backend->state != PROXY_BACKEND_STATE_ACTIVE) continue;
-
-			cur_max = generate_crc32c(CONST_BUF_LEN(con->uri.path)) +
-				generate_crc32c(CONST_BUF_LEN(cur_backend->name)) + /* we can cache this */
-				generate_crc32c(CONST_BUF_LEN(con->uri.authority));
-#if 0
-			TRACE("hash-election: %s - %s - %s: %ld",
-					con->uri.path->ptr,
-					cur_backend->name->ptr,
-					con->uri.authority->ptr,
-					cur_max);
-#endif
-			if (backend == NULL || (cur_max > last_max)) {
-				last_max = cur_max;
-
-				backend = cur_backend;
-			}
-		}
-
-		break;
-	case PROXY_BALANCE_STATIC:
-		/* static (only fail-over) */
-
-		for (i = 0; i < backends->used; i++) {
-			cur_backend = backends->ptr[i];
-
-			if (cur_backend->state != PROXY_BACKEND_STATE_ACTIVE) continue;
-
-			backend = cur_backend;
-			break;
-		}
-
-		break;
-	case PROXY_BALANCE_SQF:
-		/* shortest-queue-first balancing */
-
-		for (i = 0, min_used = SIZE_MAX; i < backends->used; i++) {
-			cur_backend = backends->ptr[i];
-
-			if (cur_backend->state != PROXY_BACKEND_STATE_ACTIVE) continue;
-
-			/* the backend is up, use it */
-			if (cur_backend->pool->used < min_used ) {
-				backend = cur_backend;
-				min_used = cur_backend->pool->used;
-			}
-		}
-
-		break;
-	case PROXY_BALANCE_UNSET: /* if not set, use round-robin as default */
-	case PROXY_BALANCE_RR:
-		/* round robin */
-
-		/**
-		 * instead of real RoundRobin we just do a RandomSelect
-		 *
-		 * it is state-less and has the same distribution
-		 */
-
-		active_backends = 0;
-
-		for (i = 0; i < backends->used; i++) {
-			cur_backend = backends->ptr[i];
-
-			if (cur_backend->state != PROXY_BACKEND_STATE_ACTIVE) continue;
-
-			active_backends++;
-		}
-
-		rand_ndx = (int) (1.0 * active_backends * rand()/(RAND_MAX));
-
-		active_backends = 0;
-		for (i = 0; i < backends->used; i++) {
-			cur_backend = backends->ptr[i];
-
-			if (cur_backend->state != PROXY_BACKEND_STATE_ACTIVE) continue;
-
-			backend = cur_backend;
-
-			if (rand_ndx == active_backends++) break;
-		}
-
-		break;
-	}
-
-	return backend;
-}
-
-/**
- * choose an available address from the address-pool
- *
- * the backend has different balancers
- */
-static proxy_address *proxy_address_balancer(server *srv, connection *con, proxy_session *sess) {
-	size_t i;
-	proxy_backend *backend = sess->proxy_backend;
-	proxy_address_pool *address_pool = backend->address_pool;
-	unsigned long last_max; /* for the HASH balancer */
-	proxy_address *address = NULL, *cur_address = NULL;
-	int active_addresses = 0, rand_ndx;
-	size_t min_used;
-
-	UNUSED(srv);
-
-	/* if we only have one address just return it. */
-	if (address_pool->used == 1) {
-		address = address_pool->ptr[0];
-
-		return address->state == PROXY_ADDRESS_STATE_ACTIVE ? address : NULL;
-	}
-
-	/* apply balancer algorithm to select address. */
-	switch(backend->balancer) {
-	case PROXY_BALANCE_CARP:
-		/* hash balancing */
-
-		for (i = 0, last_max = ULONG_MAX; i < address_pool->used; i++) {
-			unsigned long cur_max;
-
-			cur_address = address_pool->ptr[i];
-
-			if (cur_address->state != PROXY_ADDRESS_STATE_ACTIVE) continue;
-
-			cur_max = generate_crc32c(CONST_BUF_LEN(con->uri.path)) +
-				generate_crc32c(CONST_BUF_LEN(cur_address->name)) + /* we can cache this */
-				generate_crc32c(CONST_BUF_LEN(con->uri.authority));
-#if 0
-			TRACE("hash-election: %s - %s - %s: %ld",
-					con->uri.path->ptr,
-					cur_address->name->ptr,
-					con->uri.authority->ptr,
-					cur_max);
-#endif
-			if (address == NULL || (cur_max > last_max)) {
-				last_max = cur_max;
-
-				address = cur_address;
-			}
-		}
-
-		break;
-	case PROXY_BALANCE_STATIC:
-		/* static (only fail-over) */
-
-		for (i = 0; i < address_pool->used; i++) {
-			cur_address = address_pool->ptr[i];
-
-			if (cur_address->state != PROXY_ADDRESS_STATE_ACTIVE) continue;
-
-			address = cur_address;
-			break;
-		}
-
-		break;
-	case PROXY_BALANCE_SQF:
-		/* shortest-queue-first balancing */
-
-		for (i = 0, min_used = SIZE_MAX; i < address_pool->used; i++) {
-			cur_address = address_pool->ptr[i];
-
-			if (cur_address->state != PROXY_ADDRESS_STATE_ACTIVE) continue;
-
-			/* the address is up, use it */
-			if (cur_address->used < min_used ) {
-				address = cur_address;
-				min_used = cur_address->used;
-			}
-		}
-
-		break;
-	case PROXY_BALANCE_UNSET: /* if not set, use round-robin as default */
-	case PROXY_BALANCE_RR:
-		/* round robin */
-
-		/**
-		 * instead of real RoundRobin we just do a RandomSelect
-		 *
-		 * it is state-less and has the same distribution
-		 */
-
-		active_addresses = 0;
-
-		for (i = 0; i < address_pool->used; i++) {
-			cur_address = address_pool->ptr[i];
-
-			if (cur_address->state != PROXY_ADDRESS_STATE_ACTIVE) continue;
-
-			active_addresses++;
-		}
-
-		rand_ndx = (int) (1.0 * active_addresses * rand()/(RAND_MAX));
-
-		active_addresses = 0;
-		for (i = 0; i < address_pool->used; i++) {
-			cur_address = address_pool->ptr[i];
-
-			if (cur_address->state != PROXY_ADDRESS_STATE_ACTIVE) continue;
-
-			address = cur_address;
-
-			if (rand_ndx == active_addresses++) break;
-		}
-
-		break;
-	}
-
-	return address;
 }
 
 static int mod_proxy_core_patch_connection(server *srv, connection *con, plugin_data *p) {
@@ -2360,6 +2113,7 @@ CONNECTION_FUNC(mod_proxy_core_start_backend) {
 						sess->proxy_backend->pool, address, &(sess->proxy_con))) {
 				/* all connections are busy. */
 				sess->proxy_backend->state = PROXY_BACKEND_STATE_FULL;
+				proxy_spawn_session_close(srv, sess);
 
 				if (p->conf.debug) TRACE("backlog: the con-pool is full, putting %s (%d) into the backlog", SAFE_BUF_STR(con->uri.path), con->sock->fd);
 				if (HANDLER_ERROR == mod_proxy_core_backlog_connection(srv, con, p, sess)) {
@@ -2546,7 +2300,7 @@ static int mod_proxy_wakeup_connections(server *srv, plugin_data *p, plugin_conf
 		if (conns_available == 0) {
 			/* connection pool is full and there are no idle connections. */
 			backend->state = PROXY_BACKEND_STATE_FULL;
-		} else if (addrs_disabled == address_pool->used) {
+		} else if (addrs_disabled == address_pool->used && !backend->spawn) {
 			/* all addresses are disabled. */
 			backend->state = PROXY_BACKEND_STATE_DISABLED;
 		} else {
@@ -2575,6 +2329,8 @@ static int mod_proxy_wakeup_connections(server *srv, plugin_data *p, plugin_conf
 TRIGGER_FUNC(mod_proxy_trigger) {
 	plugin_data *p = p_d;
 	size_t i;
+
+	proxy_spawn_trigger(p->spawn_config);
 
 	/**
 	 * walk through all the different address pools and check if they are still alive
