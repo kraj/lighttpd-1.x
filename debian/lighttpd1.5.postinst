@@ -1,0 +1,15 @@
+#! /bin/sh
+# postinst script for lighttpd
+
+set -e
+
+if [ "$1" = "configure" ]; then
+	mkdir -p /var/run/lighttpd1.5 > /dev/null 2> /dev/null
+	chown www-data:www-data /var/log/lighttpd1.5 /var/run/lighttpd1.5
+	chmod 0750 /var/log/lighttpd1.5 /var/run/lighttpd1.5
+	chown www-data:www-data -R /var/cache/lighttpd1.5
+fi
+
+#DEBHELPER#
+
+exit 0

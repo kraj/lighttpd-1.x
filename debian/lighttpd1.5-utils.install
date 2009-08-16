@@ -1,0 +1,2 @@
+debian/tmp/usr/sbin/spawn-fcgi
+debian/tmp/usr/sbin/fcgi-stat-accel

@@ -1,0 +1,34 @@
+debian/tmp/usr/sbin/lighttpd
+debian/tmp/usr/lib/lighttpd1.5/mod_access.so
+debian/tmp/usr/lib/lighttpd1.5/mod_accesslog.so
+debian/tmp/usr/lib/lighttpd1.5/mod_alias.so
+debian/tmp/usr/lib/lighttpd1.5/mod_auth.so
+debian/tmp/usr/lib/lighttpd1.5/mod_cgi.so
+debian/tmp/usr/lib/lighttpd1.5/mod_chunked.so
+debian/tmp/usr/lib/lighttpd1.5/mod_compress.so
+debian/tmp/usr/lib/lighttpd1.5/mod_deflate.so
+debian/tmp/usr/lib/lighttpd1.5/mod_dirlisting.so
+debian/tmp/usr/lib/lighttpd1.5/mod_evasive.so
+debian/tmp/usr/lib/lighttpd1.5/mod_evhost.so
+debian/tmp/usr/lib/lighttpd1.5/mod_expire.so
+debian/tmp/usr/lib/lighttpd1.5/mod_flv_streaming.so
+debian/tmp/usr/lib/lighttpd1.5/mod_indexfile.so
+debian/tmp/usr/lib/lighttpd1.5/mod_proxy_backend_ajp13.so
+debian/tmp/usr/lib/lighttpd1.5/mod_proxy_backend_fastcgi.so
+debian/tmp/usr/lib/lighttpd1.5/mod_proxy_backend_http.so
+debian/tmp/usr/lib/lighttpd1.5/mod_proxy_backend_scgi.so
+debian/tmp/usr/lib/lighttpd1.5/mod_proxy_core.so
+debian/tmp/usr/lib/lighttpd1.5/mod_redirect.so
+debian/tmp/usr/lib/lighttpd1.5/mod_rewrite.so
+debian/tmp/usr/lib/lighttpd1.5/mod_rrdtool.so
+debian/tmp/usr/lib/lighttpd1.5/mod_secdownload.so
+debian/tmp/usr/lib/lighttpd1.5/mod_setenv.so
+debian/tmp/usr/lib/lighttpd1.5/mod_simple_vhost.so
+debian/tmp/usr/lib/lighttpd1.5/mod_ssi.so
+debian/tmp/usr/lib/lighttpd1.5/mod_staticfile.so
+debian/tmp/usr/lib/lighttpd1.5/mod_status.so
+debian/tmp/usr/lib/lighttpd1.5/mod_uploadprogress.so
+debian/tmp/usr/lib/lighttpd1.5/mod_userdir.so
+debian/tmp/usr/lib/lighttpd1.5/mod_usertrack.so
+debian/lighttpd.conf                        /etc/lighttpd1.5
+debian/create-mime.assign.pl                /usr/share/lighttpd1.5/

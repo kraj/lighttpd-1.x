@@ -1,0 +1,28 @@
+#!/usr/bin/make -f
+
+include /usr/share/cdbs/1/rules/debhelper.mk
+#include /usr/share/cdbs/1/class/cmake.mk
+include debian/cmake.mk
+#include /usr/share/cdbs/1/class/autotools.mk
+#include /usr/share/cdbs/1/rules/dpatch.mk
+
+#include /usr/share/dpatch/dpatch.make
+
+#DEB_CONFIGURE_NORMAL_ARGS += --libdir=/usr/lib/lighttpd1.5 --with-openssl \
+#	 --with-kerberos5 --with-pcre --with-bz2   \
+#	 --with-ldap --with-mysql --with-memcache  \
+#	 --with-lua=lua5.1 --with-gdbm --with-attr \
+#	 --with-webdav-locks --with-webdav-props   \
+#	 --with-fam
+DEB_CMAKE_NORMAL_ARGS = -DCMAKE_INSTALL_PREFIX="$(DEB_CMAKE_INSTALL_PREFIX)" -DLIGHTTPD_MODULES_DIR="lib/lighttpd1.5"
+DEB_CMAKE_EXTRA_FLAGS += -DBUILD_TESTING=OFF -DWITH_BZIP=ON -DWITH_LDAP=ON \
+	 -DWITH_LIBAIO=ON -DWITH_LIBFCGI=ON -DWITH_LUA=ON -DWITH_MYSQL=ON \
+	 -DWITH_OPENSSL=ON -DWITH_POSTGRESQL=ON -DWITH_SQLITE3=ON -DWITH_WEBDAV_PROPS=ON \
+	 -DWITH_XATTR=ON
+
+configure/lighttpd1.5::
+	chmod a+x debian/create-mime.assign.pl
+
+binary-install/lighttpd1.5::
+	mv debian/lighttpd1.5/usr/sbin/lighttpd debian/lighttpd1.5/usr/sbin/lighttpd1.5
+#	mv debian/lighttpd1.5/usr/share/man/1/lighttpd.1.gz debian/lighttpd1.5/usr/share/man/1/lighttpd1.5.1.gz

@@ -1,0 +1,11 @@
+var
+var/www
+var/log
+var/log/lighttpd1.5
+var/cache
+var/cache/lighttpd1.5
+var/cache/lighttpd1.5/compress
+etc
+etc/lighttpd1.5/
+usr
+usr/sbin

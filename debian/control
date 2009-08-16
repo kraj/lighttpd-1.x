@@ -1,0 +1,105 @@
+Source: lighttpd1.5
+Section: web
+Priority: optional
+Maintainer: Stefan Bühler <stbuehler@web.de>
+Build-Depends: debhelper (>= 5.0.0), cdbs, cmake, mime-support, libssl-dev,
+ zlib1g-dev, libbz2-dev, libattr1-dev, libpcre3-dev, libmysqlclient15-dev,
+ libfam-dev, libldap2-dev, libfcgi-dev, libgdbm-dev, libmemcache-dev,
+ liblua5.1-0-dev, patchutils, pkg-config, uuid-dev, libsqlite3-dev,
+ libxml2-dev, libkrb5-dev, perl, libglib2.0-dev, libgeoip-dev
+Vcs-Svn: svn://svn.debian.org/pkg-lighttpd/lighttpd/trunk
+Standards-Version: 3.8.0
+Homepage: http://www.lighttpd.net
+
+Package: lighttpd1.5
+Architecture: any
+Depends: ${shlibs:Depends}, lsb-base (>= 3.0-3), mime-support, libterm-readline-perl-perl
+Provides: httpd, httpd-cgi
+Suggests: openssl, rrdtool, apache2-utils
+Description:  A fast webserver with minimal memory footprint
+ lighttpd is a small webserver and fast webserver developed with
+ security in mind and a lot of features.
+ It has support for
+   * CGI, FastCGI and SSI
+   * virtual hosts
+   * URL rewriting
+   * authentication (plain files, htpasswd, ldap)
+   * transparent content compression
+   * conditional configuration
+ and configuration is straight-forward and easy.
+
+Package: lighttpd1.5-utils
+Architecture: any
+Depends: ${shlibs:Depends}
+Provides: lighttpd-utils
+Description: Utilites from the lighttpd sources
+ This package contains two helpers:
+  - spawn-fcgi: Spawns fastcgi servers
+  - fcgi-stat-accel: A fastcgi server to pre-cache stat()
+
+Package: lighttpd1.5-doc
+Architecture: all
+Section: doc
+Suggests: lighttpd1.5
+Description: Documentation for lighttpd
+ This package contains all documentation files for lighttpd.
+
+Package: lighttpd1.5-mod-sql-vhost-core
+Architecture: any
+Depends: lighttpd1.5 (= ${binary:Version}), ${shlibs:Depends}
+Description: MySQL-based virtual host configuration for lighttpd
+ This package contains the sql_vhost_core module for lighttpd, needed
+ for the mysql/postgresl vhost modules.
+
+Package: lighttpd1.5-mod-mysql-vhost
+Architecture: any
+Depends: lighttpd1.5 (= ${binary:Version}), ${shlibs:Depends}, lighttpd1.5-mod-sql-vhost-core
+Description: MySQL-based virtual host configuration for lighttpd
+ This package contains the myqsl_vhost module for lighttpd. With
+ this module, it is possible to write the configuration for virtual
+ hosts into a MySQL table instead of including it in the lighttpd
+ configuration file.
+
+Package: lighttpd1.5-mod-postgresql-vhost
+Architecture: any
+Depends: lighttpd1.5 (= ${binary:Version}), ${shlibs:Depends}, lighttpd1.5-mod-sql-vhost-core
+Description: PostgreSQL-based virtual host configuration for lighttpd
+ This package contains the postgresql_vhost module for lighttpd. With
+ this module, it is possible to write the configuration for virtual
+ hosts into a PostgreSQL table instead of including it in the lighttpd
+ configuration file.
+
+Package: lighttpd1.5-mod-trigger-b4-dl
+Architecture: any
+Depends: lighttpd1.5 (= ${binary:Version}), ${shlibs:Depends}
+Recommends: memcached
+Description: Anti-deep-linking module for lighttpd
+ The trigger-b4-dl module for lighttpd can prevent deep linking
+ from other sites by requiring users to visit a trigger URL to
+ be able to download certain files.
+
+Package: lighttpd1.5-mod-magnet
+Architecture: any
+Depends: lighttpd1.5 (= ${binary:Version}), ${shlibs:Depends}
+Description: Control the request handling module for lighttpd
+ mod_magnet can attract a request in several stages in the request-handling.
+ either at the same level as mod_rewrite, before any parsing of the URL is done
+ or at a later stage, when the doc-root is known and the physical-path is 
+ already setup
+
+Package: lighttpd1.5-mod-webdav
+Architecture: any
+Depends: lighttpd1.5 (= ${binary:Version}), ${shlibs:Depends}
+Description: WebDAV module for lighttpd
+ The WebDAV module is a very minimalistic implementation of RFC 2518. 
+ Minimalistic means that not all operations are implemented yet.
+ .
+ Currently supports:
+  GET
+  POST
+  HEAD
+  PROPFIND
+  OPTIONS
+  MKCOL
+  DELETE
+  PUT
