@@ -7,23 +7,10 @@
 #include "http_req.h"
 #include "log.h"
 
-const char* chunkqueue_to_buffer(chunkqueue *cq, buffer *b) {
-	chunk *c;
-
-	buffer_reset(b);
-
-	for (c = cq->first; c; c = c->next) {
-		buffer_append_string(b, c->mem->ptr + c->offset);
-	}
-
-	return b->ptr;
-}
-
 int main(void) {
 	http_req *req = http_request_init();
 	chunkqueue *cq = chunkqueue_init();
 	buffer *b, *content = buffer_init();
-	const char *body;
 
 	log_init();
 	plan_tests(8);
@@ -41,8 +28,9 @@ int main(void) {
 	ok(PARSE_SUCCESS == http_request_parse_cq(cq, req), "basic GET header");
 
 	chunkqueue_remove_finished_chunks(cq);
-	body = chunkqueue_to_buffer(cq, content);
-	ok(0 == strcmp("ABC", body), "content is ABC, got %s", body);
+	buffer_reset(content);
+	chunkqueue_to_buffer(cq, content);
+	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
 
 	http_request_free(req);
 
@@ -97,8 +85,9 @@ int main(void) {
 	ok(PARSE_SUCCESS == http_request_parse_cq(cq, req), "no request key-value pairs");
 
 	chunkqueue_remove_finished_chunks(cq);
-	body = chunkqueue_to_buffer(cq, content);
-	ok(0 == strcmp("ABC", body), "content is ABC, got %s", body);
+	buffer_reset(content);
+	chunkqueue_to_buffer(cq, content);
+	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
 
 	/* LF as line-ending */
 
@@ -129,8 +118,9 @@ int main(void) {
 	ok(PARSE_SUCCESS == http_request_parse_cq(cq, req), "POST request with line-wrapping");
 
 	chunkqueue_remove_finished_chunks(cq);
-	body = chunkqueue_to_buffer(cq, content);
-	ok(0 == strcmp("ABC", body), "content is ABC, got %s", body);
+	buffer_reset(content);
+	chunkqueue_to_buffer(cq, content);
+	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
 
 	http_request_free(req);
 	chunkqueue_free(cq);

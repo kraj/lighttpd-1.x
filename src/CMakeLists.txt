@@ -438,7 +438,7 @@ INCLUDE_DIRECTORIES(${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 SET(COMMON_SRC
       buffer.c log.c
-      keyvalue.c chunk.c
+      keyvalue.c chunk.c chunk_helper.c chunk_tokenizer.c
       stream.c fdevent.c
       stat_cache.c plugin.c joblist.c etag.c array.c
       data_string.c data_count.c data_array.c

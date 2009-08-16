@@ -676,8 +676,7 @@ static handler_t connection_handle_read_request_content(server *srv, connection 
 	if (con->request.content_length == -1) return HANDLER_GO_ON;
 
 	/* if the content was short enough, it might be read already */
-	if (in->first &&
-	    chunkqueue_length(in) - in->first->offset > 0) {
+	if (chunkqueue_length(in) > 0) {
 
 		/*
 		 * looks like the request-header also had some content for us
@@ -1013,8 +1012,7 @@ void connection_state_machine(server *srv, connection *con) {
 			con->loops_per_request = 0;       /* infinite loops */
 
 			/* if the content was short enough, it might have a header already in the pipe */
-			if (con->recv_raw->first &&
-			    chunkqueue_length(con->recv_raw) - con->recv_raw->first->offset > 0) {
+			if (chunkqueue_length(con->recv_raw) > 0) {
 				/* pipelining */
 
 				switch (http_request_parse_cq(con->recv_raw, con->http_req)) {

@@ -5,23 +5,10 @@
 #include "http_resp.h"
 #include "log.h"
 
-const char* chunkqueue_to_buffer(chunkqueue *cq, buffer *b) {
-	chunk *c;
-
-	buffer_reset(b);
-
-	for (c = cq->first; c; c = c->next) {
-		buffer_append_string(b, c->mem->ptr + c->offset);
-	}
-
-	return b->ptr;
-}
-
 int main(void) {
 	http_resp *resp = http_response_init();
 	chunkqueue *cq = chunkqueue_init();
 	buffer *b, *content = buffer_init();
-	const char *body;
 
 	log_init();
 	plan_tests(9);
@@ -39,8 +26,9 @@ int main(void) {
 	ok(PARSE_SUCCESS == http_response_parse_cq(cq, resp), "good 304 response with CRLF");
 
 	chunkqueue_remove_finished_chunks(cq);
-	body = chunkqueue_to_buffer(cq, content);
-	ok(0 == strcmp("ABC", body), "content is ABC, got %s", body);
+	buffer_reset(content);
+	chunkqueue_to_buffer(cq, content);
+	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
 
 	http_response_free(resp);
 
@@ -60,8 +48,9 @@ int main(void) {
 	ok(PARSE_SUCCESS == http_response_parse_cq(cq, resp), "good response with LF");
 
 	chunkqueue_remove_finished_chunks(cq);
-	body = chunkqueue_to_buffer(cq, content);
-	ok(0 == strcmp("ABC", body), "content is ABC, got %s", body);
+	buffer_reset(content);
+	chunkqueue_to_buffer(cq, content);
+	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
 
 	http_response_free(resp);
 
@@ -97,8 +86,9 @@ int main(void) {
 	ok(PARSE_SUCCESS == http_response_parse_cq(cq, resp), "no Status at all");
 
 	chunkqueue_remove_finished_chunks(cq);
-	body = chunkqueue_to_buffer(cq, content);
-	ok(0 == strcmp("ABC", body), "content is ABC, got %s", body);
+	buffer_reset(content);
+	chunkqueue_to_buffer(cq, content);
+	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
 
 	/* LF as line-ending */
 
@@ -129,8 +119,9 @@ int main(void) {
 	ok(PARSE_SUCCESS == http_response_parse_cq(cq, resp), "chunked response");
 
 	chunkqueue_remove_finished_chunks(cq);
-	body = chunkqueue_to_buffer(cq, content);
-	ok(0 == strcmp("ABC", body), "content is ABC, got %s", body);
+	buffer_reset(content);
+	chunkqueue_to_buffer(cq, content);
+	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
 
 	http_response_free(resp);
 	chunkqueue_free(cq);

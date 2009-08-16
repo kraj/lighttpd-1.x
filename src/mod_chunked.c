@@ -269,7 +269,7 @@ static int http_chunk_append_len(chunkqueue *cq, size_t len) {
 	}
 
 	buffer_append_string_len(b, CONST_STR_LEN("\r\n"));
-	chunkqueue_append_buffer(cq, b);
+	chunkqueue_append_mem(cq, CONST_BUF_LEN(b));
 	len = b->used - 1;
 
 	buffer_free(b);
@@ -313,7 +313,7 @@ URIHANDLER_FUNC(mod_chunked_encode_response_content) {
 			in->bytes_out += we_have;
 			if(we_have == 0) continue;
 			we_have += http_chunk_append_len(out, we_have);
-			chunkqueue_append_buffer(out, c->mem);
+			chunkqueue_append_mem(out, CONST_BUF_LEN(c->mem));
 
 			chunk_set_done(c);
 			

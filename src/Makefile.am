@@ -48,7 +48,7 @@ BUILT_SOURCES = configparser.c configparser.h \
       mod_ssi_exprparser.c mod_ssi_exprparser.h
 
 common_src=buffer.c log.c \
-      keyvalue.c chunk.c filter.c \
+      keyvalue.c chunk.c chunk_helper.c chunk_tokenizer.c filter.c \
       stream.c fdevent.c \
       stat_cache.c plugin.c joblist.c etag.c array.c \
       data_string.c data_count.c data_array.c \
@@ -299,7 +299,7 @@ mod_accesslog_la_LIBADD = $(common_libadd)
 
 
 hdr = server.h buffer.h network.h log.h keyvalue.h \
-      response.h request.h fastcgi.h chunk.h filter.h \
+      response.h request.h fastcgi.h chunk.h chunk_helper.h chunk_tokenizer.h filter.h \
       settings.h http_auth_digest.h \
       md5.h http_auth.h stream.h \
       fdevent.h connections.h base.h stat_cache.h \

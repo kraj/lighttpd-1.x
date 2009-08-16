@@ -1,6 +1,8 @@
 #ifndef _CHUNK_H_
 #define _CHUNK_H_
 
+#include <glib.h>
+
 #include "buffer.h"
 #include "array.h"
 #include "sys-mmap.h"
@@ -59,36 +61,70 @@ typedef struct {
 
 LI_API void chunkpool_free(void);
 
+/* Chunk */
+
+LI_API void chunk_free(chunk *c);
+LI_API off_t chunk_length(chunk *c); /* remaining length */
+
+LI_API gboolean chunk_is_done(chunk *c);
+LI_API void chunk_set_done(chunk *c);
+
+
+/* Chunk queue */
+
 LI_API chunkqueue* chunkqueue_init(void);
-LI_API int chunkqueue_set_tempdirs(chunkqueue *c, array *tempdirs);
-LI_API int chunkqueue_append_file(chunkqueue *c, buffer *fn, off_t offset, off_t len);
-LI_API int chunkqueue_append_mem(chunkqueue *c, const char *mem, size_t len);
-LI_API int chunkqueue_append_buffer(chunkqueue *c, buffer *mem);
-LI_API int chunkqueue_prepend_buffer(chunkqueue *c, buffer *mem);
-
-LI_API buffer * chunkqueue_get_append_buffer(chunkqueue *c);
-LI_API buffer * chunkqueue_get_prepend_buffer(chunkqueue *c);
-LI_API chunk * chunkqueue_get_append_tempfile(chunkqueue *cq);
-LI_API int chunkqueue_steal_tempfile(chunkqueue *cq, chunk *in);
-LI_API off_t chunkqueue_steal_chunk(chunkqueue *cq, chunk *c);
-LI_API off_t chunkqueue_steal_chunks_len(chunkqueue *cq, chunk *c, off_t max_len);
-LI_API off_t chunkqueue_steal_all_chunks(chunkqueue *cq, chunkqueue *in);
-LI_API off_t chunkqueue_skip(chunkqueue *cq, off_t skip);
-LI_API void chunkqueue_remove_empty_last_chunk(chunkqueue *cq);
-
-LI_API int chunkqueue_remove_finished_chunks(chunkqueue *cq);
-
-LI_API off_t chunkqueue_length(chunkqueue *c);
-LI_API off_t chunkqueue_written(chunkqueue *c);
 LI_API void chunkqueue_free(chunkqueue *c);
 LI_API void chunkqueue_reset(chunkqueue *c);
 
-LI_API int chunkqueue_is_empty(chunkqueue *c);
+LI_API void chunkqueue_remove_finished_chunks(chunkqueue *cq);
+
+/* Append/Preprend */
+LI_API void chunkqueue_append_chunk(chunkqueue *cq, chunk *c);
+LI_API void chunkqueue_prepend_chunk(chunkqueue *cq, chunk *c);
+
+LI_API void chunkqueue_append_file(chunkqueue *c, buffer *fn, off_t offset, off_t len);
+
+/* Copies mem */
+LI_API void chunkqueue_append_mem(chunkqueue *c, const char *mem, size_t len);
+LI_API void chunkqueue_prepend_mem(chunkqueue *c, const char *mem, size_t len);
+
+/* Steals buffer */
+LI_API void chunkqueue_append_buffer(chunkqueue *c, buffer *mem);
+LI_API void chunkqueue_prepend_buffer(chunkqueue *c, buffer *mem);
+
+/* Steals string */
+LI_API void chunkqueue_append_gstring(chunkqueue *cq, GString *str);
+LI_API void chunkqueue_prepend_gstring(chunkqueue *cq, GString *str);
+
+/* Steal */
+LI_API off_t chunkqueue_steal_all_chunks(chunkqueue *out, chunkqueue *in);
+LI_API off_t chunkqueue_steal_len(chunkqueue *out, chunkqueue *in, off_t max_len);
+LI_API off_t chunkqueue_steal_chunks_len(chunkqueue *out, chunk *c, off_t max_len);
+LI_API off_t chunkqueue_steal_chunk(chunkqueue *out, chunk *c);
+LI_API off_t chunkqueue_steal_tempfile(chunkqueue *out, chunk *in);
+
+LI_API off_t chunkqueue_skip(chunkqueue *cq, off_t skip);
+
+/* Tempfile */
+LI_API void chunkqueue_set_tempdirs(chunkqueue *c, array *tempdirs);
+LI_API chunk * chunkqueue_get_append_tempfile(chunkqueue *cq);
+
+/* Status */
+LI_API off_t chunkqueue_length(chunkqueue *c);
+LI_API gboolean chunkqueue_is_empty(chunkqueue *c);
 
 LI_API void chunkqueue_print(chunkqueue *cq);
 
-LI_API int chunk_is_done(chunk *c);
-LI_API void chunk_set_done(chunk *c);
-LI_API off_t chunk_length(chunk *c);
+LI_API off_t chunkqueue_to_buffer(chunkqueue *cq, buffer *b);
+LI_API off_t chunkqeueu_to_gstring(chunkqueue *cq, GString *s);
+
+LI_API off_t chunkqueue_to_buffer_len(chunkqueue *cq, buffer *b, off_t max_len);
+LI_API off_t chunkqeueu_to_gstring_len(chunkqueue *cq, GString *s, off_t max_len);
+
+/* Deprecated */
+LI_API buffer * chunkqueue_get_append_buffer(chunkqueue *c);
+LI_API buffer * chunkqueue_get_prepend_buffer(chunkqueue *c);
+
+LI_API void chunkqueue_remove_empty_last_chunk(chunkqueue *cq);
 
 #endif
