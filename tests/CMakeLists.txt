@@ -12,6 +12,7 @@ SET(T_FILES
 	mod-access.t
 	mod-auth.t
 	mod-cgi.t
+	mod-deflate.t
 	mod-redirect.t
 	mod-rewrite.t
 	mod-secdownload.t
