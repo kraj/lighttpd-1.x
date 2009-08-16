@@ -538,7 +538,7 @@ int http_request_parse(server *srv, connection *con, http_req *req) {
 	case HTTP_METHOD_GET:
 	case HTTP_METHOD_HEAD:
 		/* content-length is forbidden for those */
-		if (con->request.content_length != -1) {
+		if (con->request.content_length > 0) {
 			/* content-length is missing */
 			if (srv->srvconf.log_request_header_on_error) {
 				ERROR("GET/HEAD with content-length: %d", 400);
