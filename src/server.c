@@ -36,6 +36,7 @@
 #include "plugin.h"
 #include "joblist.h"
 #include "status_counter.h"
+#include "sigchild_handler.h"
 
 /**
  * stack-size of the aio-threads
@@ -107,6 +108,7 @@ static volatile sig_atomic_t graceful_shutdown = 0;
 static volatile sig_atomic_t graceful_restart = 0;
 static volatile sig_atomic_t handle_sig_alarm = 1;
 static volatile sig_atomic_t handle_sig_hup = 0;
+static volatile sig_atomic_t handle_sig_child = 1;
 static volatile siginfo_t last_sigterm_info;
 static volatile siginfo_t last_sighup_info;
 
@@ -140,6 +142,7 @@ static void sigaction_handler(int sig, siginfo_t *si, void *context) {
 		memcpy((siginfo_t*) &last_sighup_info, si, sizeof(*si));
 		break;
 	case SIGCHLD: 
+		handle_sig_child = 1; 
 		break;
 	}
 }
@@ -154,7 +157,7 @@ static void signal_handler(int sig) {
 	     break;
 	case SIGALRM: handle_sig_alarm = 1; break;
 	case SIGHUP:  handle_sig_hup = 1; break;
-	case SIGCHLD:  break;
+	case SIGCHLD: handle_sig_child = 1; break;
 	}
 }
 #endif
@@ -812,6 +815,11 @@ static int lighty_mainloop(server *srv) {
 
 				if (cs == 1) fprintf(stderr, "\n");
 			}
+		}
+
+		if (handle_sig_child) {
+			handle_sig_child = 0;
+			sigchild_handler(srv);
 		}
 
 		if (srv->sockets_disabled) {

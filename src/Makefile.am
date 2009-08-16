@@ -70,7 +70,8 @@ common_src=buffer.c log.c \
       network_gthread_freebsd_sendfile.c \
       http_resp.c http_resp_parser.c \
       http_req.c http_req_parser.c \
-      http_req_range.c http_req_range_parser.c timing.c
+      http_req_range.c http_req_range_parser.c timing.c \
+      splaytree.c sigchild_handler.c
       
 src = server.c response.c connections.c network.c \
       configfile.c configparser.c request.c proc_open.c
@@ -329,7 +330,8 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       ajp13.h \
       mod_proxy_core_protocol.h \
       mod_magnet_cache.h \
-      timing.h 
+      timing.h \
+      splaytree.h sigchild_handler.h
 
 DEFS= @DEFS@ -DLIBRARY_DIR="\"$(libdir)\""
 

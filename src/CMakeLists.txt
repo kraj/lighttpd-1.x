@@ -469,6 +469,8 @@ SET(COMMON_SRC
       http_req_parser.c
       http_req_range.c
       http_req_range_parser.c
+      sigchild_handler.c
+      splaytree.c
       sys-files.c
       sys-socket.c
       filter.c

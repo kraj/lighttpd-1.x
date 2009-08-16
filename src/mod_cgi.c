@@ -1121,6 +1121,16 @@ TRIGGER_FUNC(cgi_trigger) {
 #endif
 			break;
 		case -1:
+			if (ECHILD == errno) {
+				cgi_pid_del(srv, p, p->cgi_pid.ptr[ndx]);
+				/* del modified the buffer structure
+					* and copies the last entry to the current one
+					* -> recheck the current index
+					*/
+				ndx--;
+				break;
+			}
+
 			log_error_write(srv, __FILE__, __LINE__, "ss", "waitpid failed: ", strerror(errno));
 
 			return HANDLER_ERROR;

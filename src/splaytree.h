@@ -1,6 +1,8 @@
 #ifndef _SPLAY_TREE_H_
 #define _SPLAY_TREE_H_
 
+#include "base.h"
+
 typedef struct tree_node {
     struct tree_node * left, * right;
     int key;
