@@ -11,15 +11,17 @@ int main(void) {
 	buffer *b, *content = buffer_init();
 
 	log_init();
-	plan_tests(9);
+	plan_tests(11);
 
 	/* basic response header + CRLF */
 	b = chunkqueue_get_append_buffer(cq);
 
 	buffer_copy_string(b,
 		"HTTP/1.0 304 Not Modified\r\n"
-		"Location: foobar\r\n"
-		"Content-Lenght: 24\r\n"
+// 		"HTTP/1.0 304 Not Modified\r\n"
+//  		"Location: foobar\r\n"
+// 		"Content-Lenght: 24\r\n"
+// 		"\r\nABC"
 		"\r\nABC"
 	);
 
@@ -28,7 +30,7 @@ int main(void) {
 	chunkqueue_remove_finished_chunks(cq);
 	buffer_reset(content);
 	chunkqueue_to_buffer(cq, content);
-	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
+	ok(0 == strcmp("ABC", SAFE_BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
 
 	http_response_free(resp);
 
@@ -46,6 +48,25 @@ int main(void) {
 	);
 
 	ok(PARSE_SUCCESS == http_response_parse_cq(cq, resp), "good response with LF");
+
+	chunkqueue_remove_finished_chunks(cq);
+	buffer_reset(content);
+	chunkqueue_to_buffer(cq, content);
+	ok(0 == strcmp("ABC", BUF_STR(content)), "content is ABC, got %s", BUF_STR(content));
+
+	http_response_free(resp);
+
+	/* NPH */
+
+	chunkqueue_reset(cq);
+	resp = http_response_init();
+
+	chunkqueue_append_mem(cq, CONST_STR_LEN(
+		"HTTP/1.0 304 Not Modified\n"
+		"\nABC"
+	));
+
+	ok(PARSE_SUCCESS == http_response_parse_cq(cq, resp), "good response with NPH");
 
 	chunkqueue_remove_finished_chunks(cq);
 	buffer_reset(content);
