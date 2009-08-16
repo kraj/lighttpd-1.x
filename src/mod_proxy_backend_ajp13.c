@@ -650,11 +650,9 @@ PROXY_STREAM_DECODER_FUNC(proxy_ajp13_stream_decoder_internal) {
 		if(we_parsed < data->chunk_len) {
 			we_need = data->chunk_len - we_parsed;
 			/* copy chunk data */
-			we_parsed = chunkqueue_steal_chunks_len(out, in->first, we_need);
+			we_parsed = chunkqueue_steal_len(out, in, we_need);
 			data->packet.offset += we_parsed;
 			we_need -= we_parsed;
-			in->bytes_out += we_parsed;
-			out->bytes_in += we_parsed;
 		}
 		we_need = data->packet.len - (data->packet.offset - AJP13_FULL_HEADER_LEN);
 		/* ignore padding */
@@ -662,7 +660,6 @@ PROXY_STREAM_DECODER_FUNC(proxy_ajp13_stream_decoder_internal) {
 			we_parsed = chunkqueue_skip(in, we_need);
 			data->packet.offset += we_parsed;
 			we_need -= we_parsed;
-			in->bytes_out += we_parsed;
 		}
 		rc = HANDLER_GO_ON;
 		break;
@@ -766,9 +763,7 @@ PROXY_STREAM_ENCODER_FUNC(proxy_ajp13_stream_encoder) {
 	chunkqueue_append_buffer(out, b);
 	out->bytes_in += b->used - 1;
 
-	we_have = chunkqueue_steal_chunks_len(out, in->first, we_need);
-	in->bytes_out += we_have;
-	out->bytes_in += we_have;
+	we_have = chunkqueue_steal_len(out, in, we_need);
 
 	if (in->bytes_in == in->bytes_out && in->is_closed) {
 		/* We are finished encoding the request content,

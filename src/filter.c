@@ -160,18 +160,14 @@ void filter_chain_remove_filter(filter_chain *chain, filter *fl) {
  * move all the content of the last filter to the chunk queue 
  */
 off_t filter_chain_copy_output(filter_chain *chain, chunkqueue *out) {
-	off_t total;
 	chunkqueue *in;
+	off_t total;
 
 	if (!chain || !out) return 0;
 	if (out->is_closed) return 0;
 
 	in = chain->last->cq;
 	total = chunkqueue_steal_all_chunks(out, in);
-	in->bytes_out += total;
-	out->bytes_in += total;
-
-	chunkqueue_remove_finished_chunks(in);
 
 	if (in->is_closed) {
 		out->is_closed = 1;

@@ -244,7 +244,7 @@ URIHANDLER_FUNC(mod_chunked_response_header) {
 	return HANDLER_GO_ON;
 }
 
-static int http_chunk_append_len(chunkqueue *cq, size_t len) {
+static void http_chunk_append_len(chunkqueue *cq, size_t len) {
 	size_t i, olen = len, j;
 	buffer *b;
 
@@ -269,12 +269,8 @@ static int http_chunk_append_len(chunkqueue *cq, size_t len) {
 	}
 
 	buffer_append_string_len(b, CONST_STR_LEN("\r\n"));
-	chunkqueue_append_mem(cq, CONST_BUF_LEN(b));
-	len = b->used - 1;
-
-	buffer_free(b);
-
-	return len;
+	chunkqueue_append_buffer(cq, b);
+	cq->bytes_in += b->used - 1;
 }
 
 /**
@@ -285,7 +281,7 @@ URIHANDLER_FUNC(mod_chunked_encode_response_content) {
 	handler_ctx *hctx = con->plugin_ctx[p->id];
 	chunkqueue *in;
 	chunkqueue *out;
-	int we_have = 0;
+	off_t we_have = 0;
 	chunk *c;
 
 	UNUSED(srv);
@@ -302,44 +298,18 @@ URIHANDLER_FUNC(mod_chunked_encode_response_content) {
 	if (out->is_closed) return HANDLER_GO_ON;
 
 	/* move all chunks to the out queue
-	 * and append a HTTP/1.1 chunked header to each chunk 
+	 * and prepend a HTTP/1.1 chunked header to each chunk 
 	 */
 	for (c = in->first; c; c = c->next) {
-		switch (c->type) {
-		case MEM_CHUNK:
-			if (c->mem->used == 0) continue;
+		we_have = chunk_length(c);
+		http_chunk_append_len(out, we_have);
 
-			we_have = c->mem->used - c->offset - 1;
-			in->bytes_out += we_have;
-			if(we_have == 0) continue;
-			we_have += http_chunk_append_len(out, we_have);
-			chunkqueue_append_mem(out, CONST_BUF_LEN(c->mem));
-
-			chunk_set_done(c);
-			
-			break;
-		case FILE_CHUNK:
-			if (c->file.length == 0) continue;
-
-			we_have = c->file.length;
-			in->bytes_out += we_have;
-			we_have += http_chunk_append_len(out, c->file.length);
-
-			if(c->file.is_temp) {
-				chunkqueue_steal_tempfile(out, c);
-			} else {
-				chunkqueue_append_file(out, c->file.name, c->file.start, c->file.length);
-			}
-
-			chunk_set_done(c);
-
-			break;
-		case UNUSED_CHUNK:
-			break;
-		}
-		chunkqueue_append_mem(out, CONST_STR_LEN("\r\n"));
-		we_have += 2;
+		chunkqueue_steal_chunk(out, c);
+		in->bytes_out += we_have;
 		out->bytes_in += we_have;
+
+		chunkqueue_append_mem(out, CONST_STR_LEN("\r\n"));
+		out->bytes_in += 2;
 	}
 
 	/* terminate the last chunk */

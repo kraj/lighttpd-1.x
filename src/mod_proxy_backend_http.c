@@ -255,10 +255,7 @@ PROXY_STREAM_DECODER_FUNC(proxy_http_stream_decoder) {
 	} else {
 		/* no chunked encoding, ok, perhaps a content-length ? */
 
-		chunkqueue_remove_finished_chunks(in);
 		we_have = chunkqueue_steal_len(out, in, sess->content_length - sess->bytes_read);
-		out->bytes_in += we_have;
-		in->bytes_out += we_have;
 		sess->bytes_read += we_have;
 
 		if (in->is_closed || sess->bytes_read == sess->content_length) {
@@ -278,7 +275,6 @@ PROXY_STREAM_DECODER_FUNC(proxy_http_stream_decoder) {
 PROXY_STREAM_ENCODER_FUNC(proxy_http_stream_encoder) {
 	proxy_connection *proxy_con = sess->proxy_con;
 	chunkqueue *out = proxy_con->send;
-	int we_have = 0;
 
 	UNUSED(srv);
 
@@ -286,9 +282,7 @@ PROXY_STREAM_ENCODER_FUNC(proxy_http_stream_encoder) {
 	if(out->is_closed) return HANDLER_FINISHED;
 
 	/* encode all request content data into output queue. */
-	we_have = chunkqueue_steal_all_chunks(out, in);
-	in->bytes_out += we_have;
-	out->bytes_in += we_have;
+	chunkqueue_steal_all_chunks(out, in);
 
 	if (in->bytes_in == in->bytes_out && in->is_closed) {
 		out->is_closed = 1;

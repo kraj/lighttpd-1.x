@@ -549,32 +549,17 @@ static void proxy_session_free(proxy_session *sess) {
  * Copy decoded response content to client connection.
  */
 static int proxy_copy_response(server *srv, connection *con, proxy_session *sess) {
-	chunk *c;
-	int we_have = 0;
-
 	UNUSED(srv);
 
-	chunkqueue_remove_finished_chunks(sess->recv);
-	/* copy the content to the next cq */
-	for (c = sess->recv->first; c; c = c->next) {
-		if (c->mem->used == 0) continue;
-
-		we_have = c->mem->used - c->offset - 1;
-		sess->recv->bytes_out += we_have;
-		if (sess->send_response_content) {
-			con->send->bytes_in += we_have;
-			/* X-Sendfile ignores the content-body */
-			chunkqueue_steal_chunk(con->send, c);
-		} else {
-			/* discard the data */
-			chunk_set_done(c);
+	if (sess->send_response_content) {
+		chunkqueue_steal_all_chunks(con->send, sess->recv);
+		if (sess->recv->is_closed) {
+			con->send->is_closed = 1;
 		}
+	} else {
+		chunkqueue_skip_all(sess->recv);
 	}
-	chunkqueue_remove_finished_chunks(sess->recv);
 
-	if(sess->recv->is_closed && sess->send_response_content) {
-		con->send->is_closed = 1;
-	}
 	return 0;
 }
 

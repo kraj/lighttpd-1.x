@@ -128,23 +128,12 @@ void chunk_free(chunk *c) {
  * mark the chunk as done
  *
  * @param c chunk to set done
+ * @return skipped bytes (add them to cq->bytes_out)
  */
-void chunk_set_done(chunk *c) {
-	switch (c->type) {
-	case MEM_CHUNK:
-		c->offset = c->mem->used - 1;
-		break;
-	case FILE_CHUNK:
-		c->offset = c->file.length;
-		break;
-/*
-	case GSTRING_CHUNK:
-		c->offset = c->str->len;
-		break;
-*/
-	case UNUSED_CHUNK:
-		break;
-	}
+off_t chunk_set_done(chunk *c) {
+	off_t len = chunk_length(c);
+	c->offset += len;
+	return len;
 }
 
 /**
@@ -419,26 +408,27 @@ off_t chunkqueue_steal_all_chunks(chunkqueue *out, chunkqueue *in) {
 	for (c = in->first; c; c = c->next) {
 		total += chunkqueue_steal_chunk(out, c);
 	}
+	out->bytes_in += total;
+	in->bytes_out += total;
+
+	chunkqueue_remove_finished_chunks(in);
 
 	return total;
-}
-
-off_t chunkqueue_steal_len(chunkqueue *out, chunkqueue *in, off_t max_len) {
-	return chunkqueue_steal_chunks_len(out, in->first, max_len);
 }
 
 /*
  * copy/steal max_len bytes from chunk chain.  return total bytes copied/stolen.
  *
  */
-off_t chunkqueue_steal_chunks_len(chunkqueue *out, chunk *c, off_t max_len) {
+off_t chunkqueue_steal_len(chunkqueue *out, chunkqueue *in, off_t max_len) {
+	chunk *c;
 	off_t total = 0;
 	off_t we_have = 0, we_want = 0;
 
-	if (!out || !c) return 0;
+	if (!out || !in) return 0;
 
 	/* copy/steal chunks */
-	for (; c && max_len > 0; c = c->next) {
+	for (c = in->first; c && max_len > 0; c = c->next) {
 		switch (c->type) {
 		case FILE_CHUNK:
 			we_have = c->file.length - c->offset;
@@ -528,6 +518,9 @@ off_t chunkqueue_steal_chunks_len(chunkqueue *out, chunk *c, off_t max_len) {
 			break;
 		}
 	}
+	out->bytes_in += total;
+	in->bytes_out += total;
+	chunkqueue_remove_finished_chunks(in);
 	return total;
 }
 
@@ -633,6 +626,29 @@ off_t chunkqueue_skip(chunkqueue *cq, off_t skip) {
 		total += we_want;
 		skip -= we_want;
 	}
+	cq->bytes_out += total;
+
+	return total;
+}
+
+/**
+ * skip all bytes in the chunkqueue 
+ *
+ * @param cq chunkqueue
+ * @return bytes skipped
+ */
+off_t chunkqueue_skip_all(chunkqueue *cq) {
+	off_t total = 0;
+	chunk *c;
+
+	if (!cq) return 0;
+
+	/* consume chunks */
+	for (c = cq->first; c; c = c->next) {
+		total += chunk_set_done(c);
+	}
+	cq->bytes_out += total;
+	chunkqueue_remove_finished_chunks(cq);
 
 	return total;
 }

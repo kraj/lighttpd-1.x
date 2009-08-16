@@ -489,7 +489,6 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
  * mark all the content as read
  */
 CONNECTION_FUNC(mod_staticfile_dev_null) {
-	chunk *c;
 	chunkqueue *in = con->recv;
 
 	UNUSED(srv);
@@ -501,38 +500,7 @@ CONNECTION_FUNC(mod_staticfile_dev_null) {
 	if (in->bytes_in == in->bytes_out &&
 	    in->is_closed) return HANDLER_GO_ON;
 
-	for (c = in->first; in->bytes_out < in->bytes_in; c = c->next) {
-		off_t weWant = in->bytes_in - in->bytes_out;
-		off_t weHave = 0;
-
-		/* we announce toWrite octects
-		 * now take all the request_content chunk that we need to fill this request
-		 */
-
-		switch (c->type) {
-		case FILE_CHUNK:
-			weHave = c->file.length - c->offset;
-
-			if (weHave > weWant) weHave = weWant;
-
-			c->offset += weHave;
-			in->bytes_out += weHave;
-
-			break;
-		case MEM_CHUNK:
-			/* append to the buffer */
-			weHave = c->mem->used - 1 - c->offset;
-
-			if (weHave > weWant) weHave = weWant;
-
-			c->offset += weHave;
-			in->bytes_out += weHave;
-
-			break;
-		default:
-			break;
-		}
-	}
+	chunkqueue_skip_all(in);
 
 	return HANDLER_GO_ON;
 

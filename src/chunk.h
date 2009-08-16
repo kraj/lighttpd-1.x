@@ -67,7 +67,7 @@ LI_API void chunk_free(chunk *c);
 LI_API off_t chunk_length(chunk *c); /* remaining length */
 
 LI_API gboolean chunk_is_done(chunk *c);
-LI_API void chunk_set_done(chunk *c);
+LI_API off_t chunk_set_done(chunk *c);
 
 
 /* Chunk queue */
@@ -99,11 +99,11 @@ LI_API void chunkqueue_prepend_gstring(chunkqueue *cq, GString *str);
 /* Steal */
 LI_API off_t chunkqueue_steal_all_chunks(chunkqueue *out, chunkqueue *in);
 LI_API off_t chunkqueue_steal_len(chunkqueue *out, chunkqueue *in, off_t max_len);
-LI_API off_t chunkqueue_steal_chunks_len(chunkqueue *out, chunk *c, off_t max_len);
 LI_API off_t chunkqueue_steal_chunk(chunkqueue *out, chunk *c);
 LI_API off_t chunkqueue_steal_tempfile(chunkqueue *out, chunk *in);
 
 LI_API off_t chunkqueue_skip(chunkqueue *cq, off_t skip);
+LI_API off_t chunkqueue_skip_all(chunkqueue *cq);
 
 /* Tempfile */
 LI_API void chunkqueue_set_tempdirs(chunkqueue *c, array *tempdirs);

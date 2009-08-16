@@ -20,6 +20,7 @@
 #include <assert.h>
 
 #include "base.h"
+#include "chunk_helper.h"
 #include "log.h"
 #include "buffer.h"
 #include "response.h"
@@ -810,145 +811,6 @@ static int mod_deflate_stream_end(server *srv, connection *con, handler_ctx *hct
 	return ret;
 }
 
-static int mod_deflate_file_chunk(server *srv, connection *con, handler_ctx *hctx, chunk *c, off_t st_size) {
-	plugin_data *p = hctx->plugin_data;
-	off_t abs_offset;
-	off_t toSend;
-	stat_cache_entry *sce = NULL;
-	size_t we_want_to_mmap = 2 MByte; 
-	size_t we_want_to_send = st_size;
-	char *start = NULL;
-
-	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, c->file.name, &sce)) {
-		ERROR("stat_cache_get_entry('%s') failed: %s",
-				SAFE_BUF_STR(c->file.name), strerror(errno));
-		return -1;
-	}
-
-	abs_offset = c->file.start + c->offset;
-	
-	if (c->file.length + c->file.start > sce->st.st_size) {
-		ERROR("file '%s' was shrinked: was %ju, is %ju (%ju, %ju)", 
-				SAFE_BUF_STR(c->file.name), (intmax_t) c->file.length + c->file.start, (intmax_t) sce->st.st_size,
-				(intmax_t) c->file.start, (intmax_t) c->offset);
-		
-		return -1;
-	}
-
-	we_want_to_send = st_size;
-	/* mmap the buffer 
-	 * - first mmap 
-	 * - new mmap as the we are at the end of the last one */
-	if (c->file.mmap.start == MAP_FAILED ||
-	    abs_offset == (off_t)(c->file.mmap.offset + c->file.mmap.length)) {
-
-		/* Optimizations for the future:
-		 *
-		 * adaptive mem-mapping
-		 *   the problem:
-		 *     we mmap() the whole file. If someone has alot large files and 32bit
-		 *     machine the virtual address area will be unrun and we will have a failing 
-		 *     mmap() call.
-		 *   solution:
-		 *     only mmap 16M in one chunk and move the window as soon as we have finished
-		 *     the first 8M
-		 *
-		 * read-ahead buffering
-		 *   the problem:
-		 *     sending out several large files in parallel trashes the read-ahead of the
-		 *     kernel leading to long wait-for-seek times.
-		 *   solutions: (increasing complexity)
-		 *     1. use madvise
-		 *     2. use a internal read-ahead buffer in the chunk-structure
-		 *     3. use non-blocking IO for file-transfers
-		 *   */
-
-		/* all mmap()ed areas are 512kb expect the last which might be smaller */
-		size_t to_mmap;
-
-		/* this is a remap, move the mmap-offset */
-		if (c->file.mmap.start != MAP_FAILED) {
-			munmap(c->file.mmap.start, c->file.mmap.length);
-			c->file.mmap.offset += we_want_to_mmap;
-		} else {
-			/* in case the range-offset is after the first mmap()ed area we skip the area */
-			c->file.mmap.offset = 0;
-
-			while (c->file.mmap.offset + (off_t) we_want_to_mmap < c->file.start) {
-				c->file.mmap.offset += we_want_to_mmap;
-			}
-		}
-
-		/* length is rel, c->offset too, assume there is no limit at the mmap-boundaries */
-		to_mmap = (c->file.start + c->file.length) - c->file.mmap.offset;
-		if(to_mmap > we_want_to_mmap) to_mmap = we_want_to_mmap;
-		/* we have more to send than we can mmap() at once */
-		if(we_want_to_send > to_mmap) we_want_to_send = to_mmap;
-
-		if (-1 == c->file.fd) {  /* open the file if not already open */
-			if (-1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
-				ERROR("open failed for '%s': %s", SAFE_BUF_STR(c->file.name), strerror(errno));
-				return -1;
-			}
-#ifdef FD_CLOEXEC
-			fcntl(c->file.fd, F_SETFD, FD_CLOEXEC);
-#endif
-		}
-
-		if (MAP_FAILED == (c->file.mmap.start = mmap(0, to_mmap, PROT_READ, MAP_SHARED, c->file.fd, c->file.mmap.offset))) {
-			/* close it here, otherwise we'd have to set FD_CLOEXEC */
-
-			ERROR("mmap failed for '%s' (%i): %s", SAFE_BUF_STR(c->file.name), c->file.fd, strerror(errno));
-			return -1;
-		}
-
-		c->file.mmap.length = to_mmap;
-#ifdef LOCAL_BUFFERING
-		buffer_copy_string_len(c->mem, c->file.mmap.start, c->file.mmap.length);
-#else
-#ifdef HAVE_MADVISE
-		/* don't advise files < 64Kb */
-		if (c->file.mmap.length > (64 KByte) && 
-		    0 != madvise(c->file.mmap.start, c->file.mmap.length, MADV_WILLNEED)) {
-			ERROR("madvise failed for '%s' (%i): %s", SAFE_BUF_STR(c->file.name), c->file.fd, strerror(errno));
-		}
-#endif
-#endif
-
-		/* chunk_reset() or chunk_free() will cleanup for us */
-	}
-
-	/* to_send = abs_mmap_end - abs_offset */
-	toSend = (c->file.mmap.offset + c->file.mmap.length) - (abs_offset);
-	if (toSend > (off_t) we_want_to_send) toSend = we_want_to_send;
-
-	if (toSend < 0) {
-		ERROR("toSend is negative: %u %u %u %u",
-				(unsigned int) toSend,
-				(unsigned int) c->file.mmap.length,
-				(unsigned int) abs_offset,
-				(unsigned int) c->file.mmap.offset);
-		assert(toSend < 0);
-	}
-
-#ifdef LOCAL_BUFFERING
-	start = c->mem->ptr;
-#else
-	start = c->file.mmap.start;
-#endif
-
-	if(p->conf.debug) {
-		TRACE("compress file chunk: offset=%i, toSend=%i", (int)c->offset, (int)toSend);
-	}
-	if (mod_deflate_compress(srv, con, hctx,
-				(unsigned char *)start + (abs_offset - c->file.mmap.offset), toSend) < 0) {
-		ERROR("%s", "compress failed.");
-		return -1;
-	}
-
-	return toSend;
-}
-
 static int deflate_compress_cleanup(server *srv, connection *con, handler_ctx *hctx) {
 	plugin_data *p = hctx->plugin_data;
 
@@ -979,14 +841,14 @@ static handler_t deflate_compress_response(server *srv, connection *con, handler
 	plugin_data *p = hctx->plugin_data;
 	chunk *c;
 	size_t chunks_written = 0;
-	int chunk_finished = 0;
 	int rc=-1;
-	int we_want = 0, we_have = 0;
-	int out = 0, max = 0;
-	
+	off_t we_have, we_want;
+	off_t out = 0, max = 0;
+	char * offset;
+
 	we_have = chunkqueue_length(hctx->in);
 	if (p->conf.debug) {
-		TRACE("compress: in_queue len=%i", we_have);
+		TRACE("compress: in_queue len=%jd", (intmax_t) we_have);
 	}
 	/* calculate max bytes to compress for this call. */
 	if (!end) {
@@ -996,44 +858,23 @@ static handler_t deflate_compress_response(server *srv, connection *con, handler
 		max = we_have;
 	}
 
+// mmap max 512 KByte
+#define LOCAL_BUF_SIZE (512 * 1024)
+
 	/* Compress chunks from in queue into chunks for out queue */
 	for (c = hctx->in->first; c && max > 0; c = c->next) {
-		chunk_finished = 0;
-		we_have = 0;
-		we_want = 0;
-		
-		switch(c->type) {
-		case MEM_CHUNK:
-			if (c->mem->used == 0) continue;
-			
-			we_have = c->mem->used - c->offset - 1;
-			if (we_have == 0) continue;
-			
-			we_want = we_have < max ? we_have : max;
+		we_want = we_have = chunk_length(c);
+		if (!we_want) continue;
+		if (c->type == FILE_CHUNK && we_want > LOCAL_BUF_SIZE) we_want = LOCAL_BUF_SIZE;
+		if (we_want > max) we_want = max;
 
-			if (mod_deflate_compress(srv, con, hctx, (unsigned char *)(c->mem->ptr + c->offset), we_want) < 0) {
-				ERROR("%s", "compress failed.");
-				return HANDLER_ERROR;
-			}
+		if (!chunk_get_data(srv, con, c, we_want, &offset, &we_want)) {
+			ERROR("%s", "Couldn't get chunk data");
+			return HANDLER_ERROR;
+		}
 
-			break;
-		case FILE_CHUNK:
-			if (c->file.length == 0) continue;
-			
-			we_have = c->file.length - c->offset;
-			if (we_have == 0) continue;
-			
-			we_want = we_have < max ? we_have : max;
-			
-			if ((we_want = mod_deflate_file_chunk(srv, con, hctx, c, we_want)) < 0) {
-				ERROR("%s", "compress file chunk failed.");
-				return HANDLER_ERROR;
-			}
-			
-			break;
-		default:
-			ERROR("type not known: %d", c->type);
-			
+		if (mod_deflate_compress(srv, con, hctx, (unsigned char *) offset, we_want) < 0) {
+			ERROR("%s", "compress failed.");
 			return HANDLER_ERROR;
 		}
 
@@ -1041,26 +882,15 @@ static handler_t deflate_compress_response(server *srv, connection *con, handler
 		c->offset += we_want;
 		out += we_want;
 		max -= we_want;
-	
-		if (c->type == FILE_CHUNK && 
-		    c->offset == c->file.length &&
-		    c->file.mmap.start != MAP_FAILED) {
-			/* we don't need the mmaping anymore */
-			munmap(c->file.mmap.start, c->file.mmap.length);
-			c->file.mmap.start = MAP_FAILED;
-		}
 
-		if (we_have == we_want) {
-			/* chunk finished */
-			chunk_finished = 1;
-			chunks_written++;
+		if (we_want != we_have) {
+			break;
 		}
-		/* make sure we finished compressing the chunk before going to the next chunk */
-		if(!chunk_finished) break;
+		chunks_written++;
 	}
 
 	if (p->conf.debug) {
-		TRACE("compressed bytes: %i", out);
+		TRACE("compressed bytes: %jd", (intmax_t) out);
 	}
 
 	if (chunks_written > 0) {
@@ -1101,8 +931,6 @@ static handler_t deflate_compress_response(server *srv, connection *con, handler
 			write(hctx->cache_fd, offset, we_want);
 			chunkqueue_steal_len(hctx->cache_out, hctx->out, we_want);
 			chunkqueue_remove_finished_chunks(hctx->out);
-			hctx->out->bytes_out += we_want;
-			hctx->cache_out->bytes_in += we_want;
 		}
 	}
 

@@ -541,11 +541,9 @@ PROXY_STREAM_DECODER_FUNC(proxy_fastcgi_stream_decoder_internal) {
 	case FCGI_STDOUT:
 		if (we_need > 0) {
 			/* copy packet contents */
-			we_have = chunkqueue_steal_chunks_len(out, in->first, we_need);
+			we_have = chunkqueue_steal_len(out, in, we_need);
 			data->packet.offset += we_have;
 			we_need -= we_have;
-			in->bytes_out += we_have;
-			out->bytes_in += we_have;
 		} else {
 			/**
 			 * we might come here again if the padding is part of the next packet 
@@ -656,7 +654,6 @@ mod_proxy_backend_fastcgi.c.597: (trace) (stderr from 127.0.0.1:9090 for /trac/)
 			we_have = chunkqueue_skip(in, we_need);
 			data->packet.offset += we_have;
 			we_need -= we_have;
-			in->bytes_out += we_have;
 		}
 		if(we_need == 0) {
 #ifndef PROXY_FASTCGI_USE_KEEP_ALIVE
@@ -679,7 +676,6 @@ mod_proxy_backend_fastcgi.c.597: (trace) (stderr from 127.0.0.1:9090 for /trac/)
 	if(we_need == 0 && data->packet.padding > 0) {
 		we_have = chunkqueue_skip(in, data->packet.padding);
 		data->packet.padding -= we_have;
-		in->bytes_out += we_have;
 	}
 
 	if(we_need == 0 && data->packet.padding == 0) {
@@ -715,7 +711,6 @@ PROXY_STREAM_DECODER_FUNC(proxy_fastcgi_stream_decoder) {
 PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_stream_encoder) {
 	proxy_connection *proxy_con = sess->proxy_con;
 	chunkqueue *out = proxy_con->send;
-	chunk *c;
 	FCGI_Header header;
 	off_t we_need = 0, we_have = 0;
 
@@ -724,23 +719,20 @@ PROXY_STREAM_ENCODER_FUNC(proxy_fastcgi_stream_encoder) {
 	/* output queue closed, can't encode any more data. */
 	if(out->is_closed) return HANDLER_FINISHED;
 
+	we_need = in->bytes_in - in->bytes_out;
 	/* encode data into output queue. */
-	for (c = in->first; in->bytes_out < in->bytes_in; ) {
+	while (we_need) {
 		/*
 		 * write fcgi header
 		 */
-		if(we_need == 0) {
-			we_need = in->bytes_in - in->bytes_out;
-			if(we_need > FCGI_MAX_LENGTH) we_need = FCGI_MAX_LENGTH;
+		we_have = we_need;
+		if(we_have > FCGI_MAX_LENGTH) we_have = FCGI_MAX_LENGTH;
 
-			fcgi_header(&(header), FCGI_STDIN, PROXY_FASTCGI_REQUEST_ID, we_need, 0);
-			chunkqueue_append_mem(out, (const char *)&header, sizeof(header));
-			out->bytes_in += sizeof(header);
-		}
+		fcgi_header(&(header), FCGI_STDIN, PROXY_FASTCGI_REQUEST_ID, we_have, 0);
+		chunkqueue_append_mem(out, (const char *)&header, sizeof(header));
+		out->bytes_in += sizeof(header);
 
-		we_have = chunkqueue_steal_chunks_len(out, c, we_need);
-		in->bytes_out += we_have;
-		out->bytes_in += we_have;
+		assert(we_have == chunkqueue_steal_len(out, in, we_have));
 		we_need -= we_have;
 	}
 

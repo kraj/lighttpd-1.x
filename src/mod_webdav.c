@@ -26,6 +26,7 @@
 #endif
 
 #include "base.h"
+#include "chunk_helper.h"
 #include "log.h"
 #include "buffer.h"
 #include "response.h"
@@ -1065,74 +1066,29 @@ static int webdav_parse_chunkqueue(server *srv, connection *con, plugin_data *p,
 
 	chunk *c;
 
-	UNUSED(con);
+	UNUSED(p);
 
 	/* read the chunks in to the XML document */
 	ctxt = xmlCreatePushParserCtxt(NULL, NULL, NULL, 0, NULL);
 
 	for (c = cq->first; cq->bytes_out != cq->bytes_in; c = cq->first) {
-		size_t weWant = cq->bytes_out - cq->bytes_in;
-		size_t weHave;
+		char *offset;
+		off_t weHave = chunk_length(c);
+		if (!weHave) continue;
 
-		switch(c->type) {
-		case FILE_CHUNK:
-			weHave = c->file.length - c->offset;
+		// do not ask for mmap > 512k
+		if (c->type == FILE_CHUNK && weHave > (512*1024)) weHave = 512*1024;
 
-			if (weHave > weWant) weHave = weWant;
-
-			/* xml chunks are always memory, mmap() is our friend */
-			if (c->file.mmap.start == MAP_FAILED) {
-				if (-1 == c->file.fd &&  /* open the file if not already open */
-				    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
-					ERROR("open(%s) failed: %s", SAFE_BUF_STR(c->file.name), strerror(errno));
-
-					return -1;
-				}
-
-				if (MAP_FAILED == (c->file.mmap.start = mmap(0, c->file.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
-					ERROR("mmap(%s) failed: %s", SAFE_BUF_STR(c->file.name), strerror(errno));
-
-					return -1;
-				}
-
-				close(c->file.fd);
-				c->file.fd = -1;
-
-				c->file.mmap.length = c->file.length;
-
-				/* chunk_reset() or chunk_free() will cleanup for us */
-			}
-
-			if (XML_ERR_OK != (err = xmlParseChunk(ctxt, c->file.mmap.start + c->offset, weHave, 0))) {
-				ERROR("xmlParseChunk() failed: %d", err);
-				log_error_write(srv, __FILE__, __LINE__, "sddd", "xmlParseChunk failed at:", cq->bytes_out, weHave, err);
-			}
-
-			c->offset += weHave;
-			cq->bytes_out += weHave;
-
-			break;
-		case MEM_CHUNK:
-			/* append to the buffer */
-			weHave = c->mem->used - 1 - c->offset;
-
-			if (weHave > weWant) weHave = weWant;
-
-			if (p->conf.log_xml) {
-				TRACE("XML-request-body: %s", c->mem->ptr + c->offset);
-			}
-
-			if (XML_ERR_OK != (err = xmlParseChunk(ctxt, c->mem->ptr + c->offset, weHave, 0))) {
-				ERROR("xmlParseChunk(%s) failed: %d", c->mem->ptr + c->offset, err);
-			}
-
-			c->offset += weHave;
-			cq->bytes_out += weHave;
-
-			break;
-		case UNUSED_CHUNK:
-			break;
+		if (!chunk_get_data(srv, con, c, weHave, &offset, &weHave)) {
+			ERROR("%s", "Couldn't get chunk data");
+			return -1;
 		}
+
+		if (XML_ERR_OK != (err = xmlParseChunk(ctxt, offset, weHave, 0))) {
+			ERROR("xmlParseChunk() failed at: %jd: %d", (intmax_t) cq->bytes_out, err);
+		}
+
+		chunkqueue_skip(cq, weHave);
 		chunkqueue_remove_finished_chunks(cq);
 	}
 
@@ -1842,70 +1798,37 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 		con->send->is_closed = 1;
 
 		for (c = cq->first; c; c = cq->first) {
-			int r = 0;
+			ssize_t r;
+			char *offset;
+			off_t we_have;
 
-			/* copy all chunks */
-			switch(c->type) {
-			case FILE_CHUNK:
+			we_have = chunk_length(c);
+			if (!we_have) {
+				chunkqueue_remove_finished_chunks(cq);
+				continue;
+			}
+			if (c->type == FILE_CHUNK && we_have > (512*1024)) we_have = 512*1024;
 
-				if (c->file.mmap.start == MAP_FAILED) {
-					if (-1 == c->file.fd &&  /* open the file if not already open */
-					    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
-						log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
-
-						return HANDLER_ERROR;
-					}
-
-					if (MAP_FAILED == (c->file.mmap.start = mmap(0, c->file.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
-						log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed: ",
-								strerror(errno), c->file.name,  c->file.fd);
-
-						return HANDLER_ERROR;
-					}
-
-					c->file.mmap.length = c->file.length;
-
-					close(c->file.fd);
-					c->file.fd = -1;
-
-					/* chunk_reset() or chunk_free() will cleanup for us */
-				}
-
-				if ((r = write(fd, c->file.mmap.start + c->offset, c->file.length - c->offset)) < 0) {
-					switch(errno) {
-					case ENOSPC:
-						con->http_status = 507;
-
-						break;
-					default:
-						con->http_status = 403;
-						break;
-					}
-				}
-				break;
-			case MEM_CHUNK:
-				if ((r = write(fd, c->mem->ptr + c->offset, c->mem->used - c->offset - 1)) < 0) {
-					switch(errno) {
-					case ENOSPC:
-						con->http_status = 507;
-
-						break;
-					default:
-						con->http_status = 403;
-						break;
-					}
-				}
-				break;
-			case UNUSED_CHUNK:
-				break;
+			if (!chunk_get_data(srv, con, c, we_have, &offset, &we_have)) {
+				ERROR("%s", "Couldn't get chunk data");
+				return -1;
 			}
 
-			if (r > 0) {
-				c->offset += r;
-				cq->bytes_out += r;
-			} else {
-				break;
+			if ((r = write(fd, offset, we_have)) < 0) {
+				switch(errno) {
+				case ENOSPC:
+					con->http_status = 507;
+
+					break;
+				default:
+					con->http_status = 403;
+					break;
+				}
+				ERROR("write('%s') failed: %s", BUF_STR(con->physical.path), strerror(errno));
+				return HANDLER_ERROR;
 			}
+
+			chunkqueue_skip(cq, r);
 			chunkqueue_remove_finished_chunks(cq);
 		}
 		close(fd);
