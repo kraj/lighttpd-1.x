@@ -311,6 +311,7 @@ hdr = server.h buffer.h network.h log.h keyvalue.h \
       proc_open.h mod_sql_vhost_core.h \
       sys-files.h sys-process.h sys-strings.h  \
       iosocket.h array-static.h \
+      list.h \
       mod_proxy_core_address.h \
       mod_proxy_core_backend.h \
       mod_proxy_core_backlog.h \
