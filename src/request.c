@@ -291,48 +291,6 @@ int http_request_parse(server *srv, connection *con, http_req *req) {
 		return 0;
 	}
 
-	/* strip absolute URLs
-	 * */
-
-	buffer_copy_string_buffer(con->request.orig_uri, req->uri_raw);
-	if (req->uri_raw->ptr[0] == '/') {
-		buffer_copy_string_buffer(con->request.uri, req->uri_raw);
-	} else if (req->uri_raw->ptr[0] == '*') {
-		if (req->method != HTTP_METHOD_OPTIONS) {
-			con->http_status = 400;
-			return 0;
-		}
-		buffer_copy_string_buffer(con->request.uri, req->uri_raw);
-	} else {
-		/* GET http://www.example.org/foobar */
-		char *sl;
-
-		if (0 != strncmp(BUF_STR(req->uri_raw), "http://", 7)) {
-			con->http_status = 400;
-			return 0;
-		}
-
-		if (NULL == (sl = strchr(BUF_STR(req->uri_raw) + 7, '/'))) {
-			con->http_status = 400;
-			return 0;
-		}
-
-		buffer_copy_string(con->request.uri, sl);
-		buffer_copy_string_len(con->request.http_host, BUF_STR(req->uri_raw) + 7, sl - BUF_STR(req->uri_raw) - 7);
-
-		if (request_check_hostname(con->request.http_host)) {
-			if (srv->srvconf.log_request_header_on_error) {
-				TRACE("Host header is invalid (Status: 400), was %s", SAFE_BUF_STR(con->request.http_host));
-			}
-			con->http_status = 400;
-			con->keep_alive = 0;
-
-			buffer_reset(con->request.http_host);
-
-			return 0;
-		}
-	}
-
 	con->request.http_method = req->method;
 	con->request.http_version = req->protocol;
 
@@ -436,14 +394,6 @@ int http_request_parse(server *srv, connection *con, http_req *req) {
 				return 0;
 			}
 		} else if (cmp > 0 && 0 == (cmp = buffer_caseless_compare(CONST_BUF_LEN(ds->key), CONST_STR_LEN("Host")))) {
-			if (request_check_hostname(ds->value)) {
-				TRACE("Host header is invalid (Status: 400), was %s", SAFE_BUF_STR(ds->value));
-				con->http_status = 400;
-				con->keep_alive = 0;
-
-				return 0;
-			}
-
 			if (!buffer_is_empty(con->request.http_host) && !buffer_is_equal(con->request.http_host, ds->value)) {
 				TRACE("%s", "Host header is duplicate (Status: 400)");
 				con->http_status = 400;
@@ -497,19 +447,9 @@ int http_request_parse(server *srv, connection *con, http_req *req) {
 
 	con->header_len = i;
 
-	/* do some post-processing */
-
 	if (con->request.http_version == HTTP_VERSION_1_1) {
-		if (keep_alive_set != HTTP_CONNECTION_CLOSE) {
-			/* no Connection-Header sent */
-
-			/* HTTP/1.1 -> keep-alive default TRUE */
-			con->keep_alive = 1;
-		} else {
-			con->keep_alive = 0;
-		}
-
-		/* RFC 2616, 14.23 */
+		/* RFC 2616, 14.23: all requests MUST have a Host header.  Note that this check is required
+		 * even if the host will be replaced from the Request-URI.  */
 		if (buffer_is_empty(con->request.http_host)) {
 			con->http_status = 400;
 			con->response.keep_alive = 0;
@@ -523,6 +463,49 @@ int http_request_parse(server *srv, connection *con, http_req *req) {
 			}
 			return 0;
 		}
+	}
+
+	/* strip absolute URLs
+	 * */
+
+	buffer_copy_string_buffer(con->request.orig_uri, req->uri_raw);
+	if (req->uri_raw->ptr[0] == '/') {
+		buffer_copy_string_buffer(con->request.uri, req->uri_raw);
+	} else if (req->uri_raw->ptr[0] == '*') {
+		if (req->method != HTTP_METHOD_OPTIONS) {
+			con->http_status = 400;
+			return 0;
+		}
+		buffer_copy_string_buffer(con->request.uri, req->uri_raw);
+	} else {
+		/* GET http://www.example.org/foobar */
+		char *sl;
+
+		if (0 != strncmp(BUF_STR(req->uri_raw), "http://", 7)) {
+			con->http_status = 400;
+			return 0;
+		}
+
+		if (NULL == (sl = strchr(BUF_STR(req->uri_raw) + 7, '/'))) {
+			con->http_status = 400;
+			return 0;
+		}
+
+		buffer_copy_string(con->request.uri, sl);
+		buffer_copy_string_len(con->request.http_host, BUF_STR(req->uri_raw) + 7, sl - BUF_STR(req->uri_raw) - 7);
+	}
+
+
+	/* do some post-processing */
+	if (con->request.http_version == HTTP_VERSION_1_1) {
+		if (keep_alive_set != HTTP_CONNECTION_CLOSE) {
+			/* no Connection-Header sent */
+
+			/* HTTP/1.1 -> keep-alive default TRUE */
+			con->keep_alive = 1;
+		} else {
+			con->keep_alive = 0;
+		}
 	} else {
 		if (keep_alive_set == HTTP_CONNECTION_KEEPALIVE) {
 			/* no Connection-Header sent */
@@ -531,6 +514,20 @@ int http_request_parse(server *srv, connection *con, http_req *req) {
 			con->keep_alive = 1;
 		} else {
 			con->keep_alive = 0;
+		}
+	}
+
+	if (!buffer_is_empty(con->request.http_host)) {
+		if (request_check_hostname(con->request.http_host)) {
+			if (srv->srvconf.log_request_header_on_error) {
+				TRACE("Host header is invalid (Status: 400), was %s", SAFE_BUF_STR(con->request.http_host));
+			}
+			con->http_status = 400;
+			con->keep_alive = 0;
+
+			buffer_reset(con->request.http_host);
+
+			return 0;
 		}
 	}
 
