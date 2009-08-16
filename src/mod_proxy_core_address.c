@@ -16,7 +16,7 @@ static proxy_address *proxy_address_init(void) {
 	return address;
 }
 
-static void proxy_address_free(proxy_address *address) {
+void proxy_address_free(proxy_address *address) {
 	if (!address) return;
 
 	buffer_free(address->name);
@@ -64,6 +64,28 @@ void proxy_address_pool_add(proxy_address_pool *address_pool, proxy_address *add
 
 	address_pool->ptr[address_pool->used++] = address;
 }
+
+static void proxy_address_make_name_inet(proxy_address *a) {
+	buffer_prepare_copy(a->name, 128);
+
+	inet_ntop(AF_INET, &(a->addr.ipv4.sin_addr), a->name->ptr, a->name->size - 1);
+	a->name->used = strlen(a->name->ptr) + 1;
+
+	buffer_append_string(a->name, ":");
+	buffer_append_long(a->name, ntohs(a->addr.ipv4.sin_port));
+}
+
+#ifdef HAVE_IPV6
+static void proxy_address_make_name_inet6(proxy_address *a) {
+	buffer_prepare_copy(a->name, 128);
+	
+	a->name->ptr[0] = '[';
+	inet_ntop(AF_INET6, &(a->addr.ipv6.sin6_addr), a->name->ptr + 1, a->name->size - 2);
+	a->name->used = strlen(a->name->ptr) + 1;
+	buffer_append_string(a->name, "]:");
+	buffer_append_long(a->name, ntohs(a->addr.ipv6.sin6_port));
+}
+#endif
 
 int  proxy_address_pool_add_string(proxy_address_pool *address_pool, buffer *name) {
 	struct addrinfo *res = NULL, pref, *cur;
@@ -179,19 +201,11 @@ int  proxy_address_pool_add_string(proxy_address_pool *address_pool, buffer *nam
 		switch (cur->ai_family) {
 #ifdef HAVE_IPV6
 		case AF_INET6:
-			a->name->ptr[0] = '[';
-			inet_ntop(cur->ai_family, &(a->addr.ipv6.sin6_addr), a->name->ptr + 1, a->name->size - 2);
-			a->name->used = strlen(a->name->ptr) + 1;
-			buffer_append_string_len(a->name, CONST_STR_LEN("]:"));
-			buffer_append_long(a->name, ntohs(a->addr.ipv6.sin6_port));
+			proxy_address_make_name_inet6(a);
 			break;
 #endif
 		case AF_INET:
-			inet_ntop(cur->ai_family, &(a->addr.ipv4.sin_addr), a->name->ptr, a->name->size - 1);
-			a->name->used = strlen(a->name->ptr) + 1;
-
-			buffer_append_string_len(a->name, CONST_STR_LEN(":"));
-			buffer_append_long(a->name, ntohs(a->addr.ipv4.sin_port));
+			proxy_address_make_name_inet(a);
 			break;
 		default:
 			ERROR("unknown address-family: %d", cur->ai_family);
@@ -207,4 +221,47 @@ int  proxy_address_pool_add_string(proxy_address_pool *address_pool, buffer *nam
 	return 0;
 }
 
+// create new address and adds offset to port/filename
+proxy_address* proxy_address_offset_instance(proxy_address *base, size_t offset) {
+	unsigned short port;
+	proxy_address *a;
+
+	if (!base) return 0;
+
+	a = proxy_address_init();
+	a->state = PROXY_ADDRESS_STATE_ACTIVE;
+
+	memcpy(&(a->addr), &(base->addr), base->addrlen);
+	a->addrlen = base->addrlen;
+
+	switch (base->addr.plain.sa_family) {
+		case AF_INET:
+			port = ntohs(a->addr.ipv4.sin_port) + offset;
+			a->addr.ipv4.sin_port = htons(port);
+			proxy_address_make_name_inet(a);
+			break;
+
+#ifdef HAVE_IPV6
+		case AF_INET6:
+			port = ntohs(a->addr.ipv6.sin6_port) + offset;
+			a->addr.ipv6.sin6_port = htons(port);
+			proxy_address_make_name_inet6(a);
+			break;
+#endif
+
+#ifdef HAVE_SYS_UN_H
+		case AF_UNIX:
+			buffer_copy_string_buffer(a->name, base->name);
+			buffer_append_long(a->name, offset);
+			strcpy(a->addr.un.sun_path, BUF_STR(a->name) + 5);
+			break;
+#endif
+
+		default:
+			ERROR("unknown address-family: %d", base->addr.plain.sa_family);
+			proxy_address_free(a);
+			return 0;
+	}
+	return a;
+}
 

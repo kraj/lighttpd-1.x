@@ -33,4 +33,7 @@ void proxy_address_pool_free(proxy_address_pool *address_pool);
 void proxy_address_pool_add(proxy_address_pool *address_pool, proxy_address *address);
 int proxy_address_pool_add_string(proxy_address_pool *address_pool, buffer *address);
 
+// create new address and adds offset to port/filename
+proxy_address* proxy_address_offset_instance(proxy_address *base, size_t offset);
+
 #endif
