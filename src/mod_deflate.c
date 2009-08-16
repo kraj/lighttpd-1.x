@@ -13,6 +13,7 @@
 #endif
 #include <ctype.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <time.h>
@@ -72,7 +73,8 @@
 #define CONFIG_DEFLATE_DEBUG "deflate.debug"
 #define CONFIG_DEFLATE_ALLOWED_ENCODINGS "deflate.allowed_encodings"
 #define CONFIG_DEFLATE_SYNC_FLUSH "deflate.sync-flush"
-	
+#define CONFIG_DEFLATE_CACHE_DIR "deflate.cache-dir"
+
 #define KByte * 1024
 #define MByte * 1024 KByte
 #define GByte * 1024 MByte
@@ -89,6 +91,8 @@ typedef struct {
 	short		compression_level;
 	short		window_size;
 	array		*mimetypes;
+
+	buffer *cache_dir;
 } plugin_config;
 
 typedef struct {
@@ -105,10 +109,16 @@ typedef struct {
 	filter *fl;
 	chunkqueue *in;
 	chunkqueue *out;
+	chunkqueue *cache_out;
+	chunkqueue *cache_cq;
 	buffer *output;
 	/* compression type & state */
+	int done;
 	int compression_type;
 	int stream_open;
+	int cache_on_disk;
+	buffer *cache_file_name, *cache_tmp_file;
+	int cache_fd;
 #ifdef USE_ZLIB
 	unsigned long crc;
 	z_stream z;
@@ -120,17 +130,59 @@ typedef struct {
 	plugin_data *plugin_data;
 } handler_ctx;
 
+// 0 on success, -1 for error
+static int mkdir_for_file(char *filename) {
+	char *p = filename;
+
+	if (!filename || !filename[0])
+		return -1;
+
+	while ((p = strchr(p + 1, '/')) != NULL) {
+
+		*p = '\0';
+		if ((mkdir(filename, 0700) != 0) && (errno != EEXIST)) {
+			ERROR("creating cache-directory \"%s\" failed: %s", filename, strerror(errno));
+			*p = '/';
+			return -1;
+		}
+
+		*p++ = '/';
+		if (!*p) {
+			ERROR("unexpected trailing slash for filename \"%s\"", filename);
+			return -1;
+		}
+	}
+
+	return 0;
+}
+
 static handler_ctx *handler_ctx_init() {
 	handler_ctx *hctx;
 
 	hctx = calloc(1, sizeof(*hctx));
 	hctx->in = NULL;
 	hctx->out = NULL;
+	hctx->cache_out = NULL;
+	hctx->cache_cq = NULL;
+	hctx->cache_file_name = buffer_init();
+	hctx->cache_tmp_file = buffer_init();
+	hctx->cache_fd = -1;
 
 	return hctx;
 }
 
 static void handler_ctx_free(handler_ctx *hctx) {
+	if (hctx->cache_fd != -1) {
+		TRACE("%s", "caching compressed content failed, clean up");
+		close(hctx->cache_fd);
+		unlink(BUF_STR(hctx->cache_tmp_file));
+	}
+
+	if (hctx->cache_cq) chunkqueue_free(hctx->cache_cq);
+
+	buffer_free(hctx->cache_file_name);
+	buffer_free(hctx->cache_tmp_file);
+
 	free(hctx);
 }
 
@@ -160,7 +212,8 @@ FREE_FUNC(mod_deflate_free) {
 			plugin_config *s = p->config_storage[i];
 
 			if (!s) continue;
-			
+
+			buffer_free(s->cache_dir);
 			array_free(s->mimetypes);
 			free(s);
 		}
@@ -169,9 +222,9 @@ FREE_FUNC(mod_deflate_free) {
 
 	buffer_free(p->tmp_buf);
 	array_free(p->encodings_arr);
-	
+
 	free(p);
-	
+
 	return HANDLER_GO_ON;
 }
 
@@ -180,18 +233,19 @@ SETDEFAULTS_FUNC(mod_deflate_setdefaults) {
 	size_t i = 0;
 	
 	config_values_t cv[] = { 
-		{ CONFIG_DEFLATE_OUTPUT_BUFFER_SIZE,    NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_MIMETYPES,             NULL, T_CONFIG_ARRAY, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_COMPRESSION_LEVEL,     NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_MEM_LEVEL,             NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_WINDOW_SIZE,           NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_MIN_COMPRESS_SIZE,     NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_WORK_BLOCK_SIZE,       NULL, T_CONFIG_SHORT, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_ENABLED,               NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_DEBUG,                 NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_SYNC_FLUSH,            NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION },
-		{ CONFIG_DEFLATE_ALLOWED_ENCODINGS,     NULL, T_CONFIG_ARRAY, T_CONFIG_SCOPE_CONNECTION },
-		{ NULL,                                 NULL, T_CONFIG_UNSET, T_CONFIG_SCOPE_UNSET }
+		{ CONFIG_DEFLATE_OUTPUT_BUFFER_SIZE,    NULL, T_CONFIG_SHORT,   T_CONFIG_SCOPE_CONNECTION }, /* 0 */
+		{ CONFIG_DEFLATE_MIMETYPES,             NULL, T_CONFIG_ARRAY,   T_CONFIG_SCOPE_CONNECTION }, /* 1 */
+		{ CONFIG_DEFLATE_COMPRESSION_LEVEL,     NULL, T_CONFIG_SHORT,   T_CONFIG_SCOPE_CONNECTION }, /* 2 */
+		{ CONFIG_DEFLATE_MEM_LEVEL,             NULL, T_CONFIG_SHORT,   T_CONFIG_SCOPE_CONNECTION }, /* 3 */
+		{ CONFIG_DEFLATE_WINDOW_SIZE,           NULL, T_CONFIG_SHORT,   T_CONFIG_SCOPE_CONNECTION }, /* 4 */
+		{ CONFIG_DEFLATE_MIN_COMPRESS_SIZE,     NULL, T_CONFIG_SHORT,   T_CONFIG_SCOPE_CONNECTION }, /* 5 */
+		{ CONFIG_DEFLATE_WORK_BLOCK_SIZE,       NULL, T_CONFIG_SHORT,   T_CONFIG_SCOPE_CONNECTION }, /* 6 */
+		{ CONFIG_DEFLATE_ENABLED,               NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION }, /* 7 */
+		{ CONFIG_DEFLATE_DEBUG,                 NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION }, /* 8 */
+		{ CONFIG_DEFLATE_SYNC_FLUSH,            NULL, T_CONFIG_BOOLEAN, T_CONFIG_SCOPE_CONNECTION }, /* 9 */
+		{ CONFIG_DEFLATE_ALLOWED_ENCODINGS,     NULL, T_CONFIG_ARRAY,   T_CONFIG_SCOPE_CONNECTION }, /* 10 */
+		{ CONFIG_DEFLATE_CACHE_DIR,             NULL, T_CONFIG_STRING,  T_CONFIG_SCOPE_CONNECTION }, /* 11 */
+		{ NULL,                                 NULL, T_CONFIG_UNSET,   T_CONFIG_SCOPE_UNSET }
 	};
 	
 	p->config_storage = calloc(1, srv->config_context->used * sizeof(specific_config *));
@@ -213,6 +267,7 @@ SETDEFAULTS_FUNC(mod_deflate_setdefaults) {
 		s->work_block_size = 2048;
 		s->compression_level = -1;
 		s->mimetypes = array_init();
+		s->cache_dir = buffer_init();
 
 		cv[0].destination = &(s->output_buffer_size);
 		cv[1].destination = s->mimetypes;
@@ -225,7 +280,8 @@ SETDEFAULTS_FUNC(mod_deflate_setdefaults) {
 		cv[8].destination = &(s->debug);
 		cv[9].destination = &(s->sync_flush);
 		cv[10].destination = p->encodings_arr; /* temp array for allowed encodings list */
-		
+		cv[11].destination = s->cache_dir;
+
 		p->config_storage[i] = s;
 	
 		if (0 != config_insert_values_global(srv, ((data_config *)srv->config_context->data[i])->value, cv)) {
@@ -895,13 +951,11 @@ static int mod_deflate_file_chunk(server *srv, connection *con, handler_ctx *hct
 
 static int deflate_compress_cleanup(server *srv, connection *con, handler_ctx *hctx) {
 	plugin_data *p = hctx->plugin_data;
-	int rc;
 
-	rc = mod_deflate_stream_end(srv, con, hctx);
-	if(rc < 0) {
-		TRACE("error closing compressed stream for '%s', compressing with %d: %d", 
-			SAFE_BUF_STR(con->uri.path_raw), hctx->compression_type, rc);
-	}
+	UNUSED(srv);
+
+	if (hctx->done) return 0;
+	hctx->done = 1;
 
 	if(p->conf.debug && hctx->bytes_in < hctx->out->bytes_in) {
 		TRACE("compressing uri '%s' increased the sent content-size from %jd to %jd",
@@ -911,9 +965,8 @@ static int deflate_compress_cleanup(server *srv, connection *con, handler_ctx *h
 	/* cleanup compression state */
 	if(hctx->output != p->tmp_buf) {
 		buffer_free(hctx->output);
+		hctx->output = NULL;
 	}
-	handler_ctx_free(hctx);
-	con->plugin_ctx[p->id] = NULL;
 
 	return 0;
 }
@@ -1027,9 +1080,45 @@ static handler_t deflate_compress_response(server *srv, connection *con, handler
 	if (rc < 0) {
 		ERROR("%s", "flush error");
 	}
+
+	if (end) {
+		rc = mod_deflate_stream_end(srv, con, hctx);
+		if(rc < 0) {
+			TRACE("error closing compressed stream for '%s', compressing with %d: %d", 
+				SAFE_BUF_STR(con->uri.path_raw), hctx->compression_type, rc);
+		}
+	}
+
+	if (hctx->cache_on_disk) {
+		for (c = hctx->out->first; c; c = hctx->out->first) {
+			we_have = we_want = chunk_length(c);
+			if (!we_have) continue;
 	
+			if (!chunk_get_data(srv, con, c, we_want, &offset, &we_want)) {
+				ERROR("%s", "Couldn't get chunk data");
+				return HANDLER_ERROR;
+			}
+			write(hctx->cache_fd, offset, we_want);
+			chunkqueue_steal_len(hctx->cache_out, hctx->out, we_want);
+			chunkqueue_remove_finished_chunks(hctx->out);
+			hctx->out->bytes_out += we_want;
+			hctx->cache_out->bytes_in += we_want;
+		}
+	}
+
 	if (end) {
 		hctx->out->is_closed = 1;
+
+		if (hctx->cache_on_disk) {
+			hctx->cache_out->is_closed = 1;
+			close(hctx->cache_fd); hctx->cache_fd = -1;
+			if (-1 == rename(BUF_STR(hctx->cache_tmp_file), BUF_STR(hctx->cache_file_name))) {
+				ERROR("Couldn't move temporary cache file to its destination '%s': %s",
+				    SAFE_BUF_STR(hctx->cache_file_name), strerror(errno));
+				unlink(BUF_STR(hctx->cache_tmp_file));
+			}
+		}
+
 		if(p->conf.debug) {
 			TRACE("finished uri: '%s', query: '%s'", SAFE_BUF_STR(con->uri.path_raw), SAFE_BUF_STR(con->uri.query));
 		}
@@ -1056,6 +1145,7 @@ static int mod_deflate_patch_connection(server *srv, connection *con, plugin_dat
 	PATCH_OPTION(debug);
 	PATCH_OPTION(allowed_encodings);
 	PATCH_OPTION(sync_flush);
+	PATCH_OPTION(cache_dir);
 	
 	/* skip the first, the global context */
 	for (i = 1; i < srv->config_context->used; i++) {
@@ -1091,6 +1181,8 @@ static int mod_deflate_patch_connection(server *srv, connection *con, plugin_dat
 				PATCH_OPTION(allowed_encodings);
 			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_DEFLATE_SYNC_FLUSH))) {
 				PATCH_OPTION(sync_flush);
+			} else if (buffer_is_equal_string(du->key, CONST_STR_LEN(CONFIG_DEFLATE_CACHE_DIR))) {
+				PATCH_OPTION(cache_dir);
 			}
 		}
 	}
@@ -1203,7 +1295,7 @@ PHYSICALPATH_FUNC(mod_deflate_handle_response_header) {
 
 	if(file_len > 0 && p->conf.min_compress_size > 0 && file_len < p->conf.min_compress_size) {
 		if(p->conf.debug) {
-			TRACE("Content-Length smaller then min_compress_size: file_len=%i", file_len);
+			TRACE("Content-Length smaller than min_compress_size: file_len=%i", file_len);
 		}
 		filter_chain_remove_filter(con->send_filters, fl);
 		return HANDLER_GO_ON;
@@ -1341,11 +1433,72 @@ PHYSICALPATH_FUNC(mod_deflate_handle_response_header) {
 	if (p->conf.debug) 
 		TRACE("end = %i for uri '%s'", end, SAFE_BUF_STR(con->uri.path));
 
-	rc = deflate_compress_response(srv, con, hctx, end);
+	/* Cache compressed content on disk?
+	 * Need: etag + physical.path and a cache-dir
+	 * Only cache GET requests!
+	 * Do not cache ranged responses
+	 */
+	if (/* GET request */
+	    con->request.http_method == HTTP_METHOD_GET &&
+	    /* has cache dir and physical path */
+	    !buffer_is_empty(p->conf.cache_dir) && !buffer_is_empty(con->physical.path) &&
+	    /* Response is Partial Content */
+	    con->http_status != 206 &&
+	    /* has etag */
+	    NULL != (ds = (data_string *)array_get_element(con->response.headers, CONST_STR_LEN("Etag"))) &&
+	        !buffer_is_empty(ds->value)) {
+		buffer *etag = ds->value;
+		stat_cache_entry *sce;
+
+		buffer_copy_string_buffer(hctx->cache_file_name, p->conf.cache_dir);
+		buffer_append_string_buffer(hctx->cache_file_name, con->physical.path);
+		buffer_append_string_len(hctx->cache_file_name, CONST_STR_LEN("-"));
+		buffer_append_string(hctx->cache_file_name, compression_name);
+		buffer_append_string_len(hctx->cache_file_name, CONST_STR_LEN("-"));
+		buffer_append_string_buffer(hctx->cache_file_name, etag);
+
+		/* Found cache file */
+		if (HANDLER_GO_ON == stat_cache_get_entry(srv, con, hctx->cache_file_name, &sce)) {
+			mod_deflate_stream_end(srv, con, hctx);
+			chunkqueue_reset(hctx->out);
+			chunkqueue_append_file(hctx->out, hctx->cache_file_name, 0, sce->st.st_size);
+			hctx->out->bytes_in += sce->st.st_size;
+			hctx->bytes_in += 1 + sce->st.st_size; /* cheat to suppress warning about increased size */
+			hctx->out->is_closed = 1;
+			hctx->in->is_closed = 1;
+			hctx->cache_on_disk = -1;
+			if (p->conf.debug) {
+				TRACE("%s", "sending cached content");
+			}
+			rc = HANDLER_GO_ON;
+		} else {
+			/* We write to a temporary file as another
+			 * request may try to compress the same
+			 * file at the same time
+			 * We move it into place after completion.
+			 */
+			buffer_copy_string_buffer(hctx->cache_tmp_file, hctx->cache_file_name);
+			buffer_append_string_len(hctx->cache_tmp_file, CONST_STR_LEN("-XXXXXX"));
+			mkdir_for_file(BUF_STR(hctx->cache_tmp_file));
+			if (-1 == (hctx->cache_fd = mkstemp(BUF_STR(hctx->cache_tmp_file)))) {
+				ERROR("Couldn't create cache tempfile '%s': %s", SAFE_BUF_STR(hctx->cache_tmp_file), strerror(errno));
+				buffer_reset(hctx->cache_file_name);
+				buffer_reset(hctx->cache_tmp_file);
+				hctx->cache_on_disk = 0;
+			} else {
+				hctx->cache_on_disk = 1;
+				hctx->cache_cq = chunkqueue_init();
+				hctx->cache_out = hctx->out;
+				hctx->out = hctx->cache_cq;
+			}
+		}
+	}
+
+	if (hctx->cache_on_disk != -1)
+		rc = deflate_compress_response(srv, con, hctx, end);
 	/* check if we finished compressing all the content. */
 	if (rc == HANDLER_GO_ON && hctx->out->is_closed) {
-		con->response.content_length = chunkqueue_length(hctx->out);
-		
+		con->response.content_length = hctx->out->bytes_in;
 		deflate_compress_cleanup(srv, con, hctx);
 	}
 
@@ -1358,6 +1511,12 @@ CONNECTION_FUNC(mod_deflate_handle_filter_response_content) {
 	handler_t ret;
 
 	if (hctx == NULL) return HANDLER_GO_ON;
+
+	if (hctx->out->is_closed) {
+		chunkqueue_skip_all(hctx->in);
+		return HANDLER_GO_ON;
+	}
+
 	if (!hctx->stream_open) return HANDLER_GO_ON;
 
 	/**
@@ -1385,6 +1544,9 @@ static handler_t mod_deflate_cleanup(server *srv, connection *con, void *p_d) {
 	}
 
 	deflate_compress_cleanup(srv, con, hctx);
+
+	handler_ctx_free(hctx);
+	con->plugin_ctx[p->id] = NULL;
 
 	return HANDLER_GO_ON;
 }
