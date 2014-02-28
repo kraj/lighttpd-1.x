@@ -194,6 +194,7 @@ void chunkqueue_append_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len)
 	c->offset = 0;
 
 	chunkqueue_append_chunk(cq, c);
+	cq->bytes_in += len;
 }
 
 void chunkqueue_append_buffer(chunkqueue *cq, buffer *mem) {
@@ -207,6 +208,7 @@ void chunkqueue_append_buffer(chunkqueue *cq, buffer *mem) {
 	buffer_move(c->mem, mem);
 
 	chunkqueue_append_chunk(cq, c);
+	cq->bytes_in += buffer_string_length(c->mem);
 }
 
 void chunkqueue_prepend_buffer(chunkqueue *cq, buffer *mem) {
@@ -220,6 +222,7 @@ void chunkqueue_prepend_buffer(chunkqueue *cq, buffer *mem) {
 	buffer_move(c->mem, mem);
 
 	chunkqueue_prepend_chunk(cq, c);
+	cq->bytes_in += buffer_string_length(c->mem);
 }
 
 
@@ -233,6 +236,7 @@ void chunkqueue_append_mem(chunkqueue *cq, const char * mem, size_t len) {
 	buffer_copy_string_len(c->mem, mem, len);
 
 	chunkqueue_append_chunk(cq, c);
+	cq->bytes_in += len;
 }
 
 void chunkqueue_get_memory(chunkqueue *cq, char **mem, size_t *len, size_t min_size, size_t alloc_size) {
@@ -304,6 +308,7 @@ void chunkqueue_use_memory(chunkqueue *cq, size_t len) {
 
 	if (len > 0) {
 		buffer_commit(b, len);
+		cq->bytes_in += len;
 	} else if (buffer_string_is_empty(b)) {
 		/* unused buffer: can't remove chunk easily from
 		 * end of list, so just reset the buffer

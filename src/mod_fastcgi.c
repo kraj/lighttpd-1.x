@@ -2022,7 +2022,6 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 		fcgi_header(&(header), FCGI_PARAMS, request_id, 0, 0);
 		buffer_append_string_len(b, (const char *)&header, sizeof(header));
 
-		hctx->wb->bytes_in += buffer_string_length(b);
 		chunkqueue_append_buffer(hctx->wb, b);
 		buffer_free(b);
 	}
@@ -2041,7 +2040,6 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 
 			fcgi_header(&(header), FCGI_STDIN, request_id, weWant, 0);
 			chunkqueue_append_mem(hctx->wb, (const char *)&header, sizeof(header));
-			hctx->wb->bytes_in += sizeof(header);
 
 			if (p->conf.debug > 10) {
 				log_error_write(srv, __FILE__, __LINE__, "soso", "tosend:", offset, "/", req_cq->bytes_in);
@@ -2056,8 +2054,6 @@ static int fcgi_create_env(server *srv, handler_ctx *hctx, size_t request_id) {
 	/* terminate STDIN */
 	fcgi_header(&(header), FCGI_STDIN, request_id, 0, 0);
 	chunkqueue_append_mem(hctx->wb, (const char *)&header, sizeof(header));
-
-	hctx->wb->bytes_in += sizeof(header);
 
 	return 0;
 }
