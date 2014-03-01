@@ -7,6 +7,7 @@
 #include "chunk.h"
 #include "base.h"
 #include "log.h"
+#include "file.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -20,10 +21,74 @@
 #include <errno.h>
 #include <string.h>
 
+static chunkfile *chunkfile_init(void) {
+	chunkfile *cf = calloc(1, sizeof(*cf));
+	force_assert(NULL != cf);
+
+	cf->refcount = 1;
+	cf->fd = -1;
+	cf->name = NULL;
+	cf->is_temp = 0;
+
+	return cf;
+}
+
+static void chunkfile_free(chunkfile *cf) {
+	force_assert(NULL != cf && 0 == cf->refcount);
+	if (-1 != cf->fd) close(cf->fd);
+	if (NULL != cf->name) {
+		if (cf->is_temp && !buffer_string_is_empty(cf->name)) {
+			unlink(cf->name->ptr);
+		}
+		buffer_free(cf->name);
+	}
+	free(cf);
+}
+
+chunkfile *chunkfile_new(int fd) {
+	chunkfile *cf = chunkfile_init();
+	cf->fd = fd;
+	return cf;
+}
+
+static chunkfile *chunkfile_named_new(buffer *name) {
+	chunkfile *cf = chunkfile_init();
+	cf->name = buffer_init_buffer(name);
+	return cf;
+}
+
+static chunkfile *chunkfile_tmp_named_new(int fd, buffer *name) {
+	chunkfile *cf = chunkfile_init();
+	cf->fd = fd;
+	cf->name = buffer_init_buffer(name);
+	cf->is_temp = 1;
+	return cf;
+}
+
+
+void chunkfile_acquire(chunkfile *cf) {
+	force_assert(NULL != cf && cf->refcount > 0);
+
+	force_assert(cf->refcount + 1 > cf->refcount);
+	++cf->refcount;
+}
+void chunkfile_release(chunkfile **pcf) {
+	chunkfile *cf;
+	if (NULL == pcf) return;
+	cf = *pcf;
+	if (NULL == cf) return;
+	*pcf = NULL;
+	force_assert(cf->refcount > 0);
+	if (0 == --cf->refcount) {
+		chunkfile_free(cf);
+	}
+}
+
 chunkqueue *chunkqueue_init(void) {
 	chunkqueue *cq;
 
 	cq = calloc(1, sizeof(*cq));
+	force_assert(NULL != cq);
 
 	cq->first = NULL;
 	cq->last = NULL;
@@ -37,15 +102,14 @@ static chunk *chunk_init(void) {
 	chunk *c;
 
 	c = calloc(1, sizeof(*c));
+	force_assert(NULL != c);
 
 	c->type = MEM_CHUNK;
 	c->mem = buffer_init();
-	c->file.name = buffer_init();
+	c->file.fileref = NULL;
 	c->file.start = c->file.length = c->file.mmap.offset = 0;
-	c->file.fd = -1;
 	c->file.mmap.start = MAP_FAILED;
 	c->file.mmap.length = 0;
-	c->file.is_temp = 0;
 	c->offset = 0;
 	c->next = NULL;
 
@@ -59,23 +123,14 @@ static void chunk_reset(chunk *c) {
 
 	buffer_reset(c->mem);
 
-	if (c->file.is_temp && !buffer_string_is_empty(c->file.name)) {
-		unlink(c->file.name->ptr);
-	}
+	chunkfile_release(&c->file.fileref);
 
-	buffer_reset(c->file.name);
-
-	if (c->file.fd != -1) {
-		close(c->file.fd);
-		c->file.fd = -1;
-	}
 	if (MAP_FAILED != c->file.mmap.start) {
 		munmap(c->file.mmap.start, c->file.mmap.length);
 		c->file.mmap.start = MAP_FAILED;
 	}
 	c->file.start = c->file.length = c->file.mmap.offset = 0;
 	c->file.mmap.length = 0;
-	c->file.is_temp = 0;
 	c->offset = 0;
 	c->next = NULL;
 }
@@ -86,7 +141,6 @@ static void chunk_free(chunk *c) {
 	chunk_reset(c);
 
 	buffer_free(c->mem);
-	buffer_free(c->file.name);
 
 	free(c);
 }
@@ -180,15 +234,22 @@ void chunkqueue_reset(chunkqueue *cq) {
 }
 
 void chunkqueue_append_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len) {
+	chunkfile *cf = chunkfile_named_new(fn);
+	chunkqueue_append_chunkfile(cq, cf, offset, len);
+	chunkfile_release(&cf);
+}
+
+void chunkqueue_append_chunkfile(chunkqueue *cq, chunkfile *cf, off_t offset, off_t len) {
 	chunk *c;
 
 	if (0 == len) return;
 
 	c = chunkqueue_get_unused_chunk(cq);
+	chunkfile_acquire(cf);
 
 	c->type = FILE_CHUNK;
+	c->file.fileref = cf;
 
-	buffer_copy_buffer(c->file.name, fn);
 	c->file.start = offset;
 	c->file.length = len;
 	c->offset = 0;
@@ -369,8 +430,7 @@ void chunkqueue_steal(chunkqueue *dest, chunkqueue *src, off_t len) {
 			chunkqueue_append_mem(dest, c->mem->ptr + c->offset, use);
 			break;
 		case FILE_CHUNK:
-			/* tempfile flag is in "last" chunk after the split */
-			chunkqueue_append_file(dest, c->file.name, c->file.start + c->offset, use);
+			chunkqueue_append_chunkfile(dest, c->file.fileref, c->file.start + c->offset, use);
 			break;
 		}
 
@@ -381,6 +441,7 @@ void chunkqueue_steal(chunkqueue *dest, chunkqueue *src, off_t len) {
 
 static chunk *chunkqueue_get_append_tempfile(chunkqueue *cq) {
 	chunk *c;
+	chunkfile *cf;
 	buffer *template = buffer_init_string("/var/tmp/lighttpd-upload-XXXXXX");
 	int fd;
 
@@ -407,13 +468,12 @@ static chunk *chunkqueue_get_append_tempfile(chunkqueue *cq) {
 		return NULL;
 	}
 
+	cf = chunkfile_tmp_named_new(fd, template);
+	/* append_chunkfile doesn't work as chunk is empty */
 	c = chunkqueue_get_unused_chunk(cq);
 	c->type = FILE_CHUNK;
-	c->file.fd = fd;
-	c->file.is_temp = 1;
-	buffer_copy_buffer(c->file.name, template);
+	c->file.fileref = cf;
 	c->file.length = 0;
-
 	chunkqueue_append_chunk(cq, c);
 
 	buffer_free(template);
@@ -438,18 +498,16 @@ static int chunkqueue_append_to_tempfile(server *srv, chunkqueue *dest, const ch
 
 	if (NULL != dest->last
 		&& FILE_CHUNK != dest->last->type
-		&& dest->last->file.is_temp
-		&& -1 != dest->last->file.fd
+		&& dest->last->file.fileref->is_temp
+		&& -1 != dest->last->file.fileref->fd
 		&& 0 == dest->last->offset) {
 		/* ok, take the last chunk for our job */
 		dst_c = dest->last;
 
 		if (dest->last->file.length >= 1 * 1024 * 1024) {
 			/* the chunk is too large now, close it */
-			if (-1 != dst_c->file.fd) {
-				close(dst_c->file.fd);
-				dst_c->file.fd = -1;
-			}
+			close(dst_c->file.fileref->fd);
+			dst_c->file.fileref->fd = -1;
 			dst_c = chunkqueue_get_append_tempfile(dest);
 		}
 	} else {
@@ -463,21 +521,21 @@ static int chunkqueue_append_to_tempfile(server *srv, chunkqueue *dest, const ch
 		 * Instead of sending 500 we send 413 and say the request is too large
 		 */
 
-		log_error_write(srv, __FILE__, __LINE__, "ss",
+		log_error_write(srv, __FILE__, __LINE__, "sbs",
 			"denying upload as opening temp-file for upload failed:",
-			strerror(errno));
+			dst_c->file.fileref->name, strerror(errno));
 
 		return -1;
 	}
 
-	if (0 > (written = write(dst_c->file.fd, mem, len)) || (size_t) written != len) {
+	if (0 > (written = write(dst_c->file.fileref->fd, mem, len)) || (size_t) written != len) {
 		/* write failed for some reason ... disk full ? */
 		log_error_write(srv, __FILE__, __LINE__, "sbs",
 				"denying upload as writing to file failed:",
-				dst_c->file.name, strerror(errno));
+				dst_c->file.fileref->name, strerror(errno));
 
-		close(dst_c->file.fd);
-		dst_c->file.fd = -1;
+		close(dst_c->file.fileref->fd);
+		dst_c->file.fileref->fd = -1;
 
 		return -1;
 	}
@@ -528,7 +586,7 @@ int chunkqueue_steal_with_tempfiles(server *srv, chunkqueue *dest, chunkqueue *s
 			} else {
 				/* partial chunk with length "use" */
 				/* tempfile flag is in "last" chunk after the split */
-				chunkqueue_append_file(dest, c->file.name, c->file.start + c->offset, use);
+				chunkqueue_append_chunkfile(dest, c->file.fileref, c->file.start + c->offset, use);
 
 				c->offset += use;
 				force_assert(0 == len);
@@ -645,4 +703,84 @@ void chunkqueue_remove_finished_chunks(chunkqueue *cq) {
 
 		chunkqueue_push_unused_chunk(cq, c);
 	}
+}
+
+
+int chunkqueue_open_file(server *srv, connection *con, chunkqueue *cq) {
+	chunk *c;
+	off_t offset, toSend;
+	struct stat st;
+	int fd;
+
+	force_assert(NULL != cq->first);
+	force_assert(FILE_CHUNK == cq->first->type);
+	c = cq->first;
+	offset = c->file.start + c->offset;
+	toSend = c->file.length - c->offset;
+
+	if (-1 == (fd = c->file.fileref->fd)) {
+		if (-1 == (c->file.fileref->fd = fd = file_open(srv, con, c->file.fileref->name, &st, 0))) return -1;
+	} else if (-1 == fstat(fd, &st)) {
+		log_error_write(srv, __FILE__, __LINE__, "sbss", "fstat failed:", c->file.fileref->name, ":", strerror(errno));
+		return -1;
+	}
+
+	if (offset > st.st_size || toSend > st.st_size || offset > st.st_size - toSend) {
+		log_error_write(srv, __FILE__, __LINE__, "sb", "file was shrinked:", c->file.fileref->name);
+		return -1;
+	}
+
+	return fd;
+}
+
+int chunkqueue_open_trusted_file(server *srv, chunkqueue *cq) {
+	chunk *c;
+	off_t offset, toSend;
+	struct stat st;
+	int fd;
+	const int flags
+		= O_RDONLY
+#ifdef O_BINARY
+		| O_BINARY
+#endif
+#ifdef O_NONBLOCK
+		| O_NONBLOCK /* don't block on opening named files */
+#endif
+#ifdef O_NOCTTY
+		| O_NOCTTY /* don't allow overtaking controlling terminal */
+#endif
+	;
+
+	force_assert(NULL != cq->first);
+	force_assert(FILE_CHUNK == cq->first->type);
+	c = cq->first;
+	offset = c->file.start + c->offset;
+	toSend = c->file.length - c->offset;
+
+	if (-1 == (fd = c->file.fileref->fd)) {
+		if (-1 == (c->file.fileref->fd = fd = open(c->file.fileref->name->ptr, flags))) {
+			log_error_write(srv, __FILE__, __LINE__, "sbss", "open failed:", c->file.fileref->name, ":", strerror(errno));
+			return -1;
+		}
+		fd_close_on_exec(fd);
+	}
+
+	if (-1 == fstat(fd, &st)) {
+		log_error_write(srv, __FILE__, __LINE__, "sbss", "fstat failed:", c->file.fileref->name, ":", strerror(errno));
+		return -1;
+	}
+
+	if (!S_ISREG(st.st_mode)) {
+		close(fd);
+		c->file.fileref->fd = -1;
+		log_error_write(srv, __FILE__, __LINE__, "sb", "not a regular file:", c->file.fileref->name);
+		return -1;
+	}
+
+	if (offset > st.st_size || toSend > st.st_size || offset > st.st_size - toSend) {
+		log_error_write(srv, __FILE__, __LINE__, "sbooo", "file was shrinked:", c->file.fileref->name, offset, toSend, st.st_size);
+		return -1;
+	}
+
+	return fd;
 }

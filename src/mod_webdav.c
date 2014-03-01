@@ -1005,24 +1005,15 @@ static int webdav_parse_chunkqueue(server *srv, connection *con, plugin_data *p,
 
 			/* xml chunks are always memory, mmap() is our friend */
 			if (c->file.mmap.start == MAP_FAILED) {
-				if (-1 == c->file.fd &&  /* open the file if not already open */
-				    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
-					log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
+				int fd = chunkqueue_open_trusted_file(srv, cq);
+				if (-1 == fd) return -1;
 
-					return -1;
-				}
-
-				if (MAP_FAILED == (c->file.mmap.start = mmap(0, c->file.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
+				if (MAP_FAILED == (c->file.mmap.start = mmap(0, c->file.length, PROT_READ, MAP_SHARED, fd, 0))) {
 					log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed: ",
-							strerror(errno), c->file.name,  c->file.fd);
-					close(c->file.fd);
-					c->file.fd = -1;
+							strerror(errno), c->file.fileref->name,  fd);
 
 					return -1;
 				}
-
-				close(c->file.fd);
-				c->file.fd = -1;
 
 				c->file.mmap.length = c->file.length;
 
@@ -1033,8 +1024,7 @@ static int webdav_parse_chunkqueue(server *srv, connection *con, plugin_data *p,
 				log_error_write(srv, __FILE__, __LINE__, "sodd", "xmlParseChunk failed at:", cq->bytes_out, weHave, err);
 			}
 
-			c->offset += weHave;
-			cq->bytes_out += weHave;
+			chunkqueue_mark_written(cq, weHave);
 
 			break;
 		case MEM_CHUNK:
@@ -1051,12 +1041,10 @@ static int webdav_parse_chunkqueue(server *srv, connection *con, plugin_data *p,
 				log_error_write(srv, __FILE__, __LINE__, "sodd", "xmlParseChunk failed at:", cq->bytes_out, weHave, err);
 			}
 
-			c->offset += weHave;
-			cq->bytes_out += weHave;
+			chunkqueue_mark_written(cq, weHave);
 
 			break;
 		}
-		chunkqueue_remove_finished_chunks(cq);
 	}
 
 
@@ -1712,26 +1700,20 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 			case FILE_CHUNK:
 
 				if (c->file.mmap.start == MAP_FAILED) {
-					if (-1 == c->file.fd &&  /* open the file if not already open */
-					    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
-						log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
+					int cfd = chunkqueue_open_trusted_file(srv, cq);
+					if (-1 == cfd) {
 						close(fd);
 						return HANDLER_ERROR;
 					}
 
-					if (MAP_FAILED == (c->file.mmap.start = mmap(NULL, c->file.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
+					if (MAP_FAILED == (c->file.mmap.start = mmap(NULL, c->file.length, PROT_READ, MAP_SHARED, cfd, 0))) {
 						log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed: ",
-								strerror(errno), c->file.name,  c->file.fd);
-						close(c->file.fd);
-						c->file.fd = -1;
+								strerror(errno), c->file.fileref->name, cfd);
 						close(fd);
 						return HANDLER_ERROR;
 					}
 
 					c->file.mmap.length = c->file.length;
-
-					close(c->file.fd);
-					c->file.fd = -1;
 
 					/* chunk_reset() or chunk_free() will cleanup for us */
 				}
@@ -1764,12 +1746,10 @@ URIHANDLER_FUNC(mod_webdav_subrequest_handler) {
 			}
 
 			if (r > 0) {
-				c->offset += r;
-				cq->bytes_out += r;
+				chunkqueue_mark_written(cq, r);
 			} else {
 				break;
 			}
-			chunkqueue_remove_finished_chunks(cq);
 		}
 		close(fd);
 

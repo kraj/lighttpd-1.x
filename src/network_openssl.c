@@ -47,20 +47,21 @@ static int load_next_chunk(server *srv, connection *con, chunkqueue *cq, off_t m
 			force_assert(NULL != local_send_buffer);
 		}
 
-		if (0 != network_open_file_chunk(srv, con, cq)) return -1;
 
 		{
 			off_t offset = c->file.start + c->offset;
 			off_t toSend = c->file.length - c->offset;
+			int cfd;
 
+			if (-1 == (cfd = chunkqueue_open_file(srv, con, cq))) return -1;
 			if (toSend > LOCAL_SEND_BUFSIZE) toSend = LOCAL_SEND_BUFSIZE;
 			if (toSend > max_bytes) toSend = max_bytes;
 
-			if (-1 == lseek(c->file.fd, offset, SEEK_SET)) {
+			if (-1 == lseek(cfd, offset, SEEK_SET)) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "lseek: ", strerror(errno));
 				return -1;
 			}
-			if (-1 == (toSend = read(c->file.fd, local_send_buffer, toSend))) {
+			if (-1 == (toSend = read(cfd, local_send_buffer, toSend))) {
 				log_error_write(srv, __FILE__, __LINE__, "ss", "read: ", strerror(errno));
 				return -1;
 			}

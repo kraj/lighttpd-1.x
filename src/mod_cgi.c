@@ -1022,9 +1022,10 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 			chunk *c;
 
 			assert(chunkqueue_length(cq) == (off_t)con->request.content_length);
+			chunkqueue_remove_finished_chunks(cq);
 
 			/* there is content to send */
-			for (c = cq->first; c; c = cq->first) {
+			while (NULL != (c = cq->first)) {
 				int r = 0;
 
 				/* copy all chunks */
@@ -1032,10 +1033,8 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 				case FILE_CHUNK:
 
 					if (c->file.mmap.start == MAP_FAILED) {
-						if (-1 == c->file.fd &&  /* open the file if not already open */
-						    -1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY))) {
-							log_error_write(srv, __FILE__, __LINE__, "ss", "open failed: ", strerror(errno));
-
+						int fd = chunkqueue_open_trusted_file(srv, cq);
+						if (-1 == fd) {
 							close(from_cgi_fds[0]);
 							close(to_cgi_fds[1]);
 							return -1;
@@ -1043,18 +1042,14 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 
 						c->file.mmap.length = c->file.length;
 
-						if (MAP_FAILED == (c->file.mmap.start = mmap(NULL,  c->file.mmap.length, PROT_READ, MAP_SHARED, c->file.fd, 0))) {
+						if (MAP_FAILED == (c->file.mmap.start = mmap(NULL,  c->file.mmap.length, PROT_READ, MAP_SHARED, fd, 0))) {
 							log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed: ",
-									strerror(errno), c->file.name,  c->file.fd);
+									strerror(errno), c->file.fileref->name, fd);
 
 							close(from_cgi_fds[0]);
 							close(to_cgi_fds[1]);
 							return -1;
 						}
-
-						close(c->file.fd);
-						c->file.fd = -1;
-
 						/* chunk_reset() or chunk_free() will cleanup for us */
 					}
 
@@ -1088,14 +1083,12 @@ static int cgi_create_env(server *srv, connection *con, plugin_data *p, buffer *
 				}
 
 				if (r > 0) {
-					c->offset += r;
-					cq->bytes_out += r;
+					chunkqueue_mark_written(cq, r);
 				} else {
 					log_error_write(srv, __FILE__, __LINE__, "ss", "write() failed due to: ", strerror(errno)); 
 					con->http_status = 500;
 					break;
 				}
-				chunkqueue_remove_finished_chunks(cq);
 			}
 		}
 

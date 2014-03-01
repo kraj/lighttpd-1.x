@@ -16,9 +16,9 @@ int network_write_file_chunk_sendfile(server *srv, connection *con, int fd, chun
 	chunk *c;
 	off_t offset, written = 0;
 	off_t toSend;
-	int r;
+	int r, cfd;
 
-	if (0 != network_open_file_chunk(srv, con, cq)) return -1;
+	if (-1 == (cfd = chunkqueue_open_file(srv, con, cq))) return -1;
 
 	c = cq->first;
 	offset = c->file.start + c->offset;
@@ -31,7 +31,7 @@ int network_write_file_chunk_sendfile(server *srv, connection *con, int fd, chun
 	}
 
 	/* FreeBSD sendfile() */
-	if (-1 == (r = sendfile(c->file.fd, fd, offset, toSend, NULL, &written, 0))) {
+	if (-1 == (r = sendfile(cfd, fd, offset, toSend, NULL, &written, 0))) {
 		switch(errno) {
 		case EAGAIN:
 		case EINTR:

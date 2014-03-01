@@ -57,7 +57,7 @@ MAINTAINERCLEANFILES = configparser.c configparser.h mod_ssi_exprparser.c mod_ss
 CLEANFILES = versionstamp.h versionstamp.h.tmp
 
 common_src=buffer.c log.c \
-	keyvalue.c chunk.c  \
+	keyvalue.c chunk.c file.c \
 	http_chunk.c stream.c fdevent.c \
 	stat_cache.c plugin.c joblist.c etag.c array.c \
 	data_string.c data_count.c data_array.c \
@@ -269,7 +269,7 @@ mod_accesslog_la_LIBADD = $(common_libadd)
 
 hdr = server.h buffer.h network.h log.h keyvalue.h \
 	response.h request.h fastcgi.h chunk.h \
-	settings.h http_chunk.h \
+	settings.h http_chunk.h file.h \
 	md5.h http_auth.h stream.h \
 	fdevent.h connections.h base.h stat_cache.h \
 	plugin.h mod_auth.h \

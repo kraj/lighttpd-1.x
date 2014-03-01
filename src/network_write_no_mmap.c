@@ -7,62 +7,16 @@
 
 #include "sys-socket.h"
 
-#include <sys/time.h>
-#include <stdlib.h>
-
-#include <fcntl.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <errno.h>
 #include <string.h>
 
-int network_open_file_chunk(server *srv, connection *con, chunkqueue *cq) {
-	chunk *c;
-	off_t file_size, offset, toSend;
-
-	force_assert(NULL != cq->first);
-	force_assert(FILE_CHUNK == cq->first->type);
-	c = cq->first;
-	offset = c->file.start + c->offset;
-	toSend = c->file.length - c->offset;
-
-	if (-1 == c->file.fd) {
-		stat_cache_entry *sce = NULL;
-
-		if (HANDLER_ERROR == stat_cache_get_entry(srv, con, c->file.name, &sce)) {
-			log_error_write(srv, __FILE__, __LINE__, "ssb", "stat-cache failed:", strerror(errno), c->file.name);
-			return -1;
-		}
-
-		if (-1 == (c->file.fd = open(c->file.name->ptr, O_RDONLY|O_NOCTTY))) {
-			log_error_write(srv, __FILE__, __LINE__, "ssb", "open failed:", strerror(errno), c->file.name);
-			return -1;
-		}
-		fd_close_on_exec(c->file.fd);
-
-		file_size = sce->st.st_size;
-	} else {
-		struct stat st;
-		if (-1 == fstat(c->file.fd, &st)) {
-			log_error_write(srv, __FILE__, __LINE__, "ss", "fstat failed:", strerror(errno));
-			return -1;
-		}
-		file_size = st.st_size;
-	}
-
-	if (offset > file_size || toSend > file_size || offset > file_size - toSend) {
-		log_error_write(srv, __FILE__, __LINE__, "sb", "file was shrinked:", c->file.name);
-		return -1;
-	}
-
-	return 0;
-}
-
 int network_write_file_chunk_no_mmap(server *srv, connection *con, int fd, chunkqueue *cq, off_t *p_max_bytes) {
 	chunk *c;
 	off_t offset, toSend;
 	ssize_t r;
+	int cfd;
 
 	force_assert(NULL != cq->first);
 	force_assert(FILE_CHUNK == cq->first->type);
@@ -76,18 +30,18 @@ int network_write_file_chunk_no_mmap(server *srv, connection *con, int fd, chunk
 		return 0;
 	}
 
-	if (0 != network_open_file_chunk(srv, con, cq)) return -1;
+	if (-1 == (cfd = chunkqueue_open_file(srv, con, cq))) return -1;
 
 	if (toSend > 64*1024) toSend = 64*1024; /* max read 64kb in one step */
 	if (toSend > *p_max_bytes) toSend = *p_max_bytes;
 
 	buffer_string_prepare_copy(srv->tmp_buf, toSend);
 
-	if (-1 == lseek(c->file.fd, offset, SEEK_SET)) {
+	if (-1 == lseek(cfd, offset, SEEK_SET)) {
 		log_error_write(srv, __FILE__, __LINE__, "ss", "lseek: ", strerror(errno));
 		return -1;
 	}
-	if (-1 == (toSend = read(c->file.fd, srv->tmp_buf->ptr, toSend))) {
+	if (-1 == (toSend = read(cfd, srv->tmp_buf->ptr, toSend))) {
 		log_error_write(srv, __FILE__, __LINE__, "ss", "read: ", strerror(errno));
 		return -1;
 	}

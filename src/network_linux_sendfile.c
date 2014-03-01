@@ -15,8 +15,9 @@ int network_write_file_chunk_sendfile(server *srv, connection *con, int fd, chun
 	ssize_t r;
 	off_t offset;
 	off_t toSend;
+	int cfd;
 
-	if (0 != network_open_file_chunk(srv, con, cq)) return -1;
+	if (-1 == (cfd = chunkqueue_open_file(srv, con, cq))) return -1;
 
 	c = cq->first;
 	offset = c->file.start + c->offset;
@@ -28,7 +29,7 @@ int network_write_file_chunk_sendfile(server *srv, connection *con, int fd, chun
 		return 0;
 	}
 
-	if (-1 == (r = sendfile(fd, c->file.fd, &offset, toSend))) {
+	if (-1 == (r = sendfile(fd, cfd, &offset, toSend))) {
 		switch (errno) {
 		case EAGAIN:
 		case EINTR:

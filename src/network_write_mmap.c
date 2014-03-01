@@ -34,6 +34,7 @@ int network_write_file_chunk_mmap(server *srv, connection *con, int fd, chunkque
 	ssize_t r;
 	size_t mmap_offset, mmap_avail;
 	const char *data;
+	int cfd;
 
 	force_assert(NULL != cq->first);
 	force_assert(FILE_CHUNK == cq->first->type);
@@ -48,14 +49,14 @@ int network_write_file_chunk_mmap(server *srv, connection *con, int fd, chunkque
 		return 0;
 	}
 
-	if (0 != network_open_file_chunk(srv, con, cq)) return -1;
+	if (-1 == (cfd = chunkqueue_open_file(srv, con, cq))) return -1;
 
 	/* setup SIGBUS handler, but don't activate sigbus_jmp_valid yet */
 	if (0 != sigsetjmp(sigbus_jmp, 1)) {
 		sigbus_jmp_valid = 0;
 
 		log_error_write(srv, __FILE__, __LINE__, "sbd", "SIGBUS in mmap:",
-			c->file.name, c->file.fd);
+			c->file.name, cfd);
 
 		munmap(c->file.mmap.start, c->file.mmap.length);
 		c->file.mmap.start = MAP_FAILED;
@@ -107,9 +108,9 @@ int network_write_file_chunk_mmap(server *srv, connection *con, int fd, chunkque
 			c->file.mmap.length = file_end - c->file.mmap.offset;
 		}
 
-		if (MAP_FAILED == (c->file.mmap.start = mmap(NULL, c->file.mmap.length, PROT_READ, MAP_SHARED, c->file.fd, c->file.mmap.offset))) {
+		if (MAP_FAILED == (c->file.mmap.start = mmap(NULL, c->file.mmap.length, PROT_READ, MAP_SHARED, cfd, c->file.mmap.offset))) {
 			log_error_write(srv, __FILE__, __LINE__, "ssbd", "mmap failed:",
-				strerror(errno), c->file.name, c->file.fd);
+				strerror(errno), c->file.name, cfd);
 			return -1;
 		}
 

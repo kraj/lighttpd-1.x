@@ -24,17 +24,17 @@ int network_write_file_chunk_sendfile(server *srv, connection *con, int fd, chun
 	off_t offset;
 	off_t toSend;
 	size_t written = 0;
-	int r;
+	int r, cfd;
 	sendfilevec_t fvec;
 
-	if (0 != network_open_file_chunk(srv, con, cq)) return -1;
+	if (-1 == (cfd = chunkqueue_open_file(srv, con, cq))) return -1;
 
 	c = cq->first;
 	offset = c->file.start + c->offset;
 	toSend = c->file.length - c->offset;
 	if (toSend > max_bytes) toSend = max_bytes;
 
-	fvec.sfv_fd = c->file.fd;
+	fvec.sfv_fd = cfd;
 	fvec.sfv_flag = 0;
 	fvec.sfv_off = offset;
 	fvec.sfv_len = toSend;

@@ -4,32 +4,37 @@
 #include "buffer.h"
 #include "array.h"
 
+typedef struct chunkfile {
+	unsigned int refcount;
+	int fd;
+	buffer *name; /* path of the file, may be NULL */
+	int is_temp; /* file is temporary and will be deleted on cleanup */
+} chunkfile;
+
 typedef struct chunk {
 	enum { MEM_CHUNK, FILE_CHUNK } type;
 
 	buffer *mem; /* either the storage of the mem-chunk or the read-ahead buffer */
 
+	/* filechunk */
 	struct {
-		/* filechunk */
-		buffer *name; /* name of the file */
+		chunkfile *fileref;
 		off_t  start; /* starting offset in the file */
 		off_t  length; /* octets to send from the starting offset */
 
-		int    fd;
 		struct {
 			char   *start; /* the start pointer of the mmap'ed area */
 			size_t length; /* size of the mmap'ed area */
 			off_t  offset; /* start is <n> octet away from the start of the file */
 		} mmap;
-
-		int is_temp; /* file is temporary and will be deleted if on cleanup */
 	} file;
 
-	off_t  offset; /* octets sent from this chunk
-			  the size of the chunk is either
-			  - mem-chunk: mem->used - 1
-			  - file-chunk: file.length
-			*/
+	/* octets sent from this chunk
+	  the size of the chunk is either
+	  - mem-chunk: buffer_string_length(mem)
+	  - file-chunk: file.length
+	*/
+	off_t  offset;
 
 	struct chunk *next;
 } chunk;
@@ -46,9 +51,17 @@ typedef struct {
 	off_t  bytes_in, bytes_out;
 } chunkqueue;
 
+struct server;
+struct connection;
+
+chunkfile *chunkfile_new(int fd);
+void chunkfile_acquire(chunkfile *cf);
+void chunkfile_release(chunkfile **pcf);
+
 chunkqueue *chunkqueue_init(void);
 void chunkqueue_set_tempdirs(chunkqueue *cq, array *tempdirs);
 void chunkqueue_append_file(chunkqueue *cq, buffer *fn, off_t offset, off_t len); /* copies "fn" */
+void chunkqueue_append_chunkfile(chunkqueue *cq, chunkfile *cf, off_t offset, off_t len);
 void chunkqueue_append_mem(chunkqueue *cq, const char *mem, size_t len); /* copies memory */
 void chunkqueue_append_buffer(chunkqueue *cq, buffer *mem); /* may reset "mem" */
 void chunkqueue_prepend_buffer(chunkqueue *cq, buffer *mem); /* may reset "mem" */
@@ -76,7 +89,6 @@ void chunkqueue_mark_written(chunkqueue *cq, off_t len);
 void chunkqueue_remove_finished_chunks(chunkqueue *cq);
 
 void chunkqueue_steal(chunkqueue *dest, chunkqueue *src, off_t len);
-struct server;
 int chunkqueue_steal_with_tempfiles(struct server *srv, chunkqueue *dest, chunkqueue *src, off_t len);
 
 off_t chunkqueue_length(chunkqueue *cq);
@@ -84,5 +96,9 @@ void chunkqueue_free(chunkqueue *cq);
 void chunkqueue_reset(chunkqueue *cq);
 
 int chunkqueue_is_empty(chunkqueue *cq);
+
+/* next chunk must be FILE_CHUNK. return values: -1 error, otherwise file descriptor (stored also in chunk) */
+int chunkqueue_open_file(struct server *srv, struct connection *con, chunkqueue *cq);
+int chunkqueue_open_trusted_file(struct server *srv, chunkqueue *cq); /* skip symlink checks */
 
 #endif

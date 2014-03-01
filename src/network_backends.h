@@ -99,7 +99,4 @@ static inline int network_write_file_chunk_sendfile(server *srv, connection *con
 }
 #endif
 
-/* next chunk must be FILE_CHUNK. return values: 0 success (=> -1 != cq->first->file.fd), -1 error */
-int network_open_file_chunk(server *srv, connection *con, chunkqueue *cq);
-
 #endif

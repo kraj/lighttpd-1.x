@@ -353,7 +353,7 @@ typedef struct {
 	comp_key_t comp_type;
 } cond_cache_t;
 
-typedef struct {
+typedef struct connection {
 	connection_state_t state;
 
 	/* timestamps */
