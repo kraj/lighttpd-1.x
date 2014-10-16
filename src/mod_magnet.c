@@ -9,6 +9,7 @@
 #include "stat_cache.h"
 #include "status_counter.h"
 #include "etag.h"
+#include "file.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -764,16 +765,18 @@ static int magnet_attach_content(server *srv, connection *con, plugin_data *p, l
 
 				if (lua_isstring(L, -3)) { /* filename has to be a string */
 					buffer *fn;
-					stat_cache_entry *sce;
+					int fd;
+					struct stat st;
+					chunkfile *cf;
 					const char *fn_str;
-					handler_t res;
 
 					fn_str = lua_tostring(L, -3);
+
 					fn = buffer_init_string(fn_str);
+					fd = file_open(srv, con, fn, &st, 0);
+					buffer_free(fn);
 
-					res = stat_cache_get_entry(srv, con, fn, &sce);
-
-					if (HANDLER_GO_ON == res) {
+					if (-1 != fd) {
 						off_t off = 0;
 						off_t len = 0;
 
@@ -784,23 +787,23 @@ static int magnet_attach_content(server *srv, connection *con, plugin_data *p, l
 						if (lua_isnumber(L, -2)) {
 							len = lua_tonumber(L, -2);
 						} else {
-							len = sce->st.st_size;
+							len = st.st_size;
 						}
 
 						if (off < 0) {
-							buffer_free(fn);
+							close(fd);
 							return luaL_error(L, "offset for '%s' is negative", fn_str);
 						}
 
 						if (len < off) {
-							buffer_free(fn);
+							close(fd);
 							return luaL_error(L, "offset > length for '%s'", fn_str);
 						}
 
-						chunkqueue_append_file(con->write_queue, fn, off, len - off);
+						cf = chunkfile_new(fd);
+						chunkqueue_append_chunkfile(con->write_queue, cf, off, len - off);
+						chunkfile_release(&cf);
 					}
-
-					buffer_free(fn);
 				} else {
 					lua_pop(L, 3 + 2); /* correct the stack */
 

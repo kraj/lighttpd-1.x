@@ -8,6 +8,7 @@
 #include "etag.h"
 #include "http_chunk.h"
 #include "response.h"
+#include "file.h"
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -153,22 +154,17 @@ static int mod_staticfile_patch_connection(server *srv, connection *con, plugin_
 }
 #undef PATCH
 
-static int http_response_parse_range(server *srv, connection *con, plugin_data *p) {
+static int http_response_parse_range(server *srv, connection *con, plugin_data *p, struct stat *st, chunkfile *cf) {
 	int multipart = 0;
 	int error;
 	off_t start, end;
 	const char *s, *minus;
 	char *boundary = "fkj49sn38dcn3";
 	data_string *ds;
-	stat_cache_entry *sce = NULL;
 	buffer *content_type = NULL;
 
-	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
-		SEGFAULT();
-	}
-
 	start = 0;
-	end = sce->st.st_size - 1;
+	end = st->st_size - 1;
 
 	con->response.content_length = 0;
 
@@ -195,14 +191,14 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 				/* end */
 				s = err;
 
-				end = sce->st.st_size - 1;
-				start = sce->st.st_size + le;
+				end = st->st_size - 1;
+				start = st->st_size + le;
 			} else if (*err == ',') {
 				multipart = 1;
 				s = err + 1;
 
-				end = sce->st.st_size - 1;
-				start = sce->st.st_size + le;
+				end = st->st_size - 1;
+				start = st->st_size + le;
 			} else {
 				error = 1;
 			}
@@ -218,14 +214,14 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 				if (*(err + 1) == '\0') {
 					s = err + 1;
 
-					end = sce->st.st_size - 1;
+					end = st->st_size - 1;
 					start = la;
 
 				} else if (*(err + 1) == ',') {
 					multipart = 1;
 					s = err + 2;
 
-					end = sce->st.st_size - 1;
+					end = st->st_size - 1;
 					start = la;
 				} else {
 					error = 1;
@@ -275,9 +271,9 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 			if (start < 0) start = 0;
 
 			/* RFC 2616 - 14.35.1 */
-			if (end > sce->st.st_size - 1) end = sce->st.st_size - 1;
+			if (end > st->st_size - 1) end = st->st_size - 1;
 
-			if (start > sce->st.st_size - 1) {
+			if (start > st->st_size - 1) {
 				error = 1;
 
 				con->http_status = 416;
@@ -298,7 +294,7 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 				buffer_append_string_len(b, CONST_STR_LEN("-"));
 				buffer_append_int(b, end);
 				buffer_append_string_len(b, CONST_STR_LEN("/"));
-				buffer_append_int(b, sce->st.st_size);
+				buffer_append_int(b, st->st_size);
 
 				buffer_append_string_len(b, CONST_STR_LEN("\r\nContent-Type: "));
 				buffer_append_string_buffer(b, content_type);
@@ -311,7 +307,7 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 				buffer_free(b);
 			}
 
-			chunkqueue_append_file(con->write_queue, con->physical.path, start, end - start + 1);
+			chunkqueue_append_chunkfile(con->write_queue, cf, start, end - start + 1);
 			con->response.content_length += end - start + 1;
 		}
 	}
@@ -346,7 +342,7 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 		buffer_append_string_len(p->range_buf, CONST_STR_LEN("-"));
 		buffer_append_int(p->range_buf, end);
 		buffer_append_string_len(p->range_buf, CONST_STR_LEN("/"));
-		buffer_append_int(p->range_buf, sce->st.st_size);
+		buffer_append_int(p->range_buf, st->st_size);
 
 		response_header_insert(srv, con, CONST_STR_LEN("Content-Range"), CONST_BUF_LEN(p->range_buf));
 	}
@@ -358,10 +354,12 @@ static int http_response_parse_range(server *srv, connection *con, plugin_data *
 URIHANDLER_FUNC(mod_staticfile_subrequest) {
 	plugin_data *p = p_d;
 	size_t k;
-	stat_cache_entry *sce = NULL;
 	buffer *mtime = NULL;
 	data_string *ds;
 	int allow_caching = 1;
+	int fd;
+	struct stat st;
+	chunkfile *cf = NULL;
 
 	/* someone else has done a decision for us */
 	if (con->http_status != 0) return HANDLER_GO_ON;
@@ -409,48 +407,19 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 		log_error_write(srv, __FILE__, __LINE__,  "s",  "-- handling file as static file");
 	}
 
-	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+	if (-1 == (fd = file_open(srv, con, con->physical.path, &st, 0))) {
 		con->http_status = 403;
-
-		log_error_write(srv, __FILE__, __LINE__, "sbsb",
-				"not a regular file:", con->uri.path,
-				"->", con->physical.path);
-
-		return HANDLER_FINISHED;
+		goto finished;
 	}
-
-	/* we only handline regular files */
-#ifdef HAVE_LSTAT
-	if ((sce->is_symlink == 1) && !con->conf.follow_symlink) {
-		con->http_status = 403;
-
-		if (con->conf.log_request_handling) {
-			log_error_write(srv, __FILE__, __LINE__,  "s",  "-- access denied due symlink restriction");
-			log_error_write(srv, __FILE__, __LINE__,  "sb", "Path         :", con->physical.path);
-		}
-
-		buffer_reset(con->physical.path);
-		return HANDLER_FINISHED;
-	}
-#endif
-	if (!S_ISREG(sce->st.st_mode)) {
-		con->http_status = 404;
-
-		if (con->conf.log_file_not_found) {
-			log_error_write(srv, __FILE__, __LINE__, "sbsb",
-					"not a regular file:", con->uri.path,
-					"->", sce->name);
-		}
-
-		return HANDLER_FINISHED;
-	}
+	cf = chunkfile_new(fd);
 
 	/* mod_compress might set several data directly, don't overwrite them */
 
 	/* set response content-type, if not set already */
 
 	if (NULL == array_get_element(con->response.headers, "Content-Type")) {
-		if (buffer_string_is_empty(sce->content_type)) {
+		file_get_mimetype(srv->tmp_buf, con, con->physical.path, fd);
+		if (buffer_string_is_empty(srv->tmp_buf)) {
 			/* we are setting application/octet-stream, but also announce that
 			 * this header field might change in the seconds few requests 
 			 *
@@ -461,7 +430,7 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 
 			allow_caching = 0;
 		} else {
-			response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
+			response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(srv->tmp_buf));
 		}
 	}
 
@@ -470,25 +439,24 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 	}
 
 	if (allow_caching) {
-		if (p->conf.etags_used && con->etag_flags != 0 && !buffer_string_is_empty(sce->etag)) {
+		if (p->conf.etags_used && con->etag_flags != 0) {
 			if (NULL == array_get_element(con->response.headers, "ETag")) {
 				/* generate e-tag */
-				etag_mutate(con->physical.etag, sce->etag);
-
+				etag_build(con->physical.etag, &st, con->etag_flags);
 				response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
 			}
 		}
 
 		/* prepare header */
 		if (NULL == (ds = (data_string *)array_get_element(con->response.headers, "Last-Modified"))) {
-			mtime = strftime_cache_get(srv, sce->st.st_mtime);
+			mtime = strftime_cache_get(srv, st.st_mtime);
 			response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
 		} else {
 			mtime = ds->value;
 		}
 
 		if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {
-			return HANDLER_FINISHED;
+			goto finished;
 		}
 	}
 
@@ -525,10 +493,10 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 			/* content prepared, I'm done */
 			con->file_finished = 1;
 
-			if (0 == http_response_parse_range(srv, con, p)) {
+			if (0 == http_response_parse_range(srv, con, p, &st, cf)) {
 				con->http_status = 206;
 			}
-			return HANDLER_FINISHED;
+			goto finished;
 		}
 	}
 
@@ -537,11 +505,13 @@ URIHANDLER_FUNC(mod_staticfile_subrequest) {
 	/* we add it here for all requests
 	 * the HEAD request will drop it afterwards again
 	 */
-	http_chunk_append_file(srv, con, con->physical.path, 0, sce->st.st_size);
+	http_chunk_append_chunkfile(srv, con, cf, 0, st.st_size);
 
 	con->http_status = 200;
 	con->file_finished = 1;
 
+finished:
+	chunkfile_release(&cf);
 	return HANDLER_FINISHED;
 }
 

@@ -10,6 +10,7 @@
 #include "http_chunk.h"
 #include "stat_cache.h"
 #include "joblist.h"
+#include "file.h"
 
 #include "plugin.h"
 
@@ -448,17 +449,24 @@ static int connection_handle_write_prepare(server *srv, connection *con) {
 
 		/* try to send static errorfile */
 		if (!buffer_string_is_empty(con->conf.errorfile_prefix)) {
-			stat_cache_entry *sce = NULL;
+			int fd;
+			struct stat st;
 
 			buffer_copy_buffer(con->physical.path, con->conf.errorfile_prefix);
 			buffer_append_int(con->physical.path, con->http_status);
 			buffer_append_string_len(con->physical.path, CONST_STR_LEN(".html"));
 
-			if (HANDLER_ERROR != stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
+			if (-1 != (fd = file_open(srv, con, con->physical.path, &st, 1))) {
+				chunkfile *cf = chunkfile_new(fd);
 				con->file_finished = 1;
 
-				http_chunk_append_file(srv, con, con->physical.path, 0, sce->st.st_size);
-				response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
+				http_chunk_append_chunkfile(srv, con, cf, 0, st.st_size);
+				file_get_mimetype(srv->tmp_buf, con, con->physical.path, fd);
+				if (!buffer_string_is_empty(srv->tmp_buf)) {
+					response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(srv->tmp_buf));
+				}
+
+				chunkfile_release(&cf);
 			}
 		}
 

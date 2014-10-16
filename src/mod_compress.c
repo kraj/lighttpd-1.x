@@ -8,6 +8,7 @@
 
 #include "crc32.h"
 #include "etag.h"
+#include "file.h"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -33,8 +34,6 @@
 # include <bzlib.h>
 #endif
 
-#include "sys-mmap.h"
-
 /* request: accept-encoding */
 #define HTTP_ACCEPT_ENCODING_IDENTITY BV(0)
 #define HTTP_ACCEPT_ENCODING_GZIP     BV(1)
@@ -43,6 +42,10 @@
 #define HTTP_ACCEPT_ENCODING_BZIP2    BV(4)
 #define HTTP_ACCEPT_ENCODING_X_GZIP   BV(5)
 #define HTTP_ACCEPT_ENCODING_X_BZIP2  BV(6)
+
+/* maximum allowed "compress.max-filesize" */
+/* (must ensure that 1.1*COMPRESS_MAX_FILESIZE still fits into memory) */
+#define COMPRESS_MAX_FILESIZE (128 * 1024 * 1024)
 
 #ifdef __WIN32
 # define mkdir(x,y) mkdir(x)
@@ -152,7 +155,7 @@ static int mkdir_for_file(char *filename) {
 
 SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 	plugin_data *p = p_d;
-	size_t i = 0;
+	size_t i = 0, j;
 
 	config_values_t cv[] = {
 		{ "compress.cache-dir",             NULL, T_CONFIG_STRING, T_CONFIG_SCOPE_CONNECTION },
@@ -167,6 +170,7 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 	for (i = 0; i < srv->config_context->used; i++) {
 		plugin_config *s;
 		array  *encodings_arr = array_init();
+		unsigned short max_filesize = 0;
 
 		s = calloc(1, sizeof(plugin_config));
 		s->compress_cache_dir = buffer_init();
@@ -176,7 +180,7 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 
 		cv[0].destination = s->compress_cache_dir;
 		cv[1].destination = s->compress;
-		cv[2].destination = &(s->compress_max_filesize);
+		cv[2].destination = &max_filesize;
 		cv[3].destination = encodings_arr; /* temp array for allowed encodings list */
 
 		p->config_storage[i] = s;
@@ -186,7 +190,6 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 		}
 
 		if (encodings_arr->used) {
-			size_t j = 0;
 			for (j = 0; j < encodings_arr->used; j++) {
 				data_string *ds = (data_string *)encodings_arr->data[j];
 #ifdef USE_ZLIB
@@ -222,6 +225,22 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 
 		array_free(encodings_arr);
 
+		for (j = 0; j < s->compress->used; j++) {
+			data_unset *du = s->compress->data[j];
+			force_assert(NULL != du);
+
+			if (TYPE_STRING != du->type) {
+				log_error_write(srv, __FILE__, __LINE__, "s", "compress.filetype must be a list of strings");
+				return HANDLER_ERROR;
+			}
+		}
+
+		s->compress_max_filesize = max_filesize << 10;
+		if (s->compress_max_filesize > COMPRESS_MAX_FILESIZE) {
+			s->compress_max_filesize = COMPRESS_MAX_FILESIZE;
+			log_error_write(srv, __FILE__, __LINE__, "sO", "compress.max-filesize too large, capping to", s->compress_max_filesize);
+		}
+
 		if (!buffer_string_is_empty(s->compress_cache_dir)) {
 			struct stat st;
 			mkdir_recursive(s->compress_cache_dir->ptr);
@@ -240,7 +259,7 @@ SETDEFAULTS_FUNC(mod_compress_setdefaults) {
 }
 
 #ifdef USE_ZLIB
-static int deflate_file_to_buffer_gzip(server *srv, connection *con, plugin_data *p, char *start, off_t st_size, time_t mtime) {
+static int deflate_file_to_buffer_gzip(server *srv, connection *con, plugin_data *p, const unsigned char *start, off_t st_size, time_t mtime) {
 	unsigned char *c;
 	unsigned long crc;
 	z_stream z;
@@ -296,7 +315,7 @@ static int deflate_file_to_buffer_gzip(server *srv, connection *con, plugin_data
 	/* trailer */
 	outlen += z.total_out;
 
-	crc = generate_crc32c(start, st_size);
+	crc = generate_crc32c((const char*) start, st_size);
 
 	c = (unsigned char *)p->b->ptr + outlen;
 
@@ -318,7 +337,7 @@ static int deflate_file_to_buffer_gzip(server *srv, connection *con, plugin_data
 	return 0;
 }
 
-static int deflate_file_to_buffer_deflate(server *srv, connection *con, plugin_data *p, unsigned char *start, off_t st_size) {
+static int deflate_file_to_buffer_deflate(server *srv, connection *con, plugin_data *p, const unsigned char *start, off_t st_size) {
 	z_stream z;
 
 	UNUSED(srv);
@@ -337,7 +356,7 @@ static int deflate_file_to_buffer_deflate(server *srv, connection *con, plugin_d
 		return -1;
 	}
 
-	z.next_in = start;
+	z.next_in = (unsigned char*) start;
 	z.avail_in = st_size;
 	z.total_in = 0;
 
@@ -365,7 +384,7 @@ static int deflate_file_to_buffer_deflate(server *srv, connection *con, plugin_d
 #endif
 
 #ifdef USE_BZ2LIB
-static int deflate_file_to_buffer_bzip2(server *srv, connection *con, plugin_data *p, unsigned char *start, off_t st_size) {
+static int deflate_file_to_buffer_bzip2(server *srv, connection *con, plugin_data *p, const unsigned char *start, off_t st_size) {
 	bz_stream bz;
 
 	UNUSED(srv);
@@ -413,22 +432,51 @@ static int deflate_file_to_buffer_bzip2(server *srv, connection *con, plugin_dat
 }
 #endif
 
-static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, buffer *fn, stat_cache_entry *sce, int type) {
-	int ifd, ofd;
+static int deflate_file(server *srv, connection *con, plugin_data *p, buffer *fn, int ifd, struct stat *st, int type) {
+	file_iterator it;
 	int ret;
-	void *start;
-	const char *filename = fn->ptr;
+
+	file_iterator_init(&it, ifd);
+	if (0 > file_iterator_load(&it, st->st_size)) {
+		log_error_write(srv, __FILE__, __LINE__, "sbss", "reading", fn, "failed", strerror(errno));
+		file_iterator_clear(&it);
+		return -1;
+	}
+	if (st->st_size != (off_t) it.length) {
+		log_error_write(srv, __FILE__, __LINE__, "sbs", "reading", fn, "failed: didn't get enough data");
+		file_iterator_clear(&it);
+		return -1;
+	}
+
+	ret = -1;
+	switch(type) {
+#ifdef USE_ZLIB
+	case HTTP_ACCEPT_ENCODING_GZIP:
+	case HTTP_ACCEPT_ENCODING_X_GZIP:
+		ret = deflate_file_to_buffer_gzip(srv, con, p, it.buf, it.length, st->st_mtime);
+		break;
+	case HTTP_ACCEPT_ENCODING_DEFLATE:
+		ret = deflate_file_to_buffer_deflate(srv, con, p, it.buf, it.length);
+		break;
+#endif
+#ifdef USE_BZ2LIB
+	case HTTP_ACCEPT_ENCODING_BZIP2:
+	case HTTP_ACCEPT_ENCODING_X_BZIP2:
+		ret = deflate_file_to_buffer_bzip2(srv, con, p, it.buf, it.length);
+		break;
+#endif
+	}
+
+	file_iterator_clear(&it);
+	return ret;
+}
+
+static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, buffer *fn, int ifd, struct stat *st, int type) {
+	int ofd;
+	int ret;
 	ssize_t r;
 
-	/* overflow */
-	if ((off_t)(sce->st.st_size * 1.1) < sce->st.st_size) return -1;
-
-	/* don't mmap files > 128Mb
-	 *
-	 * we could use a sliding window, but currently there is no need for it
-	 */
-
-	if (sce->st.st_size > 128 * 1024 * 1024) return -1;
+	force_assert(st->st_size <= COMPRESS_MAX_FILESIZE);
 
 	buffer_reset(p->ofn);
 	buffer_copy_buffer(p->ofn, p->conf.compress_cache_dir);
@@ -457,7 +505,9 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 		return -1;
 	}
 
-	buffer_append_string_buffer(p->ofn, sce->etag);
+	/* append "readable" etag data (before mutate) */
+	etag_create(srv->tmp_buf, st, con->etag_flags);
+	buffer_append_string_buffer(p->ofn, srv->tmp_buf);
 
 	if (-1 == mkdir_for_file(p->ofn->ptr)) {
 		log_error_write(srv, __FILE__, __LINE__, "sb", "couldn't create directory for file", p->ofn);
@@ -482,69 +532,8 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 #if 0
 	log_error_write(srv, __FILE__, __LINE__, "bs", p->ofn, "compress-cache miss");
 #endif
-	if (-1 == (ifd = open(filename, O_RDONLY | O_BINARY))) {
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "opening plain-file", fn, "failed", strerror(errno));
 
-		close(ofd);
-
-		/* Remove the incomplete cache file, so that later hits aren't served from it */
-		if (-1 == unlink(p->ofn->ptr)) {
-			log_error_write(srv, __FILE__, __LINE__, "sbss", "unlinking incomplete cachefile", p->ofn, "failed:", strerror(errno));
-		}
-
-		return -1;
-	}
-
-#ifdef USE_MMAP
-	if (MAP_FAILED == (start = mmap(NULL, sce->st.st_size, PROT_READ, MAP_SHARED, ifd, 0))) {
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "mmaping", fn, "failed", strerror(errno));
-
-		close(ofd);
-		close(ifd);
-
-		/* Remove the incomplete cache file, so that later hits aren't served from it */
-		if (-1 == unlink(p->ofn->ptr)) {
-			log_error_write(srv, __FILE__, __LINE__, "sbss", "unlinking incomplete cachefile", p->ofn, "failed:", strerror(errno));
-		}
-
-		return -1;
-	}
-#else
-	start = malloc(sce->st.st_size);
-	if (NULL == start || sce->st.st_size != read(ifd, start, sce->st.st_size)) {
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "reading", fn, "failed", strerror(errno));
-
-		close(ofd);
-		close(ifd);
-		free(start);
-
-		/* Remove the incomplete cache file, so that later hits aren't served from it */
-		if (-1 == unlink(p->ofn->ptr)) {
-			log_error_write(srv, __FILE__, __LINE__, "sbss", "unlinking incomplete cachefile", p->ofn, "failed:", strerror(errno));
-		}
-
-		return -1;
-	}
-#endif
-
-	ret = -1;
-	switch(type) {
-#ifdef USE_ZLIB
-	case HTTP_ACCEPT_ENCODING_GZIP:
-	case HTTP_ACCEPT_ENCODING_X_GZIP:
-		ret = deflate_file_to_buffer_gzip(srv, con, p, start, sce->st.st_size, sce->st.st_mtime);
-		break;
-	case HTTP_ACCEPT_ENCODING_DEFLATE:
-		ret = deflate_file_to_buffer_deflate(srv, con, p, start, sce->st.st_size);
-		break;
-#endif
-#ifdef USE_BZ2LIB
-	case HTTP_ACCEPT_ENCODING_BZIP2:
-	case HTTP_ACCEPT_ENCODING_X_BZIP2:
-		ret = deflate_file_to_buffer_bzip2(srv, con, p, start, sce->st.st_size);
-		break;
-#endif
-	}
+	ret = deflate_file(srv, con, p, fn, ifd, st, type);
 
 	if (ret == 0) {
 		r = write(ofd, CONST_BUF_LEN(p->b));
@@ -557,14 +546,7 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 		}
 	}
 
-#ifdef USE_MMAP
-	munmap(start, sce->st.st_size);
-#else
-	free(start);
-#endif
-
 	close(ofd);
-	close(ifd);
 
 	if (ret != 0) {
 		/* Remove the incomplete cache file, so that later hits aren't served from it */
@@ -580,75 +562,10 @@ static int deflate_file_to_file(server *srv, connection *con, plugin_data *p, bu
 	return 0;
 }
 
-static int deflate_file_to_buffer(server *srv, connection *con, plugin_data *p, buffer *fn, stat_cache_entry *sce, int type) {
-	int ifd;
-	int ret = -1;
-	void *start;
+static int deflate_file_to_buffer(server *srv, connection *con, plugin_data *p, buffer *fn, int ifd, struct stat *st, int type) {
+	force_assert(st->st_size <= COMPRESS_MAX_FILESIZE);
 
-	/* overflow */
-	if ((off_t)(sce->st.st_size * 1.1) < sce->st.st_size) return -1;
-
-	/* don't mmap files > 128M
-	 *
-	 * we could use a sliding window, but currently there is no need for it
-	 */
-
-	if (sce->st.st_size > 128 * 1024 * 1024) return -1;
-
-
-	if (-1 == (ifd = open(fn->ptr, O_RDONLY | O_BINARY))) {
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "opening plain-file", fn, "failed", strerror(errno));
-
-		return -1;
-	}
-
-#ifdef USE_MMAP
-	if (MAP_FAILED == (start = mmap(NULL, sce->st.st_size, PROT_READ, MAP_SHARED, ifd, 0))) {
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "mmaping", fn, "failed", strerror(errno));
-
-		close(ifd);
-		return -1;
-	}
-#else
-	start = malloc(sce->st.st_size);
-	if (NULL == start || sce->st.st_size != read(ifd, start, sce->st.st_size)) {
-		log_error_write(srv, __FILE__, __LINE__, "sbss", "reading", fn, "failed", strerror(errno));
-
-		close(ifd);
-		free(start);
-		return -1;
-	}
-#endif
-
-	switch(type) {
-#ifdef USE_ZLIB
-	case HTTP_ACCEPT_ENCODING_GZIP:
-	case HTTP_ACCEPT_ENCODING_X_GZIP:
-		ret = deflate_file_to_buffer_gzip(srv, con, p, start, sce->st.st_size, sce->st.st_mtime);
-		break;
-	case HTTP_ACCEPT_ENCODING_DEFLATE:
-		ret = deflate_file_to_buffer_deflate(srv, con, p, start, sce->st.st_size);
-		break;
-#endif
-#ifdef USE_BZ2LIB
-	case HTTP_ACCEPT_ENCODING_BZIP2:
-	case HTTP_ACCEPT_ENCODING_X_BZIP2:
-		ret = deflate_file_to_buffer_bzip2(srv, con, p, start, sce->st.st_size);
-		break;
-#endif
-	default:
-		ret = -1;
-		break;
-	}
-
-#ifdef USE_MMAP
-	munmap(start, sce->st.st_size);
-#else
-	free(start);
-#endif
-	close(ifd);
-
-	if (ret != 0) return -1;
+	if (0 != deflate_file(srv, con, p, fn, ifd, st, type)) return -1;
 
 	chunkqueue_reset(con->write_queue);
 	chunkqueue_append_buffer(con->write_queue, p->b);
@@ -715,195 +632,240 @@ static int mod_compress_contains_encoding(const char *headervalue, const char *e
 	}
 }
 
+/* check if mimetype is in compress-config */
+static int mod_compress_want_mimetype(server *srv, plugin_data *p, buffer *mimetype) {
+	size_t i;
+	buffer *content_type = NULL; /* mimetype without ';...' */
+
+	if (!buffer_string_is_empty(mimetype)) {
+		char *c;
+		if (NULL != (c = strchr(mimetype->ptr, ';'))) {
+			content_type = srv->tmp_buf;
+			buffer_copy_string_len(content_type, mimetype->ptr, c - mimetype->ptr);
+		}
+	}
+
+	for (i = 0; i < p->conf.compress->used; i++) {
+		data_string *ds = (data_string *)p->conf.compress->data[i];
+
+		if (buffer_is_equal(ds->value, mimetype)
+		    || (content_type && buffer_is_equal(ds->value, content_type))) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+static int mod_compress_match_encoding(server *srv, connection *con, plugin_data *p, const char **compression_name) {
+	data_string *ds;
+	int compression_type = 0;
+	int accept_encoding = 0;
+	char *value;
+	int matched_encodings = 0;
+
+	if (NULL == (ds = (data_string *)array_get_element(con->request.headers, "Accept-Encoding"))) {
+		if (con->conf.log_request_handling) {
+			log_error_write(srv, __FILE__, __LINE__, "s", "-- client didn't send 'Accept-Encoding'");
+		}
+		return 0;
+	}
+	value = ds->value->ptr;
+
+	/* get client side support encodings */
+#ifdef USE_ZLIB
+	if (mod_compress_contains_encoding(value, "gzip")) accept_encoding |= HTTP_ACCEPT_ENCODING_GZIP;
+	if (mod_compress_contains_encoding(value, "x-gzip")) accept_encoding |= HTTP_ACCEPT_ENCODING_X_GZIP;
+	if (mod_compress_contains_encoding(value, "deflate")) accept_encoding |= HTTP_ACCEPT_ENCODING_DEFLATE;
+	if (mod_compress_contains_encoding(value, "compress")) accept_encoding |= HTTP_ACCEPT_ENCODING_COMPRESS;
+#endif
+#ifdef USE_BZ2LIB
+	if (mod_compress_contains_encoding(value, "bzip2")) accept_encoding |= HTTP_ACCEPT_ENCODING_BZIP2;
+	if (mod_compress_contains_encoding(value, "x-bzip2")) accept_encoding |= HTTP_ACCEPT_ENCODING_X_BZIP2;
+#endif
+	/* identity not supported below - not needed anyway.
+	if (mod_compress_contains_encoding(value, "identity")) accept_encoding |= HTTP_ACCEPT_ENCODING_IDENTITY;
+	*/
+
+	/* find matching entries */
+	matched_encodings = accept_encoding & p->conf.allowed_encodings;
+
+	if (matched_encodings) {
+		static const char dflt_gzip[] = "gzip";
+		static const char dflt_x_gzip[] = "x-gzip";
+		static const char dflt_deflate[] = "deflate";
+		static const char dflt_bzip2[] = "bzip2";
+		static const char dflt_x_bzip2[] = "x-bzip2";
+
+		/* select best matching encoding */
+		if (matched_encodings & HTTP_ACCEPT_ENCODING_BZIP2) {
+			compression_type = HTTP_ACCEPT_ENCODING_BZIP2;
+			*compression_name = dflt_bzip2;
+		} else if (matched_encodings & HTTP_ACCEPT_ENCODING_X_BZIP2) {
+			compression_type = HTTP_ACCEPT_ENCODING_X_BZIP2;
+			*compression_name = dflt_x_bzip2;
+		} else if (matched_encodings & HTTP_ACCEPT_ENCODING_GZIP) {
+			compression_type = HTTP_ACCEPT_ENCODING_GZIP;
+			*compression_name = dflt_gzip;
+		} else if (matched_encodings & HTTP_ACCEPT_ENCODING_X_GZIP) {
+			compression_type = HTTP_ACCEPT_ENCODING_X_GZIP;
+			*compression_name = dflt_x_gzip;
+		} else {
+			force_assert(matched_encodings & HTTP_ACCEPT_ENCODING_DEFLATE);
+			compression_type = HTTP_ACCEPT_ENCODING_DEFLATE;
+			*compression_name = dflt_deflate;
+		}
+	} else {
+		if (con->conf.log_request_handling) {
+			log_error_write(srv, __FILE__, __LINE__, "s", "-- couldn't find common encoding");
+		}
+	}
+
+	return compression_type;
+}
+
 PHYSICALPATH_FUNC(mod_compress_physical) {
 	plugin_data *p = p_d;
-	size_t m;
-	off_t max_fsize;
-	stat_cache_entry *sce = NULL;
+	int fd = -1;
+	struct stat st;
 	buffer *mtime = NULL;
-	buffer *content_type;
+	buffer *mimetype = NULL;
+	int compression_type;
+	const char *compression_name = NULL;
+	int result = HANDLER_GO_ON;
+	int use_cache;
 
-	if (con->mode != DIRECT || con->http_status) return HANDLER_GO_ON;
+	if (con->mode != DIRECT || con->http_status) goto cleanup;
 
 	/* only GET and POST can get compressed */
-	if (con->request.http_method != HTTP_METHOD_GET &&
-	    con->request.http_method != HTTP_METHOD_POST) {
-		return HANDLER_GO_ON;
+	switch (con->request.http_method) {
+	case HTTP_METHOD_GET:
+	case HTTP_METHOD_POST:
+		break;
+	default:
+		goto cleanup;
 	}
 
-	if (buffer_string_is_empty(con->physical.path)) {
-		return HANDLER_GO_ON;
-	}
+	if (buffer_string_is_empty(con->physical.path)) goto cleanup;
 
 	mod_compress_patch_connection(srv, con, p);
 
-	max_fsize = p->conf.compress_max_filesize;
+	if (-1 == (fd = file_open(srv, con, con->physical.path, &st, 0))) {
+		if (EISDIR == errno || ENOENT == errno) {
+			if (con->conf.log_request_handling) {
+				log_error_write(srv, __FILE__, __LINE__, "s", "-- directory or couldn't find file");
+			}
+			goto cleanup;
+		}
 
-	if (con->conf.log_request_handling) {
-		log_error_write(srv, __FILE__, __LINE__,  "s",  "-- handling file as static file");
-	}
-
-	if (HANDLER_ERROR == stat_cache_get_entry(srv, con, con->physical.path, &sce)) {
 		con->http_status = 403;
-
-		log_error_write(srv, __FILE__, __LINE__, "sbsb",
-				"not a regular file:", con->uri.path,
-				"->", con->physical.path);
-
-		return HANDLER_FINISHED;
-	}
-
-	/* we only handle regular files */
-#ifdef HAVE_LSTAT
-	if ((sce->is_symlink == 1) && !con->conf.follow_symlink) {
-		return HANDLER_GO_ON;
-	}
-#endif
-	if (!S_ISREG(sce->st.st_mode)) {
-		return HANDLER_GO_ON;
+		if (con->conf.log_request_handling) {
+			log_error_write(srv, __FILE__, __LINE__, "s", "-- couldn't open file", errno, EISDIR, EACCES);
+		}
+		result = HANDLER_FINISHED;
+		goto cleanup;
 	}
 
 	/* don't compress files that are too large as we need to much time to handle them */
-	if (max_fsize && (sce->st.st_size >> 10) > max_fsize) return HANDLER_GO_ON;
+	if (p->conf.compress_max_filesize && (st.st_size >> 10) > p->conf.compress_max_filesize) {
+		if (con->conf.log_request_handling) {
+			log_error_write(srv, __FILE__, __LINE__, "s", "-- file too large");
+		}
+		goto cleanup;
+	}
 
 	/* don't try to compress files less than 128 bytes
 	 *
 	 * - extra overhead for compression
 	 * - mmap() fails for st_size = 0 :)
 	 */
-	if (sce->st.st_size < 128) return HANDLER_GO_ON;
-
-	/* check if mimetype is in compress-config */
-	content_type = NULL;
-	if (sce->content_type->ptr) {
-		char *c;
-		if ( (c = strchr(sce->content_type->ptr, ';')) != NULL) {
-			content_type = srv->tmp_buf;
-			buffer_copy_string_len(content_type, sce->content_type->ptr, c - sce->content_type->ptr);
+	if (st.st_size < 128) {
+		if (con->conf.log_request_handling) {
+			log_error_write(srv, __FILE__, __LINE__, "s", "-- file too small");
 		}
+		goto cleanup;
 	}
 
-	for (m = 0; m < p->conf.compress->used; m++) {
-		data_string *compress_ds = (data_string *)p->conf.compress->data[m];
-
-		if (!compress_ds) {
-			log_error_write(srv, __FILE__, __LINE__, "sbb", "evil", con->physical.path, con->uri.path);
-
-			return HANDLER_GO_ON;
-		}
-
-		if (buffer_is_equal(compress_ds->value, sce->content_type)
-		    || (content_type && buffer_is_equal(compress_ds->value, content_type))) {
-			/* mimetype found */
-			data_string *ds;
-
-			/* the response might change according to Accept-Encoding */
-			response_header_insert(srv, con, CONST_STR_LEN("Vary"), CONST_STR_LEN("Accept-Encoding"));
-
-			if (NULL != (ds = (data_string *)array_get_element(con->request.headers, "Accept-Encoding"))) {
-				int accept_encoding = 0;
-				char *value = ds->value->ptr;
-				int matched_encodings = 0;
-				int use_etag = sce->etag != NULL && sce->etag->ptr != NULL;
-
-				/* get client side support encodings */
-#ifdef USE_ZLIB
-				if (mod_compress_contains_encoding(value, "gzip")) accept_encoding |= HTTP_ACCEPT_ENCODING_GZIP;
-				if (mod_compress_contains_encoding(value, "x-gzip")) accept_encoding |= HTTP_ACCEPT_ENCODING_X_GZIP;
-				if (mod_compress_contains_encoding(value, "deflate")) accept_encoding |= HTTP_ACCEPT_ENCODING_DEFLATE;
-				if (mod_compress_contains_encoding(value, "compress")) accept_encoding |= HTTP_ACCEPT_ENCODING_COMPRESS;
-#endif
-#ifdef USE_BZ2LIB
-				if (mod_compress_contains_encoding(value, "bzip2")) accept_encoding |= HTTP_ACCEPT_ENCODING_BZIP2;
-				if (mod_compress_contains_encoding(value, "x-bzip2")) accept_encoding |= HTTP_ACCEPT_ENCODING_X_BZIP2;
-#endif
-				if (mod_compress_contains_encoding(value, "identity")) accept_encoding |= HTTP_ACCEPT_ENCODING_IDENTITY;
-
-				/* find matching entries */
-				matched_encodings = accept_encoding & p->conf.allowed_encodings;
-
-				if (matched_encodings) {
-					static const char dflt_gzip[] = "gzip";
-					static const char dflt_x_gzip[] = "x-gzip";
-					static const char dflt_deflate[] = "deflate";
-					static const char dflt_bzip2[] = "bzip2";
-					static const char dflt_x_bzip2[] = "x-bzip2";
-
-					const char *compression_name = NULL;
-					int compression_type = 0;
-
-					mtime = strftime_cache_get(srv, sce->st.st_mtime);
-
-					/* try matching original etag of uncompressed version */
-					if (use_etag) {
-						etag_mutate(con->physical.etag, sce->etag);
-						if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {
-							response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
-							response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
-							response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
-							return HANDLER_FINISHED;
-						}
-					}
-
-					/* select best matching encoding */
-					if (matched_encodings & HTTP_ACCEPT_ENCODING_BZIP2) {
-						compression_type = HTTP_ACCEPT_ENCODING_BZIP2;
-						compression_name = dflt_bzip2;
-					} else if (matched_encodings & HTTP_ACCEPT_ENCODING_X_BZIP2) {
-						compression_type = HTTP_ACCEPT_ENCODING_X_BZIP2;
-						compression_name = dflt_x_bzip2;
-					} else if (matched_encodings & HTTP_ACCEPT_ENCODING_GZIP) {
-						compression_type = HTTP_ACCEPT_ENCODING_GZIP;
-						compression_name = dflt_gzip;
-					} else if (matched_encodings & HTTP_ACCEPT_ENCODING_X_GZIP) {
-						compression_type = HTTP_ACCEPT_ENCODING_X_GZIP;
-						compression_name = dflt_x_gzip;
-					} else {
-						force_assert(matched_encodings & HTTP_ACCEPT_ENCODING_DEFLATE);
-						compression_type = HTTP_ACCEPT_ENCODING_DEFLATE;
-						compression_name = dflt_deflate;
-					}
-
-					if (use_etag) {
-						/* try matching etag of compressed version */
-						buffer_copy_buffer(srv->tmp_buf, sce->etag);
-						buffer_append_string_len(srv->tmp_buf, CONST_STR_LEN("-"));
-						buffer_append_string(srv->tmp_buf, compression_name);
-						etag_mutate(con->physical.etag, srv->tmp_buf);
-					}
-
-					if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {
-						response_header_overwrite(srv, con, CONST_STR_LEN("Content-Encoding"), compression_name, strlen(compression_name));
-						response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
-						response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
-						if (use_etag) {
-							response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
-						}
-						return HANDLER_FINISHED;
-					}
-
-					/* deflate it */
-					if (use_etag && !buffer_string_is_empty(p->conf.compress_cache_dir)) {
-						if (0 != deflate_file_to_file(srv, con, p, con->physical.path, sce, compression_type))
-							return HANDLER_GO_ON;
-					} else {
-						if (0 != deflate_file_to_buffer(srv, con, p, con->physical.path, sce, compression_type))
-							return HANDLER_GO_ON;
-					}
-					response_header_overwrite(srv, con, CONST_STR_LEN("Content-Encoding"), compression_name, strlen(compression_name));
-					response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
-					if (use_etag) {
-						response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
-					}
-					response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(sce->content_type));
-					/* let mod_staticfile handle the cached compressed files, physical path was modified */
-					return (use_etag && !buffer_string_is_empty(p->conf.compress_cache_dir)) ? HANDLER_GO_ON : HANDLER_FINISHED;
-				}
-			}
-		}
+	if (con->conf.log_request_handling) {
+		log_error_write(srv, __FILE__, __LINE__, "s", "-- handling file as static file");
 	}
 
-	return HANDLER_GO_ON;
+	mimetype = buffer_init();
+	file_get_mimetype(mimetype, con, con->physical.path, fd);
+
+	if (!mod_compress_want_mimetype(srv, p, mimetype)) {
+		if (con->conf.log_request_handling) {
+			log_error_write(srv, __FILE__, __LINE__, "SBS", "-- mimetype'", mimetype, "' not in compress.filetype");
+		}
+		goto cleanup;
+	}
+
+
+	/* the response might change according to Accept-Encoding */
+	response_header_insert(srv, con, CONST_STR_LEN("Vary"), CONST_STR_LEN("Accept-Encoding"));
+
+	etag_build(con->physical.etag, &st, con->etag_flags);
+
+	/* try matching original etag of uncompressed version */
+	mtime = strftime_cache_get(srv, st.st_mtime);
+	if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {
+		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(mimetype));
+		response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
+		if (con->etag_flags) {
+			response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
+		}
+		result = HANDLER_FINISHED;
+		goto cleanup;
+	}
+
+	if (0 == (compression_type = mod_compress_match_encoding(srv, con, p, &compression_name))) {
+		/* mod_compress_match_encoding() did the logging */
+		goto cleanup;
+	}
+
+	if (con->etag_flags) {
+		/* try matching etag of compressed version */
+		buffer_append_string_len(con->physical.etag, CONST_STR_LEN("-"));
+		buffer_append_string(con->physical.etag, compression_name);
+		etag_mutate(con->physical.etag, con->physical.etag);
+	}
+
+	if (HANDLER_FINISHED == http_response_handle_cachable(srv, con, mtime)) {
+		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Encoding"), compression_name, strlen(compression_name));
+		response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(mimetype));
+		response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
+		if (con->etag_flags) {
+			response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
+		}
+		result = HANDLER_FINISHED;
+		goto cleanup;
+	}
+
+	use_cache = con->etag_flags && !buffer_string_is_empty(p->conf.compress_cache_dir);
+
+	/* deflate it */
+	if (use_cache) {
+		if (0 != deflate_file_to_file(srv, con, p, con->physical.path, fd, &st, compression_type)) goto cleanup;
+	} else {
+		if (0 != deflate_file_to_buffer(srv, con, p, con->physical.path, fd, &st, compression_type)) goto cleanup;
+	}
+	response_header_overwrite(srv, con, CONST_STR_LEN("Content-Encoding"), compression_name, strlen(compression_name));
+	response_header_overwrite(srv, con, CONST_STR_LEN("Last-Modified"), CONST_BUF_LEN(mtime));
+	if (con->etag_flags) {
+		response_header_overwrite(srv, con, CONST_STR_LEN("ETag"), CONST_BUF_LEN(con->physical.etag));
+	}
+	response_header_overwrite(srv, con, CONST_STR_LEN("Content-Type"), CONST_BUF_LEN(mimetype));
+
+	/* if result wasn't cached (on disk) the response is finished */
+	if (!use_cache) result = HANDLER_FINISHED;
+	/* otherwise let mod_staticfile handle the cached compressed files, physical path was modified */
+	/* else result = HANDLER_GO_ON; -- HANDLER_GO_ON is the default value */
+
+cleanup:
+	if (-1 != fd) close(fd);
+	if (NULL != mimetype) buffer_free(mimetype);
+
+	return result;
 }
 
 int mod_compress_plugin_init(plugin *p);

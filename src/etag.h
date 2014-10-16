@@ -13,5 +13,7 @@ int etag_is_equal(buffer *etag, const char *matches, int weak_ok);
 int etag_create(buffer *etag, struct stat *st, etag_flags_t flags);
 int etag_mutate(buffer *mut, buffer *etag);
 
+/* create + mutate */
+int etag_build(buffer *etag, struct stat *st, etag_flags_t flags);
 
 #endif

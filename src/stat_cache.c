@@ -380,6 +380,18 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 #ifdef DEBUG_STAT_CACHE
 	size_t i;
 #endif
+	const int flags
+		= O_RDONLY
+#ifdef O_BINARY
+		| O_BINARY
+#endif
+#ifdef O_NONBLOCK
+		| O_NONBLOCK /* don't block on opening named pipes */
+#endif
+#ifdef O_NOCTTY
+		| O_NOCTTY /* don't allow overtaking controlling terminal */
+#endif
+	;
 
 	int file_ndx;
 	splay_tree *file_node = NULL;
@@ -504,7 +516,7 @@ handler_t stat_cache_get_entry(server *srv, connection *con, buffer *name, stat_
 		}
 
 		/* try to open the file to check if we can read it */
-		if (-1 == (fd = open(name->ptr, O_RDONLY))) {
+		if (-1 == (fd = open(name->ptr, flags))) {
 			return HANDLER_ERROR;
 		}
 		close(fd);

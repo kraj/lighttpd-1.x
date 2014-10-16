@@ -1,0 +1,54 @@
+
+* chunk_file struct: share fd in chunk
+* chunkqueue_reset(): tempdirs = NULL ?
+* stream_open: mmap() entfernen? SIGBUS in mod_ssi usw.
+
+* get rid of "unset" string option with ->used == 0 hack
+* drop terminating 0 in buffer "used" count? (long term, probably should rename "used" struct member)
+* make sure all buffers are '\0' terminated in all buffer modifying functions (not just in buffer-"string" api)
+* refactor backtrace/assert stuff into new header/source
+* buffer_path_simplify. urgs.
+* implement own assert() using force_assert() if !defined(NDEBUG) (printing backtrace...)
+* valgrind for backtrace printing?
+
+* scgi test (copy from l2)
+
+* fuzzing?
+
+* symlink check on open, openat/fstatat, O_NOFOLLOW, O_NOCTTY
+
+* O_TMPFILE
+
+* buffer_is_equal_right_len - caseless? exclude_ext
+
+* exported symbols:
+for f in src/.libs/mod_*.so; do nm -D --defined-only $f; done | egrep -v ' (__bss_start|_edata|_end|_fini|_init)$'
+nm -D --defined-only src/lighttpd
+
+* check open(): mod_compress, mod_webdav
+
+* mod_compress ignores `static-file.disable-pathinfo`
+
+
+
+
+static buffer* buffer_getcwd(void) {
+	size_t len = 512;
+	buffer *cwd = buffer_init();
+	buffer_string_prepare_copy(cwd, len);
+
+	while (NULL == getcwd(cwd->ptr, len)) {
+		if (errno != ERANGE || SSIZE_MAX - len < len) {
+			int save_errno = (errno == ERANGE ? ENOMEM : errno);
+			buffer_free(cwd);
+			errno = save_errno;
+			return NULL;
+		}
+		len *= 2;
+		buffer_string_prepare_copy(cwd, len);
+	}
+
+	buffer_string_set_length(cwd, strlen(cwd->ptr));
+
+	return cwd;
+}

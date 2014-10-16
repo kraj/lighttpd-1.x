@@ -182,3 +182,14 @@ int etag_mutate(buffer *mut, buffer *etag) {
 
 	return 0;
 }
+
+int etag_build(buffer *etag, struct stat *st, etag_flags_t flags) {
+	if (0 == flags) {
+		buffer_string_set_length(etag, 0);
+		return -1;
+	}
+
+	etag_create(etag, st, flags);
+	etag_mutate(etag, etag);
+	return 0;
+}
